@@ -68,10 +68,11 @@ final class StackCenter {
 
     func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; conflict = nil; error = nil; notice = nil; await refresh() }
 
-    func refresh() async {
-        guard let r = repo else { return }
+    func refresh(manual: Bool = false) async {
+        guard let r = repo, !loading else { return }
         loading = true; defer { loading = false }
         stacks = await Exec.with(env) { await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir)) }
+        if manual { AppModel.shared.show(stacks.isEmpty ? "Refreshed. No stacks in this repository." : "Refreshed \(stacks.count) stack\(stacks.count == 1 ? "" : "s").", error: false) }
     }
 
     /// Runs one stack operation with a visible label, on the right machine, and turns failures into plain messages.
@@ -153,8 +154,12 @@ struct StacksView: View {
             PaneHeader(title: "Stacks", subtitle: center.repo?.name ?? "Small pull requests that build on each other") {
                 HStack(spacing: 8) {
                     RepoMenu()
-                    Button { Task { await center.sync() } } label: { Image(systemName: "arrow.triangle.2.circlepath") }.buttonStyle(.plain).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
-                    Button { Task { await center.refresh() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
+                    Button { Task { await center.sync() } } label: {
+                        if center.busy == "Syncing" { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.triangle.2.circlepath") }
+                    }.buttonStyle(.plain).disabled(center.busy != nil || center.loading).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
+                    Button { Task { await center.refresh(manual: true) } } label: {
+                        if center.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+                    }.buttonStyle(.plain).disabled(center.loading || center.busy != nil).help("Reload the stacks and their pull requests").accessibilityLabel("Refresh")
                 }
             }
             if center.repo == nil {
