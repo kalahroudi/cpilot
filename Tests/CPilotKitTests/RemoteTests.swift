@@ -49,6 +49,13 @@ final class RemoteTests: XCTestCase {
         XCTAssertEqual(AgentInstaller.onServer(AcpAgentConfig(id: "x", name: "X", command: "npx"), home: "/home/pi").command, "npx")
     }
 
+    func testClaudeSignInLinkAndKeyFile() {
+        let out = "Opening browser to sign in…\nIf the browser didn't open, visit: \u{1B}]8;;https://claude.com/cai/oauth/authorize?code=true&state=abc\u{07}https://claude.com/cai/oauth/authorize?code=true&state=abc\u{1B}]8;;\u{07}\nPaste code here if prompted > "
+        XCTAssertEqual(ClaudeAuth.loginURL(in: out)?.absoluteString, "https://claude.com/cai/oauth/authorize?code=true&state=abc")
+        XCTAssertTrue(SSH.remoteCommand("claude", [], cwd: nil).contains("claude.env"))
+        XCTAssertFalse(SSH.remoteCommand("git", [], cwd: nil).contains("claude.env"))
+    }
+
     func testCommandsRunOnTheEnvironmentWithSpacesAndQuotes() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("my dir \(UUID().uuidString.prefix(6))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

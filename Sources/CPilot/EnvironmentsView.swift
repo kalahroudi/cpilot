@@ -12,6 +12,8 @@ final class EnvironmentCenter {
     var status: [String: Status] = [:]
     /// What setting up each server is doing (or did), shown under its row.
     var setup: [String: [ProvisionStep]] = [:]
+    /// The server whose Claude sign-in sheet should be open (set when setup has just installed Claude there).
+    var signIn: EnvironmentConfig?
     private var settingUp: Set<String> = []
     /// Servers already set up once since the app opened, so a failure is shown instead of retried in a loop.
     private var attempted: Set<String> = []
@@ -46,6 +48,7 @@ final class EnvironmentCenter {
         let (fresh, done) = await Provisioner.run(env, report: report, agents: agents) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
         setup[env.id] = done
         if fresh.connected { status[env.id] = .ok(fresh) }
+        if fresh.connected, fresh.has("claude"), !fresh.claudeSignedIn, done.allSatisfy({ $0.state != .failed }) { signIn = env }
         if done.allSatisfy({ $0.state == .done }) {
             AppModel.shared.show("\(env.name) is ready")
             if !done.contains(where: { $0.id == "claude" }) { Task { try? await Task.sleep(for: .seconds(6)); if !isSettingUp(env.id) { setup[env.id] = nil } } }
@@ -61,6 +64,7 @@ struct EnvironmentsView: View {
     @State private var adding = false
     @State private var editing: EnvironmentConfig?
     @State private var editingServer: EnvironmentConfig?
+    @State private var signingIn: EnvironmentConfig?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,6 +91,8 @@ struct EnvironmentsView: View {
         .sheet(isPresented: $adding) { AddEnvironmentSheet() }
         .sheet(item: $editing) { e in RoutesSheet(env: e) }
         .sheet(item: $editingServer) { e in AddEnvironmentSheet(existing: e) }
+        .sheet(item: $signingIn) { e in ClaudeSignInSheet(env: e) }
+        .onChange(of: center.signIn) { _, e in if let e { signingIn = e; center.signIn = nil } }
     }
 
     private func count(_ n: Int) -> String { "\(n) session\(n == 1 ? "" : "s")" }
@@ -124,6 +130,12 @@ struct EnvironmentsView: View {
                 }
             }
             if case .failed(let msg) = st { Text(msg).font(.system(size: 12)).foregroundStyle(Theme.warn).padding(.horizontal, 60).padding(.bottom, 10) }
+            if case .ok(let r) = st, r.has("claude"), !r.claudeSignedIn, !center.isSettingUp(e.id) {
+                HStack(spacing: 10) {
+                    Text("Claude is not signed in on this server.").font(.system(size: 12)).foregroundStyle(Theme.warn)
+                    Button("Sign in…") { signingIn = e }.buttonStyle(Pill(kind: .primary))
+                }.padding(.horizontal, 60).padding(.bottom, 10)
+            }
             if let steps = center.setup[e.id], !steps.isEmpty { setupView(e, steps) }
             else if case .ok(let r) = st, !r.has("claude") { Text("Claude is not installed on this server, so Claude sessions cannot start there.").font(.system(size: 12)).foregroundStyle(Theme.warn).padding(.horizontal, 60).padding(.bottom, 10) }
         }
@@ -147,9 +159,6 @@ struct EnvironmentsView: View {
                     }
                 }
             }
-            if !center.isSettingUp(e.id), steps.contains(where: { $0.id == "claude" && $0.state == .done }) {
-                Text("Claude is installed. Sign in once: run claude on the server (ssh \(e.target)), or set ANTHROPIC_API_KEY there.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
             if !center.isSettingUp(e.id), steps.contains(where: { $0.state == .failed }) { Button("Try again") { center.check(e, retry: true) }.buttonStyle(Pill(kind: .plain)) }
         }.padding(.horizontal, 60).padding(.bottom, 12)
     }
@@ -161,6 +170,76 @@ struct EnvironmentsView: View {
             do { try await Exec.with(e) { try await RemoteHost.install() }; ws.environments[i].persistent = true; ws.saveEnvironments(); AppModel.shared.show("Sessions on \(e.name) now keep running while you are away") }
             catch { AppModel.shared.failQuietly(error, action: "Install the helper") }
         }
+    }
+}
+
+/// Signs Claude in on a server without a terminal: the account (a link to open here, then a code to paste back) or an API key.
+struct ClaudeSignInSheet: View {
+    let env: EnvironmentConfig
+    @Environment(\.dismiss) private var dismiss
+    enum Mode: Hashable { case account, key }
+    @State private var mode: Mode = .account
+    @State private var login: ClaudeAuth.Login?
+    @State private var url: URL?
+    @State private var code = ""
+    @State private var key = ""
+    @State private var starting = false
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sign in to Claude on \(env.name)").font(.system(size: 16, weight: .semibold))
+            Segmented(options: [(Mode.account, "Claude account"), (.key, "API key")], selection: $mode)
+            switch mode {
+            case .account:
+                if starting { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Asking the server for a sign-in link…").font(.system(size: 12)).foregroundStyle(.secondary) } }
+                else if let url {
+                    Text("A browser tab opened. Sign in there, copy the code the page shows and paste it here.").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Open the link again") { NSWorkspace.shared.open(url) }.buttonStyle(.soft).font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                    TextField("Code from the page", text: $code).textFieldStyle(CPField()).onSubmit { Task { await submitCode() } }
+                } else { Text("Uses your Claude subscription. CPilot asks the server for a link, opens it here, and passes the code back.").font(.system(size: 12)).foregroundStyle(.secondary) }
+            case .key:
+                SecureField("sk-ant-…", text: $key).textFieldStyle(CPField())
+                Text("Saved in a file only your account on the server can read, and used only when Claude runs there. Usage is billed to the API key.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error { ErrorLine(text: error) }
+            HStack {
+                Spacer()
+                Button("Cancel") { login?.cancel(); dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                if mode == .key {
+                    AsyncButton { await saveKey() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Save key") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || key.isEmpty)
+                } else if url != nil {
+                    AsyncButton { await submitCode() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Finish") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || code.isEmpty)
+                }
+            }
+        }.padding(20).frame(width: 460)
+        .task { await begin() }
+        .onDisappear { login?.cancel() }
+    }
+
+    private func begin() async {
+        starting = true; defer { starting = false }
+        let l = ClaudeAuth.Login(env); login = l
+        do { let u = try await l.begin(); url = u; NSWorkspace.shared.open(u) }
+        catch { self.error = error.localizedDescription; mode = .key }
+    }
+
+    private func submitCode() async {
+        guard let login, !busy else { return }
+        busy = true; error = nil; defer { busy = false }
+        if await login.finish(code: code) { done() } else { error = "That code did not work. Start again, or use an API key."; url = nil; code = ""; await begin() }
+    }
+
+    private func saveKey() async {
+        busy = true; error = nil; defer { busy = false }
+        do { try await ClaudeAuth.saveAPIKey(key, on: env); done() } catch { self.error = error.localizedDescription }
+    }
+
+    private func done() {
+        AppModel.shared.show("Claude is signed in on \(env.name)")
+        EnvironmentCenter.shared.check(env, retry: true)
+        dismiss()
     }
 }
 
