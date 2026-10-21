@@ -76,6 +76,7 @@ struct SkillsView: View {
     @State private var skills: [Skill] = []
     @State private var query = ""
     @State private var creating = false
+    @State private var extending: Skill?
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Skills", subtitle: "Found in ~/.claude/skills and each project's .claude/skills") {
@@ -95,6 +96,7 @@ struct SkillsView: View {
                                 Text(s.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3)
                             }
                             Spacer()
+                            Button("Add to skill") { extending = s }.buttonStyle(Pill(kind: .plain))
                             Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: s.path)]) }.buttonStyle(Pill(kind: .plain))
                         }.card()
                     }
@@ -103,6 +105,7 @@ struct SkillsView: View {
         }
         .background(Theme.pane)
         .sheet(isPresented: $creating) { NewSkillSheet() }
+        .sheet(item: $extending) { ExtendSkillSheet(skill: $0) }
         .onAppear { skills = SkillCatalog.discover(project: Workspace.shared.current?.meta.cwd) }
     }
 }
@@ -156,5 +159,58 @@ struct NewSkillSheet: View {
             try await Workspace.shared.create(.init(folder: root, access: .editFiles, firstMessage: prompt))
             dismiss()
         } catch { failure = ErrorReport(error, action: "Start the skill creator") }
+    }
+}
+
+/// Teach an existing skill something new, from what you just learned in a repo or from a note you write.
+struct ExtendSkillSheet: View {
+    let skill: Skill
+    @Environment(\.dismiss) private var dismiss
+    @State private var note = ""
+    @State private var fromSession = true
+    @State private var busy = false
+    @State private var failure: ErrorReport?
+    private var current: SessionController? { Workspace.shared.current }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add to \(skill.name)").font(.system(size: 17, weight: .semibold))
+            Text("Claude reads the skill, then adds what is new without rewriting what is already there. You review the change in the chat.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $note).font(.system(size: 12.5)).frame(height: 110)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            if let current {
+                Toggle("Also learn from my current session: \(current.meta.title)", isOn: $fromSession)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                Button { Task { await start() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Update with Claude") } }
+                    .buttonStyle(Pill(kind: .primary)).disabled(busy || (note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !(fromSession && current != nil)))
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20).frame(width: 520)
+        .sheet(item: $failure) { ErrorReportSheet(report: $0) }
+    }
+
+    private func start() async {
+        busy = true; defer { busy = false }
+        let dir = (skill.path as NSString).deletingLastPathComponent
+        let learned: String
+        if fromSession, let c = current {
+            c.loadIfNeeded()
+            let digest = ContextDigest.handoff(ContextDigest.build(items: c.items), from: c.meta.title)
+            learned = "Lessons from my recent work in \(c.meta.cwd). Keep only what is general and reusable, never project secrets or one-off details:\n\(digest)\n\n"
+        } else { learned = "" }
+        let prompt = """
+        Improve my existing Claude Code skill "\(skill.name)" at \(dir). Read its SKILL.md and any files next to it first (use the skill-creator skill if available). Add what is new below as concise instructions in the right place, merge with similar guidance instead of repeating it, keep the frontmatter valid, and do not delete or rewrite what already works. Then show me the diff of what you changed.
+
+        \(learned)\(note)
+        """
+        do {
+            try await Workspace.shared.create(.init(folder: dir, access: .editFiles, firstMessage: prompt))
+            dismiss()
+        } catch { failure = ErrorReport(error, action: "Start the skill update") }
     }
 }
