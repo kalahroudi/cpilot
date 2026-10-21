@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
         Task { await model.refresh() }
         applyHotkey()
+        ControlServer.shared.start()
         PRCenter.shared.startWatcher()
         Updater.shared.confirmLaunch()                                   // tells a pending swap script "the new version started"
         Task { Updater.shared.autoCheckIfDue(enabled: Prefs.shared.autoCheckUpdates) }
@@ -141,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         showManager(); return true
     }
 
-    func applicationWillTerminate(_ notification: Notification) { Workspace.shared.flushAll() }
+    func applicationWillTerminate(_ notification: Notification) { Workspace.shared.flushAll(); ControlServer.shared.stop() }
 
     // The app lives in the menu bar: closing the last window must not quit it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

@@ -7,7 +7,7 @@ import CPilotKit
 // Logs go to stderr; stdout carries protocol messages only.
 
 let serverName = "cpilot"
-let serverVersion = "0.1.0"
+let serverVersion = BuildInfo.current.version
 let toolsByName = Dictionary(uniqueKeysWithValues: allTools.map { ($0.name, $0) })
 
 func send(_ object: [String: Any]) {

@@ -1,13 +1,43 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CPilot</title>
+<meta name="description" content="A superlight native macOS app for running AI coding sessions from your menu bar.">
 <style>
-:root{--bg:#f5f5f7;--fg:#1d1d1f;--mut:#6e6e73;--ac:#4f46e5}
-@media(prefers-color-scheme:dark){:root{--bg:#1c1c1f;--fg:#f2f2f4;--mut:#9a9aa2;--ac:#818cf8}}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
-main{max-width:34rem;padding:2rem 16px}h1{margin:0 0 .25rem;font-size:2.4rem}p{color:var(--mut)}a{color:var(--ac)}
-</style></head><body><main>
-<h1>CPilot</h1>
-<p>A superlight native macOS menu bar app for managing AI coding agent sessions, with memory, resumable context, access control and a built-in MCP server.</p>
-<p><a href="https://github.com/kalahroudi/cpilot">View on GitHub</a></p>
-</main></body></html>
+:root{--bg:#f5f5f7;--card:#fff;--fg:#1d1d1f;--mut:#6e6e73;--ac:#2563eb;--hair:rgba(0,0,0,.1)}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1c1f;--card:#26272b;--fg:#f2f2f4;--mut:#9a9aa2;--ac:#60a5fa;--hair:rgba(255,255,255,.12)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:48px max(16px,env(safe-area-inset-left)) 64px}
+header{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header img{width:72px;height:72px}
+h1{margin:0;font-size:2.4rem;letter-spacing:-.02em}
+.lead{font-size:1.2rem;color:var(--mut);max-width:44rem;margin:.75rem 0 1.5rem}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+.btn{display:inline-block;padding:.6rem 1.1rem;border-radius:10px;border:1px solid var(--hair);background:var(--card);color:var(--fg);text-decoration:none;font-weight:500}
+.btn.pri{background:var(--ac);border-color:transparent;color:#fff}
+.shot{margin:2.5rem 0;border-radius:14px;border:1px solid var(--hair);overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.18)}
+.shot img{display:block;width:100%;height:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:2rem 0}
+.grid div{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:16px 18px}
+.grid h3{margin:0 0 .3rem;font-size:1rem}.grid p{margin:0;color:var(--mut);font-size:.95rem}
+pre{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:16px;overflow-x:auto;font-size:.85rem}
+footer{margin-top:3rem;color:var(--mut);font-size:.9rem}a{color:var(--ac)}
+</style></head><body><div class="wrap">
+<header><img src="assets/icon.png" alt="CPilot icon"><h1>CPilot</h1></header>
+<p class="lead">A superlight native macOS app for running AI coding sessions from your menu bar. Tabs for many sessions, one calm chat, approvals you control, and pull requests from branch to merge.</p>
+<div class="cta"><a class="btn pri" href="https://github.com/kalahroudi/cpilot/releases">Download</a><a class="btn" href="https://github.com/kalahroudi/cpilot">View on GitHub</a></div>
+<div class="shot"><img src="assets/manager-sessions.png" alt="CPilot session window with an approval card"></div>
+<div class="grid">
+<div><h3>Many sessions, one pane</h3><p>Tabs or a side list. Idle sessions sleep and resume with full context.</p></div>
+<div><h3>Claude and any ACP agent</h3><p>Claude through its command line, other agents from the official registry in one click.</p></div>
+<div><h3>Approvals you control</h3><p>Allow once, for the session or per project. Touch ID for Full access. Everything is logged.</p></div>
+<div><h3>Nothing lost on a crash</h3><p>Rows, drafts and session ids are saved as you go. Resume exactly where you were.</p></div>
+<div><h3>Capture</h3><p>One shortcut sends a screenshot, error, page or snippet straight into the chat.</p></div>
+<div><h3>Pull requests</h3><p>Diff, review, security scan and automatic merge, through your own GitHub login.</p></div>
+</div>
+<div class="shot"><img src="assets/manager-pulls.png" alt="Pull request view with a diff and security scan"></div>
+<h2>Install</h2>
+<pre>curl -fsSL https://raw.githubusercontent.com/kalahroudi/cpilot/main/scripts/install.sh | bash</pre>
+<p>macOS 15 or later on Apple silicon. First launch checks what is missing and sets it up.</p>
+<footer>Apache License 2.0 · <a href="https://github.com/kalahroudi/cpilot">Source</a></footer>
+</div></body></html>
