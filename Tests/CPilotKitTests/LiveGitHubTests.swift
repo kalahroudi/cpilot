@@ -106,7 +106,7 @@ final class LiveGitHubTests: XCTestCase {
         try await GitHub.review(a, action: .comment, body: "Reviewed by CPilot's live test.", in: work)
         let gate = MergeGate.evaluate(pr: try await GitHub.view(a, in: work), checks: checks, scan: nil, requireScan: false)
         XCTAssertTrue(gate.ready, "gate: \(gate.reasons)")
-        let inbox = await GitHub.inbox()
+        let inbox = await GitHub.inbox(repo: slug)
         XCTAssertTrue(inbox.mine.contains { $0.repository.nameWithOwner == slug && $0.number == a }, "inbox did not list the pull request")
         say("pull requests: list, view, diff (\(diff.count) file), checks (\(checks.count)), comment, review, gate ready, inbox lists it")
 

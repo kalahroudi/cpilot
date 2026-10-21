@@ -155,6 +155,7 @@ struct SessionPRBar: View {
     @State private var pr: PullRequest?
     @State private var showCreate = false
     @State private var stackPos: String?
+    @State private var opening = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -167,7 +168,12 @@ struct SessionPRBar: View {
             }
             Spacer()
             if let pr {
-                Button("Review & merge") { Task { await PRCenter.shared.open(repo: session.meta.cwd, environment: session.meta.environment); await PRCenter.shared.select(pr.number); AppDelegate.shared.showManager(pane: .pulls) } }.buttonStyle(Pill(kind: .primary))
+                Button {
+                    opening = true
+                    Task { await PRCenter.shared.jump(repo: session.meta.cwd, environment: session.meta.environment, number: pr.number); opening = false }
+                } label: {
+                    HStack(spacing: 6) { if opening { ProgressView().controlSize(.mini) }; Text(opening ? "Opening…" : "Review & merge") }
+                }.buttonStyle(Pill(kind: .primary)).disabled(opening)
             } else {
                 Button("Create PR") { showCreate = true }.buttonStyle(Pill(kind: .plain))
             }

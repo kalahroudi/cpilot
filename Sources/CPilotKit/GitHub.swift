@@ -171,7 +171,7 @@ public enum GitHub {
         return try JSONDecoder().decode(Issue.self, from: Data(out.utf8))
     }
 
-    // MARK: Inbox (across repositories)
+    // MARK: Inbox
 
     public struct InboxItem: Codable, Identifiable, Equatable, Sendable {
         public struct Repo: Codable, Equatable, Sendable { public var nameWithOwner: String; public var name: String?; public init(nameWithOwner: String, name: String?) { self.nameWithOwner = nameWithOwner; self.name = name } }
@@ -188,15 +188,15 @@ public enum GitHub {
         }
     }
 
-    /// Open pull requests that need you: review requested, and your own.
-    public static func inbox() async -> (reviewRequested: [InboxItem], mine: [InboxItem]) {
-        async let a = searchPRs("--review-requested=@me")
-        async let b = searchPRs("--author=@me")
+    /// Open pull requests in one repository that need you: review requested, and your own.
+    public static func inbox(repo slug: String) async -> (reviewRequested: [InboxItem], mine: [InboxItem]) {
+        async let a = searchPRs("--review-requested=@me", repo: slug)
+        async let b = searchPRs("--author=@me", repo: slug)
         return await (a, b)
     }
 
-    static func searchPRs(_ flag: String) async -> [InboxItem] {
-        guard let out = try? await Shell.check("gh", ["search", "prs", flag, "--state", "open", "--limit", "30", "--json", "number,title,repository,author,updatedAt,url,isDraft"], timeout: 60),
+    static func searchPRs(_ flag: String, repo slug: String) async -> [InboxItem] {
+        guard let out = try? await Shell.check("gh", ["search", "prs", flag, "--repo", slug, "--state", "open", "--limit", "30", "--json", "number,title,repository,author,updatedAt,url,isDraft"], timeout: 60),
               let list = try? JSONDecoder().decode([InboxItem].self, from: Data(out.utf8)) else { return [] }
         return list
     }

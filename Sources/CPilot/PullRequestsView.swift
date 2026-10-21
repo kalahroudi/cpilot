@@ -42,9 +42,23 @@ final class PRCenter {
     var currentRepo: Repo? { repoDir.map { Repo(dir: $0, environment: env?.id) } }
 
     func open(repo: String, environment: String? = nil) async {
+        switchRepo(repo, environment)
+        await refreshList()
+    }
+
+    private func switchRepo(_ repo: String, _ environment: String?) {
         repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []; error = nil
         Project.shared.current = Repo(dir: repo, environment: environment)
-        await refreshList()
+    }
+
+    /// Jumps straight to one pull request: the screen switches at once and the list and the detail load side by side.
+    func jump(repo: String, environment: String?, number: Int) async {
+        switchRepo(repo, environment)
+        selected = number
+        AppDelegate.shared.showManager(pane: .pulls)
+        async let list: Void = refreshList()
+        await select(number)
+        await list
     }
     func open(_ r: Repo) async { await open(repo: r.dir, environment: r.environment) }
 
@@ -223,7 +237,7 @@ struct PullRequestsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Pull requests", subtitle: center.showInbox ? "Everything that needs you, across your repositories" : center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
+            PaneHeader(title: "Pull requests", subtitle: center.showInbox ? "What needs you in this repository" : center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
                 HStack(spacing: 8) {
                     Segmented(options: [(false, "Repository"), (true, "Inbox")], selection: Bindable(center).showInbox)
                     RepoMenu()
@@ -310,11 +324,11 @@ struct PRDetail: View {
                 VStack(alignment: .leading, spacing: 14) {
                     header(pr)
                     steps(pr)
+                    ReviewAndMerge(pr: pr)
                     if let b = pr.body, !b.isEmpty { Text(b).font(.system(size: 12.5)).foregroundStyle(.secondary).card() }
                     SecurityPanel()
                     ChecksRow()
                     DiffList()
-                    ReviewAndMerge(pr: pr)
                 }.padding(20).frame(maxWidth: 900, alignment: .leading)
             }
         } else if center.selected != nil {
@@ -417,6 +431,7 @@ struct SecurityPanel: View {
 struct ReviewAndMerge: View {
     let pr: PullRequest
     let center = PRCenter.shared
+    @State private var advanced = false
     var body: some View {
         let gate = center.gate
         @Bindable var c = center
@@ -430,15 +445,19 @@ struct ReviewAndMerge: View {
                     Button("Request changes") { Task { await center.review(.requestChanges, body: "Please see the review notes.") } }.buttonStyle(Pill(kind: .plain))
                 }
             }
-            SettingRow("Merge automatically", "Merges by itself as soon as every rule passes, then deletes the branch. CPilot checks once a minute while this is on.") {
-                Toggle("", isOn: Binding(get: { center.isArmed(pr.number) }, set: { center.setArmed($0, pr.number) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent)
-            }
-            SettingRow("Merge style", "How the commits land on \(pr.baseRefName).") {
-                Segmented(options: [(MergeMethod.squash, "Squash"), (.merge, "Merge"), (.rebase, "Rebase")], selection: $c.method)
-            }
-            SettingRow(gate?.ready == true ? "Ready to merge" : "Waiting", gate?.reasons.joined(separator: " ") ?? "") {
-                Button("Merge now") { Task { await center.mergeNow() } }.buttonStyle(Pill(kind: .primary)).disabled(gate?.ready != true)
-            }
+            DisclosureGroup("Advanced options", isExpanded: $advanced) {
+        VStack(spacing: 0) {
+                SettingRow("Merge automatically", "Merges by itself as soon as every rule passes, then deletes the branch. CPilot checks once a minute while this is on.") {
+                    Toggle("", isOn: Binding(get: { center.isArmed(pr.number) }, set: { center.setArmed($0, pr.number) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent)
+                }
+                SettingRow("Merge style", "How the commits land on \(pr.baseRefName).") {
+                    Segmented(options: [(MergeMethod.squash, "Squash"), (.merge, "Merge"), (.rebase, "Rebase")], selection: $c.method)
+                }
+                SettingRow(gate?.ready == true ? "Ready to merge" : "Waiting", gate?.reasons.joined(separator: " ") ?? "") {
+                    Button("Merge now") { Task { await center.mergeNow() } }.buttonStyle(Pill(kind: .primary)).disabled(gate?.ready != true)
+                }
+        }
+            }.font(.system(size: 12.5)).padding(.vertical, 10)
         }
         .padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
     }
@@ -462,7 +481,7 @@ struct DiffList: View {
 }
 
 
-/// Every pull request that needs you, across all your repositories: review requested, and yours.
+/// Pull requests in the chosen repository that need you: review requested, and yours.
 @MainActor @Observable
 final class InboxCenter {
     static let shared = InboxCenter()
@@ -473,7 +492,8 @@ final class InboxCenter {
 
     func load() async {
         loading = true; defer { loading = false }
-        let r = await GitHub.inbox()
+        guard let dir = PRCenter.shared.repoDir, let slug = await Git.info(dir)?.remote else { review = []; mine = []; return }
+        let r = await GitHub.inbox(repo: slug)
         review = r.reviewRequested; mine = r.mine
         // Which repositories are on this Mac, so a click can open the full review screen.
         var map: [String: PRCenter.Repo] = [:]
@@ -513,7 +533,7 @@ struct InboxView: View {
                 section("Yours", center.mine, empty: "You have no open pull requests.")
             }.padding(22).frame(maxWidth: 860, alignment: .leading)
         }
-        .task { if !AppModel.shared.demo { await center.load() } }
+        .task(id: PRCenter.shared.repoDir) { if !AppModel.shared.demo { await center.load() } }
     }
 
     @ViewBuilder private func section(_ title: String, _ items: [GitHub.InboxItem], empty: String) -> some View {
