@@ -236,16 +236,8 @@ struct StackCard: View {
                     .disabled(stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
                 Button { Task { await center.mergeBottom(stack) } } label: { BusyLabel(title: "Merge from the bottom", busyTitle: "Merging…", busy: center.busy == "Merging") }.buttonStyle(Pill(kind: .primary))
                     .disabled(stack.nextStep != .merge || center.busy != nil)
-                if let r = center.repo { Toggle("", isOn: Binding(get: { center.isArmed(r) }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent).help("Merge the stack automatically, bottom first, whenever every rule passes") }
             }
-            if let step = stack.nextStep {
-                Text(nextStepText(step)).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            if let r = center.repo {
-                Text(center.isArmed(r) ? "Auto-merge is on: the bottom pull request merges by itself once its checks and reviews pass, then the next one follows."
-                                       : "Switch on to merge this stack automatically, bottom first, whenever every rule passes.")
-                    .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing).multilineTextAlignment(.trailing)
-            }
+            nextStepBar
             Text("⎇ \(stack.trunk)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
             VStack(spacing: 6) { ForEach(stack.branches) { b in StackNode(branch: b, stack: stack) } }
                 .padding(.leading, 14).overlay(alignment: .leading) { Rectangle().fill(Theme.hairline).frame(width: 2).padding(.vertical, 10) }
@@ -258,13 +250,51 @@ struct StackCard: View {
 }
 
 extension StackCard {
-    fileprivate func nextStepText(_ step: Stack.Step) -> String {
-        switch step {
-        case .restack: "Next: Restack. A branch is behind its parent, or a lower pull request was merged. Submit and merge wait until then."
+    private struct Step { let icon: String, tint: Color, title: String, detail: String }
+
+    private var step: Step {
+        switch stack.nextStep {
+        case .restack: Step(icon: "arrow.triangle.2.circlepath", tint: Theme.warn, title: "Restack first",
+                            detail: "A branch is behind its parent, or a lower pull request was merged. Submit and merge wait until then.")
         case .submit:
-            "Next: Submit. " + stack.unsubmitted.map(\.name).joined(separator: ", ") + " has no open pull request or commits that are not pushed yet."
-        case .merge: "Everything is pushed. Next: Merge from the bottom once #\(stack.bottomOpen?.pr ?? 0) has passed its checks and reviews."
+            Step(icon: "arrow.up.circle", tint: Theme.accent, title: "Submit to publish your changes",
+                 detail: names(stack.unsubmitted.map(\.name)) + " no open pull request, or has commits GitHub hasn't seen.")
+        case .merge: Step(icon: "checkmark.circle", tint: Theme.ok, title: "Ready to merge from the bottom",
+                          detail: "Everything is pushed. #\(stack.bottomOpen?.pr ?? 0) merges once its checks and reviews pass.")
+        case nil: Step(icon: "tray", tint: .secondary, title: "Nothing to do", detail: "No open pull requests in this stack.")
         }
+    }
+
+    private func names(_ n: [String]) -> String {
+        n.count <= 2 ? n.joined(separator: " and ") + (n.count == 1 ? " has" : " have") : "\(n[0]), \(n[1]) and \(n.count - 2) more have"
+    }
+
+    /// One tidy row: what to do next on the left, the auto-merge switch on the right.
+    @ViewBuilder var nextStepBar: some View {
+        let st = step
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: st.icon).font(.system(size: 17, weight: .medium)).foregroundStyle(st.tint).frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(st.title).font(.system(size: 12.5, weight: .semibold))
+                Text(st.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            if let r = center.repo {
+                let on = center.isArmed(r)
+                Divider().frame(height: 30)
+                VStack(alignment: .trailing, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Auto-merge").font(.system(size: 12, weight: .medium))
+                        Toggle("", isOn: Binding(get: { on }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(Theme.accent)
+                    }
+                    Text(on ? "Merges bottom first when rules pass" : "Off: you merge by hand").font(.system(size: 11)).foregroundStyle(.secondary)
+                }.help("Merge the stack automatically, bottom first, whenever every rule passes")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(st.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(st.tint.opacity(0.25)))
+        .animation(.easeInOut(duration: 0.2), value: stack.nextStep)
     }
 }
 
