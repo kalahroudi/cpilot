@@ -198,6 +198,8 @@ public final class AcpClient: @unchecked Sendable {
     public static var signInTimeout: TimeInterval = 300
     /// MCP servers handed to every session this client opens (for example the memory engine).
     public var mcpServers: [[String: Any]] = []
+    /// When false, a "sign in first" answer is reported as `AcpError.authRequired` instead of starting a sign-in (used by connection tests).
+    public var signsInAutomatically = true
 
     public init(config: AcpAgentConfig, cwd: URL, environment: EnvironmentConfig? = nil, onEvent: @escaping @Sendable (AcpEvent) -> Void) {
         self.config = config; self.cwd = cwd; self.environment = environment; self.onEvent = onEvent
@@ -259,6 +261,7 @@ public final class AcpClient: @unchecked Sendable {
     private func signedIn(_ call: () async throws -> [String: Any]) async throws -> [String: Any] {
         do { return try await call() }
         catch AcpError.authRequired(let said) {
+            guard signsInAutomatically else { throw AcpError.authRequired(said) }
             let env = ProcessInfo.processInfo.environment.merging(config.env) { _, n in n }
             guard let method = AcpAuth.choose(from: authMethods, preferred: config.authMethod, env: env) else { throw AcpError.authRequired(said) }
             onEvent(.items([ChatItem(id: "acp-auth", kind: .notice, text: "\(config.name) needs you signed in. Using “\(method.name)”. If a browser opens, finish signing in there.", status: .running)]))
