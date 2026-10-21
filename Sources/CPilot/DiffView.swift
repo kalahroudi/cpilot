@@ -149,10 +149,12 @@ struct CreatePRSheet: View {
     }
 }
 
-/// The strip under a session's chat: its branch, and either the open pull request or a way to make one.
+/// The strip under a session's chat: its branch, its commits, and the pull request (open or already merged) or a way to make one.
 struct SessionPRBar: View {
     let session: SessionController
     @State private var pr: PullRequest?
+    @State private var commits: [Git.Commit] = []
+    @State private var showCommits = false
     @State private var showCreate = false
     @State private var stackPos: String?
     @State private var opening = false
@@ -164,7 +166,15 @@ struct SessionPRBar: View {
             if let stackPos { Badge(text: stackPos, kind: .accent) }
             if let pr {
                 Badge(text: "#\(pr.number)", kind: .accent)
-                if pr.autoMerge { Badge(text: "Auto-merge", kind: .ok) }
+                if pr.state == "MERGED" { Badge(text: "Merged", kind: .ok) }
+                else if pr.state == "CLOSED" { Badge(text: "Closed", kind: .neutral) }
+                else if pr.autoMerge { Badge(text: "Auto-merge", kind: .ok) }
+            }
+            if !commits.isEmpty {
+                Button { showCommits.toggle() } label: {
+                    Label("\(commits.count) commit\(commits.count == 1 ? "" : "s")", systemImage: "clock.arrow.circlepath").font(.system(size: 11.5))
+                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                .popover(isPresented: $showCommits, arrowEdge: .top) { CommitList(commits: commits) }
             }
             Spacer()
             if let pr {
@@ -172,8 +182,8 @@ struct SessionPRBar: View {
                     opening = true
                     Task { await PRCenter.shared.jump(repo: session.meta.cwd, environment: session.meta.environment, number: pr.number); opening = false }
                 } label: {
-                    HStack(spacing: 6) { if opening { ProgressView().controlSize(.mini) }; Text(opening ? "Opening…" : "Review & merge") }
-                }.buttonStyle(Pill(kind: .primary)).disabled(opening)
+                    HStack(spacing: 6) { if opening { ProgressView().controlSize(.mini) }; Text(opening ? "Opening…" : pr.isOpen ? "Review & merge" : "View PR") }
+                }.buttonStyle(Pill(kind: pr.isOpen ? .primary : .plain)).disabled(opening)
             } else {
                 Button("Create PR") { showCreate = true }.buttonStyle(Pill(kind: .plain))
             }
@@ -185,9 +195,35 @@ struct SessionPRBar: View {
 
     private func load() async {
         guard let b = session.meta.branch else { return }
-        let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", b, "--state", "open", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
-        pr = out.flatMap { try? JSONDecoder().decode([PullRequest].self, from: Data($0.utf8)).first }
+        let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", b, "--state", "all", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
+        let found = out.flatMap { try? JSONDecoder().decode([PullRequest].self, from: Data($0.utf8)) } ?? []
+        // An open PR wins; otherwise the newest one, so a merged session says so instead of offering "Create PR".
+        pr = found.first(where: \.isOpen) ?? found.max(by: { $0.number < $1.number })
+        commits = await Exec.with(session.env) {
+            // A merged branch has nothing ahead of main any more, so the pull request is the record of what it carried.
+            if let pr, !pr.isOpen { return await GitHub.commits(pr.number, in: session.meta.cwd) }
+            let base = await Git.defaultBranch(session.meta.workingDirectory)
+            return await Git.commits(session.meta.workingDirectory, since: "origin/\(base)")
+        }
         let stacks = await Exec.with(session.env) { await Stacks.load(in: session.meta.cwd) }
         if let st = stacks.first(where: { $0.branches.contains { $0.name == b } }), st.branches.count > 1, let i = st.branches.firstIndex(where: { $0.name == b }) { stackPos = "Stack \(i + 1) of \(st.branches.count)" } else { stackPos = nil }
+    }
+}
+
+private struct CommitList: View {
+    let commits: [Git.Commit]
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(commits) { c in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(c.sha).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.accent)
+                        Text(c.subject).font(.system(size: 12.5)).lineLimit(2)
+                        Spacer(minLength: 12)
+                        Text(c.when).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+            }.padding(14)
+        }.frame(width: 440).frame(maxHeight: 320)
     }
 }

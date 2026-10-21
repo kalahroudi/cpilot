@@ -557,9 +557,34 @@ final class Workspace {
         persistTabs()
     }
 
-    func delete(_ id: String) {
+    /// Why a delete is waiting for a yes: the session's worktree holds work that exists nowhere else.
+    struct DeleteRisk: Identifiable { let id: String; let message: String }
+    var deleteRisk: DeleteRisk?
+
+    /// Deletes a session, but first asks when its worktree holds uncommitted changes or commits that were never pushed.
+    func requestDelete(_ id: String) {
+        guard let m = sessions.first(where: { $0.id == id }), let wt = m.worktree else { delete(id); return }
+        Task {
+            let w = await Exec.with(environment(m.environment)) { await Git.unsavedWork(wt) }
+            var parts: [String] = []
+            if w.uncommitted > 0 { parts.append("\(w.uncommitted) uncommitted change\(w.uncommitted == 1 ? "" : "s")") }
+            if w.unpushed > 0 { parts.append("\(w.unpushed) commit\(w.unpushed == 1 ? "" : "s") that \(w.unpushed == 1 ? "was" : "were") never pushed") }
+            if parts.isEmpty { delete(id) }
+            else { deleteRisk = DeleteRisk(id: id, message: "This session's branch has \(parts.joined(separator: " and ")). Deleting the session removes that copy of the files for good.") }
+        }
+    }
+
+    /// Removes the session. Its worktree always goes; its local branch goes too when everything on it is already on a remote.
+    func delete(_ id: String, force: Bool = false) {
         closeTab(id)
-        if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree { let e = environment(m.environment); Task { await Exec.with(e) { await Git.removeWorktree(repo: m.cwd, path: wt) } } }
+        if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree {
+            let e = environment(m.environment)
+            Task { await Exec.with(e) {
+                let safe = await Git.unsavedWork(wt) == (0, 0)
+                await Git.removeWorktree(repo: m.cwd, path: wt)
+                if safe, let b = m.branch { await Git.deleteBranch(repo: m.cwd, branch: b) }
+            } }
+        }
         store.delete(id); index.remove(ref: id)
         sessions.removeAll { $0.id == id }
     }

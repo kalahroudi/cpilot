@@ -77,6 +77,18 @@ public enum GitHub {
         return try JSONDecoder().decode(PullRequest.self, from: Data(out.utf8))
     }
 
+    /// The commits a pull request carries, oldest first, as `gh` lists them (still available after a squash merge).
+    public static func commits(_ n: Int, in dir: String) async -> [Git.Commit] {
+        struct Raw: Decodable { struct C: Decodable { var oid: String; var messageHeadline: String; var committedDate: String? }; var commits: [C] }
+        guard let out = try? await Shell.check("gh", ["pr", "view", String(n), "--json", "commits"], cwd: url(dir)),
+              let raw = try? JSONDecoder().decode(Raw.self, from: Data(out.utf8)) else { return [] }
+        let iso = ISO8601DateFormatter(), rel = RelativeDateTimeFormatter()
+        return raw.commits.reversed().map { c in
+            Git.Commit(sha: String(c.oid.prefix(7)), subject: c.messageHeadline,
+                       when: c.committedDate.flatMap(iso.date(from:)).map { rel.localizedString(for: $0, relativeTo: Date()) } ?? "")
+        }
+    }
+
     public static func diff(_ n: Int, in dir: String) async throws -> String {
         try await Shell.check("gh", ["pr", "diff", String(n)], cwd: url(dir), timeout: 90)
     }

@@ -85,4 +85,36 @@ public enum Git {
         try await Shell.check("git", ["add", "-A"], cwd: url(dir))
         try await Shell.check("git", ["commit", "-m", message], cwd: url(dir))
     }
+
+    public struct Commit: Identifiable, Equatable, Sendable {
+        public var sha: String
+        public var subject: String
+        public var when: String
+        public var id: String { sha }
+        public init(sha: String, subject: String, when: String) { self.sha = sha; self.subject = subject; self.when = when }
+    }
+
+    /// Commits on HEAD that `base` doesn't have, newest first.
+    public static func commits(_ dir: String, since base: String, limit: Int = 50) async -> [Commit] {
+        let out = (try? await Shell.check("git", ["log", "--format=%h%x09%s%x09%cr", "-\(limit)", "\(base)..HEAD"], cwd: url(dir))) ?? ""
+        return parseCommits(out)
+    }
+
+    static func parseCommits(_ out: String) -> [Commit] {
+        out.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+            return f.count == 3 ? Commit(sha: f[0], subject: f[1], when: f[2]) : nil
+        }
+    }
+
+    /// Work that exists only in this checkout: uncommitted changes, and commits no remote branch has.
+    public static func unsavedWork(_ dir: String) async -> (uncommitted: Int, unpushed: Int) {
+        let unpushed = (try? await Shell.check("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], cwd: url(dir))) ?? ""
+        return (await uncommittedCount(dir), Int(unpushed.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+    }
+
+    /// Deletes a local branch once nothing needs it. `-D` because a squash merge leaves it looking unmerged.
+    public static func deleteBranch(repo: String, branch: String) async {
+        _ = try? await Shell.run("git", ["branch", "-D", branch], cwd: url(repo))
+    }
 }

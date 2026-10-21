@@ -52,6 +52,10 @@ struct ManagerView: View {
         .onAppear { model.setManagerVisible(true) }
         .sheet(isPresented: Bindable(nav).showNewSession) { NewSessionSheet() }
         .sheet(item: Bindable(model).errorReport) { ErrorReportSheet(report: $0) }
+        .alert("Delete this session?", isPresented: Binding(get: { Workspace.shared.deleteRisk != nil }, set: { if !$0 { Workspace.shared.deleteRisk = nil } }), presenting: Workspace.shared.deleteRisk) { risk in
+            Button("Delete anyway", role: .destructive) { Workspace.shared.delete(risk.id) }
+            Button("Keep it", role: .cancel) {}
+        } message: { Text($0.message) }
     }
 
     @ViewBuilder private var detail: some View {
@@ -222,7 +226,7 @@ struct SideRow: View {
         .contextMenu {
             if ws.tabs.contains(meta.id) { Button("Close") { ws.closeTab(meta.id) } }
             Button("Archive") { var m = meta; m.archived = true; ws.save(m); ws.closeTab(meta.id); ws.sessions.removeAll { $0.id == meta.id } }
-            Button("Delete…", role: .destructive) { ws.delete(meta.id) }
+            Button("Delete…", role: .destructive) { ws.requestDelete(meta.id) }
         }
     }
 }
@@ -279,7 +283,7 @@ struct TabButton: View {
         .contextMenu {
             Button("Close tab") { ws.closeTab(session.id) }
             Button("Archive session") { var m = session.meta; m.archived = true; ws.save(m); ws.closeTab(session.id) }
-            Button("Delete session…", role: .destructive) { ws.delete(session.id) }
+            Button("Delete session…", role: .destructive) { ws.requestDelete(session.id) }
         }
     }
 
