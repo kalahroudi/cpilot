@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Bundle (ad-hoc signed) and self-test
+        run: |
+          scripts/bundle.sh 0.0.0-ci
+          dist/CPilot.app/Contents/MacOS/CPilot --self-test
+          dist/CPilot.app/Contents/MacOS/cpilot-mcp --version

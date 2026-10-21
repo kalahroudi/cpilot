@@ -1,0 +1,72 @@
+name: Release
+
+# Push a tag like v0.2.0 to build, test and publish a disk image.
+# Without signing secrets the app is ad-hoc signed. With them it is signed with a Developer ID and notarized.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    env:
+      # The secrets context is not available in step conditions, so expose "is it set" as plain env flags.
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test
+
+      - name: Import signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p ci "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          echo "SIGN_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ {print $2; exit}')" >> "$GITHUB_ENV"
+
+      - name: Build disk image
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = "tag" ] || VERSION="0.0.0-dev"
+          APP_REPO="$GITHUB_REPOSITORY" scripts/make-dmg.sh "$VERSION"
+
+      - name: Notarize
+        if: env.HAS_NOTARY == 'true'
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials ci-notary --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD"
+          NOTARY_PROFILE=ci-notary scripts/notarize.sh dist/CPilot-*.dmg
+
+      - name: Checksums
+        run: cd dist && shasum -a 256 CPilot-*.dmg > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CPilot-dmg
+          path: |
+            dist/*.dmg
+            dist/SHA256SUMS
+
+      - name: Publish release
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/SHA256SUMS --generate-notes --title "CPilot $GITHUB_REF_NAME"

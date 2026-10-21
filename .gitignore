@@ -1,7 +1,10 @@
 .DS_Store
 .build/
 .swiftpm/
-dist/
 *.xcodeproj
 xcuserdata/
 DerivedData/
+build/
+dist/
+*.icns
+*.iconset/
