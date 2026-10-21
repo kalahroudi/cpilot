@@ -47,42 +47,6 @@ final class RepoContextTests: XCTestCase {
         XCTAssertEqual(RepoLabels.labels([ref("/")])[ref("/")], "/")
     }
 
-    // MARK: Per-repository state
-
-    struct Job: Equatable { var running = false; var draft: String?; var error: String? }
-
-    func testTheSameIdInTwoRepositoriesIsTwoJobs() {
-        var s = ScopedStore<Job>()
-        s["a", "001-login"] = Job(running: true)
-        s["b", "001-login"] = Job(draft: "plan")
-        XCTAssertEqual(s["a", "001-login"], Job(running: true))
-        XCTAssertEqual(s["b", "001-login"], Job(draft: "plan"))
-        XCTAssertEqual(s.all(in: "a").count, 1)
-        XCTAssertTrue(s.all(in: "c").isEmpty)
-    }
-
-    func testAStageFinishingAfterASwitchLandsInItsOwnRepository() {
-        var s = ScopedStore<Job>()
-        let started = "a"
-        s.modify(started, "001", new: Job()) { $0.running = true }
-        var current = "a"
-        current = "b"                                       // the user switches repository while the agent works
-        s.modifyExisting(started, "001") { $0.running = false; $0.draft = "spec text" }
-        XCTAssertEqual(s["a", "001"], Job(running: false, draft: "spec text"))
-        XCTAssertNil(s["b", "001"], "nothing leaks into the repository that is now showing")
-        XCTAssertTrue(s.all(in: current).isEmpty)
-    }
-
-    func testLateNewsDoesNotBringBackAJobThatIsGone() {
-        var s = ScopedStore<Job>()
-        s.modifyExisting("a", "001") { $0.running = true }
-        XCTAssertNil(s["a", "001"])
-        s.modify("a", "001", new: Job()) { $0.error = "failed" }
-        XCTAssertEqual(s["a", "001"]?.error, "failed")
-        s["a", "001"] = nil
-        XCTAssertTrue(s.all(in: "a").isEmpty)
-    }
-
     // MARK: Subfolders
 
     func testSubfoldersCollapseIntoTheirRepositoryKeepingOrder() {
@@ -110,36 +74,56 @@ final class RepoContextTests: XCTestCase {
         XCTAssertTrue(ref("/code/app/").contains("/code/app/web"))
     }
 
-    // MARK: Hands-off builds
+    // MARK: Keys
 
-    func testHandsOffSpecsArePerRepositoryAndListedOnce() {
-        var st = SpecRunState()
-        st.arm("001", in: "a"); st.arm("001", in: "a"); st.arm("002", in: "a"); st.arm("001", in: "b")
-        XCTAssertEqual(st.pending(in: "a"), ["001", "002"])
-        XCTAssertEqual(st.pending(in: "b"), ["001"])
-        XCTAssertTrue(st.hasWork(in: "a"))
-        XCTAssertFalse(st.hasWork(in: "never"))
+    func testAKeyGivesBackTheRepositoryItCameFrom() {
+        for r in [ref("/code/app"), ref("/code/app", "srv"), ref("/code/a|b", "srv"), ref("/")] {
+            XCTAssertEqual(RepoRef(key: r.key), r)
+        }
+        XCTAssertNil(RepoRef(key: "no-separator"))
     }
 
-    func testAFinishedSpecIsForgottenAndTheRepositoryWithNoWorkLeft() {
+    // MARK: Saved spec runs
+
+    private func hands(_ extra: (inout SpecRunEntry) -> Void = { _ in }) -> SpecRunEntry { var e = SpecRunEntry(autonomy: "hands"); extra(&e); return e }
+
+    func testAnIdleSpecIsNotKept() {
         var st = SpecRunState()
-        st.arm("001", in: "a"); st.arm("002", in: "a")
-        st.finish("001", in: "a"); st.finish("nope", in: "a"); st.finish("x", in: "other")
-        XCTAssertEqual(st.pending(in: "a"), ["002"])
-        st.finish("002", in: "a")
+        st.set(SpecRunEntry(autonomy: "step"), "001", in: "a")
         XCTAssertFalse(st.hasWork(in: "a"))
-        XCTAssertEqual(st, SpecRunState(), "nothing left behind for a repository with no work")
+        st.set(SpecRunEntry(autonomy: "step", gate: true), "001", in: "a")
+        XCTAssertTrue(st.hasWork(in: "a"), "waiting for 'start building' is kept")
+        st.set(SpecRunEntry(autonomy: "step"), "001", in: "a")
+        XCTAssertEqual(st, SpecRunState(), "going idle forgets it, and the repository with it")
     }
 
-    func testHandsOffStateSurvivesARestart() throws {
+    func testEachThingWorthKeepingKeepsTheEntry() {
+        for e in [hands(), SpecRunEntry(autonomy: "plan", stage: "plan"), SpecRunEntry(autonomy: "step", draftStage: "specify", draftText: "# Spec")] {
+            XCTAssertFalse(e.isIdle)
+        }
+    }
+
+    func testSpecsArePerRepositoryAndListedInOrder() {
+        var st = SpecRunState()
+        st.set(hands(), "002", in: "a"); st.set(hands(), "001", in: "a"); st.set(hands(), "001", in: "b")
+        XCTAssertEqual(st.pending(in: "a").map(\.id), ["001", "002"])
+        XCTAssertEqual(st.scopes, ["a", "b"])
+        XCTAssertNil(st.entry("002", in: "b"), "the same id in another repository is another spec")
+        st.remove("001", in: "a"); st.remove("nope", in: "a"); st.remove("x", in: "other")
+        XCTAssertEqual(st.pending(in: "a").map(\.id), ["002"])
+    }
+
+    func testSavedRunsSurviveARestartWithDraftsAndAttempts() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("runs-\(UUID().uuidString)/spec-runs.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         var st = SpecRunState()
-        st.arm("001-login", in: "/code/app|"); st.arm("003-export", in: "/code/api|srv")
+        st.set(SpecRunEntry(autonomy: "hands", stage: "tasks", attempts: 2), "001-login", in: "/code/app|")
+        st.set(SpecRunEntry(autonomy: "step", draftStage: "specify", draftText: "# Spec\nwith “quotes” and\nlines"), "003-export", in: "/code/api|srv")
         st.save(to: url)
         let back = SpecRunState.load(from: url)
         XCTAssertEqual(back, st)
-        XCTAssertEqual(back.pending(in: "/code/api|srv"), ["003-export"])
+        XCTAssertEqual(back.entry("003-export", in: "/code/api|srv")?.draftText, "# Spec\nwith “quotes” and\nlines")
+        XCTAssertEqual(back.entry("001-login", in: "/code/app|")?.attempts, 2)
     }
 
     func testAMissingOrDamagedFileStartsEmpty() throws {
@@ -149,6 +133,28 @@ final class RepoContextTests: XCTestCase {
         XCTAssertEqual(SpecRunState.load(from: dir.appendingPathComponent("none.json")), SpecRunState())
         let bad = dir.appendingPathComponent("bad.json"); try "{ not json".write(to: bad, atomically: true, encoding: .utf8)
         XCTAssertEqual(SpecRunState.load(from: bad), SpecRunState())
+    }
+
+    // MARK: What to do with a saved spec
+
+    func testResumeDecisions() {
+        func d(_ e: SpecRunEntry, exists: Bool = true, spec: Bool = true, draft: Bool = false) -> SpecResume.Action {
+            SpecResume.decide(e, docExists: exists, hasSpec: spec, hasDraft: draft)
+        }
+        XCTAssertEqual(d(hands(), exists: false), .drop, "its folder is gone")
+        XCTAssertEqual(d(hands()), .build)
+        XCTAssertEqual(d(SpecRunEntry(autonomy: "plan", gate: true)), .wait, "plan-for-me stops for your go-ahead")
+        XCTAssertEqual(d(SpecRunEntry(autonomy: "step", draftStage: "plan", draftText: "x"), draft: true), .review)
+        XCTAssertEqual(d(hands { $0.stage = "tasks" }), .rewrite(stage: "tasks", attempts: 1))
+        XCTAssertEqual(d(hands { $0.stage = "plan"; $0.attempts = 2 }), .rewrite(stage: "plan", attempts: 3))
+        XCTAssertEqual(d(hands { $0.stage = "plan"; $0.attempts = 3 }), .giveUp(stage: "plan", attempts: 3), "it does not loop forever")
+        XCTAssertEqual(d(hands { $0.stage = "specify" }, spec: false), .rewrite(stage: "specify", attempts: 1), "the spec was never written")
+        XCTAssertEqual(d(hands { $0.stage = "specify" }, spec: true), .settle, "an answer round cut short leaves the spec on disk alone")
+    }
+
+    func testAWrittenDraftIsReviewedBeforeAnInterruptedStageIsRewritten() {
+        let e = SpecRunEntry(autonomy: "hands", stage: "plan", draftStage: "specify", draftText: "# Spec")
+        XCTAssertEqual(SpecResume.decide(e, docExists: true, hasSpec: false, hasDraft: true), .review)
     }
 
     // MARK: Polling load

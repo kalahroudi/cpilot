@@ -9,6 +9,12 @@ public struct RepoRef: Hashable, Sendable {
     public init(dir: String, environment: String? = nil) { self.dir = dir; self.environment = environment }
     /// One identity for caches and per-repository state. The same folder on this Mac and on a server are different repositories.
     public var key: String { dir + "|" + (environment ?? "") }
+    /// The reference a `key` was made from.
+    public init?(key: String) {
+        guard let bar = key.lastIndex(of: "|") else { return nil }
+        let env = String(key[key.index(after: bar)...])
+        self.init(dir: String(key[..<bar]), environment: env.isEmpty ? nil : env)
+    }
 }
 
 public enum RepoLabels {
@@ -36,34 +42,6 @@ public enum RepoLabels {
     }
 }
 
-/// State that belongs to one repository and is looked up by an id inside it (the spec pipeline's jobs, for example).
-/// Two repositories can have the same ids, and work that finishes after you switched repository must land in the repository it started in.
-public struct ScopedStore<Value> {
-    private var items: [String: [String: Value]] = [:]
-    public init() {}
-
-    public subscript(scope: String, id: String) -> Value? {
-        get { items[scope]?[id] }
-        set { items[scope, default: [:]][id] = newValue; if newValue == nil, items[scope]?.isEmpty == true { items[scope] = nil } }
-    }
-
-    public func all(in scope: String) -> [String: Value] { items[scope] ?? [:] }
-
-    /// Changes the value in that scope, starting from `new` when it has none yet.
-    public mutating func modify(_ scope: String, _ id: String, new: @autoclosure () -> Value, _ change: (inout Value) -> Void) {
-        var v = items[scope]?[id] ?? new()
-        change(&v)
-        items[scope, default: [:]][id] = v
-    }
-
-    /// Changes the value only when it exists. Late news about work that was discarded does not bring it back.
-    public mutating func modifyExisting(_ scope: String, _ id: String, _ change: (inout Value) -> Void) {
-        guard var v = items[scope]?[id] else { return }
-        change(&v)
-        items[scope]?[id] = v
-    }
-}
-
 extension RepoRef {
     /// Folders inside one repository are one repository. `roots` maps a reference's `key` to the top folder git reported for it; a folder
     /// that has not been looked up yet stays as it is. The first appearance keeps its place in the list.
@@ -83,24 +61,43 @@ extension RepoRef {
     }
 }
 
-/// The specs CPilot is building without asking, per repository, so a restart or a switch to another repository picks them up again.
-/// Everything else (which tasks are started, coded or merged) is read back from git and `tasks.md`.
+/// Where one spec stands in the pipeline when nothing is on screen: kept on disk so a restart, or a repository you are not looking at,
+/// does not lose it. Everything else (which tasks are started, coded or merged) is read back from git and `tasks.md`.
+public struct SpecRunEntry: Codable, Equatable, Sendable {
+    public var autonomy: String                 // "step", "plan" or "hands"
+    public var stage: String?                   // a stage was being written when CPilot stopped
+    public var draftStage: String?              // a written stage waits for approval
+    public var draftText: String?
+    public var gate = false                     // spec, plan and tasks are written; waiting for "start building"
+    public var attempts = 0                     // times the interrupted or failed stage was started again
+    public init(autonomy: String, stage: String? = nil, draftStage: String? = nil, draftText: String? = nil, gate: Bool = false, attempts: Int = 0) {
+        self.autonomy = autonomy; self.stage = stage; self.draftStage = draftStage; self.draftText = draftText; self.gate = gate; self.attempts = attempts
+    }
+    public var handsOff: Bool { autonomy == "hands" }
+    /// Nothing is left to carry on or to wait for.
+    public var isIdle: Bool { !handsOff && stage == nil && draftText == nil && !gate }
+}
+
 public struct SpecRunState: Codable, Equatable {
-    public private(set) var handsOff: [String: [String]] = [:]
+    public private(set) var entries: [String: [String: SpecRunEntry]] = [:]
     public init() {}
 
-    public mutating func arm(_ id: String, in scope: String) {
-        if handsOff[scope]?.contains(id) != true { handsOff[scope, default: []].append(id) }
+    /// Keeps the entry while there is something to carry on or wait for, and forgets it otherwise.
+    public mutating func set(_ entry: SpecRunEntry, _ id: String, in scope: String) {
+        if entry.isIdle { remove(id, in: scope) } else { entries[scope, default: [:]][id] = entry }
     }
 
-    /// The spec is handed on (pull requests open and auto-merge on), finished, or gone.
-    public mutating func finish(_ id: String, in scope: String) {
-        handsOff[scope]?.removeAll { $0 == id }
-        if handsOff[scope]?.isEmpty == true { handsOff[scope] = nil }
+    public mutating func remove(_ id: String, in scope: String) {
+        entries[scope]?[id] = nil
+        if entries[scope]?.isEmpty == true { entries[scope] = nil }
     }
 
-    public func pending(in scope: String) -> [String] { handsOff[scope] ?? [] }
-    public func hasWork(in scope: String) -> Bool { !(handsOff[scope] ?? []).isEmpty }
+    public func entry(_ id: String, in scope: String) -> SpecRunEntry? { entries[scope]?[id] }
+    /// The specs of one repository that have something to carry on, in a steady order.
+    public func pending(in scope: String) -> [(id: String, entry: SpecRunEntry)] { (entries[scope] ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) } }
+    public func hasWork(in scope: String) -> Bool { !(entries[scope] ?? [:]).isEmpty }
+    /// Repositories with a spec to carry on.
+    public var scopes: [String] { entries.keys.sorted() }
 
     public static func load(from url: URL) -> SpecRunState {
         (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(SpecRunState.self, from: $0) } ?? SpecRunState()
@@ -109,6 +106,33 @@ public struct SpecRunState: Codable, Equatable {
     public func save(to url: URL) {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(self) { try? data.write(to: url, options: .atomic) }
+    }
+}
+
+/// What to do with a saved spec when CPilot starts or you open its repository.
+public enum SpecResume {
+    public enum Action: Equatable, Sendable {
+        case drop                                   // the spec's folder is gone
+        case settle                                 // nothing to redo; forget the interrupted stage
+        case rewrite(stage: String, attempts: Int)  // a stage was being written: write it again
+        case giveUp(stage: String, attempts: Int)   // it failed too many times: say so and stop
+        case review                                 // a written stage is waiting: approve it if the autonomy says so, else wait for you
+        case wait                                   // waiting for you (start building)
+        case build                                  // hands-off: carry on building
+    }
+
+    public static let maxAttempts = 3
+
+    public static func decide(_ e: SpecRunEntry, docExists: Bool, hasSpec: Bool, hasDraft: Bool) -> Action {
+        guard docExists else { return .drop }
+        if hasDraft { return .review }
+        if let stage = e.stage {
+            if stage == "specify", hasSpec { return .settle }               // an answer round was cut short: the spec on disk stands
+            if e.attempts >= maxAttempts { return .giveUp(stage: stage, attempts: e.attempts) }
+            return .rewrite(stage: stage, attempts: e.attempts + 1)
+        }
+        if e.gate { return .wait }
+        return e.handsOff ? .build : .wait
     }
 }
 

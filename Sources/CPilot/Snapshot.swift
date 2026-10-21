@@ -171,8 +171,8 @@ struct PopoverShot: View {
 
         // Specs and stacks
         let repo = PRCenter.Repo(dir: "/Users/demo/code/shop", environment: nil)
-        let sc = SpecCenter.shared
-        sc.repo = repo; sc.trunk = "main"
+        let sc = SpecHub.shared.show(repo)
+        sc.trunk = "main"
         let tasks = "# Tasks: Cursor pagination\n- [x] T001 Cursor encoding helper (R1) branch: spec-014-t001\n- [x] T002 Paginate the orders endpoint (R1, R2) needs: T001 branch: spec-014-t002\n- [ ] T003 Keep offset clients working (R3) needs: T002 branch: spec-014-t003 pr: #223\n- [ ] T004 Update the API docs (R4)\n- [ ] T005 Load test the new endpoints (R1) needs: T003"
         sc.docs = [
             SpecDoc(id: "012-login-rate-limiting", number: 12, title: "Login rate limiting", spec: "# Login rate limiting\n> Source: Issue #198", plan: "# Plan", tasksText: "- [x] T001 a\n- [ ] T002 b\n- [ ] T003 c\n- [ ] T004 d", source: "Issue #198"),

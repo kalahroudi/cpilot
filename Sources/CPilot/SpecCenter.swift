@@ -28,7 +28,9 @@ enum Autonomy: String, CaseIterable {
 /// Documents are written by a read-only agent and saved only after you approve them (or automatically, depending on the autonomy).
 @MainActor @Observable
 final class SpecCenter {
-    static let shared = SpecCenter()
+    /// The repository on screen. Every repository has its own center, so a build in one carries on while you look at another.
+    static var shared: SpecCenter { SpecHub.shared.shown }
+    init(repo: PRCenter.Repo? = nil) { self.repo = repo }
 
     struct Draft: Equatable { var stage: SpecPrompts.Stage; var text: String }
     struct Job {
@@ -43,34 +45,40 @@ final class SpecCenter {
         /// The result of the last Submit stack: a line to show next to the button, and whether it failed.
         var submitNote: String?
         var submitFailed = false
+        /// The stack was handed to auto-merge: nothing is left for CPilot to build in this spec.
+        var handedOn = false
     }
 
-    var repo: PRCenter.Repo?
-    /// Repos whose specs are committed instead of hidden from git ("environment|folder").
-    private var trackedRepos: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "trackedSpecRepos") ?? [])
+    let repo: PRCenter.Repo?
+    private var hub: SpecHub { SpecHub.shared }
+    /// Repos whose specs are committed instead of hidden from git ("environment|folder"). Read each time: every center shares it.
+    private static let trackedKey = "trackedSpecRepos"
     private func trackKey(_ r: PRCenter.Repo) -> String { "\(r.environment ?? "")|\(r.dir)" }
-    var tracked: Bool { repo.map { trackedRepos.contains(trackKey($0)) } ?? false }
+    var tracked: Bool { repo.map { Set(UserDefaults.standard.stringArray(forKey: Self.trackedKey) ?? []).contains(trackKey($0)) } ?? false }
     func setTracked(_ on: Bool) async {
         guard let r = repo else { return }
-        if on { trackedRepos.insert(trackKey(r)) } else { trackedRepos.remove(trackKey(r)) }
-        UserDefaults.standard.set(Array(trackedRepos), forKey: "trackedSpecRepos")
+        var set = Set(UserDefaults.standard.stringArray(forKey: Self.trackedKey) ?? [])
+        if on { set.insert(trackKey(r)) } else { set.remove(trackKey(r)) }
+        UserDefaults.standard.set(Array(set), forKey: Self.trackedKey)
         await Exec.with(env) { await Specs.setTracked(on, in: r.dir) }
     }
     var docs: [SpecDoc] = []
     var constitution: String?
     var selected: String?
-    /// Jobs belong to the repository they started in: two repositories can have a spec with the same id, and a stage that finishes
-    /// after you switched repository must not write into the new one.
-    private var store = ScopedStore<Job>()
-    /// Specs built hands-off, kept on disk so a restart or a switch of repository carries on by itself.
-    private static let runsURL = AppPaths().root.appendingPathComponent("spec-runs.json")
-    private var runs = SpecRunState.load(from: SpecCenter.runsURL)
-    private var resuming: Set<String> = []
-    private func persistRuns() { runs.save(to: Self.runsURL) }
+    var jobs: [String: Job] = [:]
     private var scope: String { repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key } ?? "" }
-    var jobs: [String: Job] { store.all(in: scope) }
-    private func change(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modifyExisting(scope, id, f) }
-    private func create(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modify(scope, id, new: Job(), f) }
+    private func change(_ id: String, _ f: (inout Job) -> Void) { if var j = jobs[id] { f(&j); jobs[id] = j } }
+    private func create(_ id: String, _ f: (inout Job) -> Void) { var j = jobs[id] ?? Job(); f(&j); jobs[id] = j }
+
+    /// Keeps where this spec stands on disk, so a restart carries on from here. Forgotten once there is nothing left to carry on or wait for.
+    private func saveRun(_ id: String, attempts: Int? = nil) {
+        guard let j = jobs[id] else { hub.runs.remove(id, in: scope); hub.save(); return }
+        let e = SpecRunEntry(autonomy: j.handedOn ? Autonomy.step.rawValue : j.autonomy.rawValue, stage: j.running ? j.stage : nil,
+                             draftStage: j.draft?.stage.rawValue, draftText: j.draft?.text, gate: j.gate,
+                             attempts: attempts ?? hub.runs.entry(id, in: scope)?.attempts ?? 0)
+        hub.runs.set(e, id, in: scope); hub.save()
+        if e.handsOff { hub.keepWatching() }
+    }
     var issues: [GitHub.Issue] = []
     var issuesLoading = false
     var issueError: String?
@@ -88,43 +96,80 @@ final class SpecCenter {
     static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
     private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
+    private var resuming: Set<String> = []
 
     func doc(_ id: String?) -> SpecDoc? { docs.first { $0.id == id } }
     func status(_ d: SpecDoc) -> SpecDoc.Status { d.status(merged: merged, started: started) }
 
     // MARK: Loading
 
+    /// Show this repository in the Specs pane.
     func open(_ r: PRCenter.Repo) async {
-        repo = r; Project.shared.current = r; selected = nil; await refresh()
+        let c = hub.show(r)
+        Project.shared.current = r
+        await c.load()
+    }
+
+    /// Reads the repository (when it has not been read lately), then carries on whatever was left half done.
+    func load() async {
+        if lastRefresh == nil { await refresh() } else { await refreshIfStale(manual: false) }
         await resumeRuns()
     }
 
-    /// At launch: if the repository you were in has a build running hands-off, open it so the build goes on without you opening Specs.
-    func resumeOnLaunch() async {
-        guard !AppModel.shared.demo, repo == nil else { return }
-        Project.shared.ensureDefault()
-        guard let r = Project.shared.current, runs.hasWork(in: RepoRef(dir: r.dir, environment: r.environment).key) else { return }
-        await open(r)
-    }
-
-    /// Carries on every hands-off build of this repository from what git and `tasks.md` say: missing stages are written, started tasks are
-    /// picked up again, ready tasks start, and a finished stack is submitted.
-    private func resumeRuns() async {
-        let s = scope
-        for id in runs.pending(in: s) where resuming.insert(s + "\u{1}" + id).inserted {
-            defer { resuming.remove(s + "\u{1}" + id) }
-            await resume(id, in: s)
+    /// Carries on every spec of this repository that has something to carry on, from what was saved and what git and `tasks.md` say.
+    func resumeRuns() async {
+        for (id, _) in hub.runs.pending(in: scope) where resuming.insert(id).inserted {
+            await resume(id)
+            resuming.remove(id)
         }
     }
 
-    private func resume(_ id: String, in s: String) async {
-        guard s == scope, let d = doc(id), d.spec != nil else { runs.finish(id, in: s); persistRuns(); return }   // never approved, or removed
-        create(s, id) { $0.autonomy = .hands }
-        guard jobs[id]?.running != true else { return }
+    private func dropRun(_ id: String) { hub.runs.remove(id, in: scope); hub.save() }
+
+    private func resume(_ id: String) async {
+        guard let e = hub.runs.entry(id, in: scope) else { return }
+        if jobs[id]?.running == true || jobs[id]?.submitting == true { return }
+        create(id) { j in
+            j.autonomy = Autonomy(rawValue: e.autonomy) ?? .step; j.gate = e.gate
+            if j.draft == nil, let ds = e.draftStage, let st = SpecPrompts.Stage(rawValue: ds), let t = e.draftText { j.draft = Draft(stage: st, text: t) }
+        }
+        let d = doc(id)
+        switch SpecResume.decide(e, docExists: d != nil, hasSpec: d?.spec != nil, hasDraft: jobs[id]?.draft != nil) {
+        case .drop: dropRun(id)
+        case .settle: saveRun(id)
+        case .rewrite(let stage, let attempts):
+            guard let st = SpecPrompts.Stage(rawValue: stage) else { dropRun(id); return }
+            saveRun(id, attempts: attempts)
+            await run(id, st)
+        case .giveUp(let stage, let attempts):
+            let message = "The \(stage) could not be written after \(attempts) tries."
+            change(id) { $0.error = message }; saveRun(id, attempts: 0)
+            AppModel.shared.notify("\(d?.title ?? id): \(message)", body: "Open the spec to try again.")
+        case .review:
+            if let draft = jobs[id]?.draft, shouldAutoApprove(id, draft.stage, draft.text) { await approve(id, text: draft.text) }   // otherwise it waits for you
+        case .wait: break
+        case .build: if jobs[id]?.handedOn != true { await build(id) }
+        }
+    }
+
+    /// The hands-off build of one spec, from wherever it stands: missing stages are written, tasks that were started are picked up again,
+    /// ready tasks start, and a finished stack is submitted.
+    private func build(_ id: String) async {
+        guard let d = doc(id), d.spec != nil else { dropRun(id); return }      // the spec was never approved: nothing to build
         if d.plan == nil { await run(id, .plan); return }
         if d.tasks.isEmpty { await run(id, .tasks); return }
         reattachTasks(id, d)
         await continueBuilding(id)
+    }
+
+    /// Called now and then by the hub for hands-off builds that have gone quiet: if no task is working and nothing is ready or submitted, look again.
+    func watchdog() async {
+        for (id, e) in hub.runs.pending(in: scope) where e.handsOff && resuming.insert(id).inserted {
+            defer { resuming.remove(id) }
+            guard let j = jobs[id], !j.running, !j.submitting, !j.handedOn, j.draft == nil, !j.gate else { continue }
+            if taskSessions.filter({ $0.key.hasPrefix(id + "/") }).compactMap({ Workspace.shared.controller($0.value) }).contains(where: \.isBusy) { continue }
+            await build(id)
+        }
     }
 
     /// Task sessions started before a restart: listen for their turns again, and nudge the ones that stopped before writing any code.
@@ -135,7 +180,7 @@ final class SpecCenter {
                   let meta = Workspace.shared.session(forBranch: branch, repo: r.dir, environment: r.environment),
                   let c = Workspace.shared.controller(meta.id) else { continue }
             taskSessions["\(id)/\(t.id)"] = c.id
-            c.onTurnEnd = turnHandler(id, t.id, scope: scope)
+            c.onTurnEnd = turnHandler(id, t.id)
             if !coded.contains(branch), !c.isBusy {
                 c.loadIfNeeded()
                 c.draft = "CPilot was restarted while you worked on \(t.id) \(t.title). Carry on from where you stopped and finish the task."
@@ -144,8 +189,8 @@ final class SpecCenter {
         }
     }
 
-    private func turnHandler(_ id: String, _ taskId: String, scope s: String) -> (SessionController) -> Void {
-        { [weak self] session in Task { @MainActor in await self?.taskTurnEnded(id, taskId, session, scope: s) } }
+    private func turnHandler(_ id: String, _ taskId: String) -> (SessionController) -> Void {
+        { [weak self] session in Task { @MainActor in await self?.taskTurnEnded(id, taskId, session) } }
     }
 
     /// True when the last refresh is recent enough that another would only spend rate limit.
@@ -199,7 +244,7 @@ final class SpecCenter {
 
     func start(_ source: SpecSource, autonomy: Autonomy, allowGit: Bool = false) async {
         guard let r = repo else { return }
-        let e = env, s = scope
+        let e = env
         let number = Specs.nextNumber(existing: docs.map(\.id))
         let id = Specs.folderName(number: number, title: source.title)
         do {
@@ -211,8 +256,8 @@ final class SpecCenter {
         if allowGit, autonomy == .hands { Workspace.shared.allowCommands(["git add", "git commit", "git status", "git diff"], for: r.dir) }
         await refresh()
         selected = id
-        store[s, id] = Job(autonomy: autonomy)
-        if autonomy == .hands { runs.arm(id, in: s); persistRuns() }
+        jobs[id] = Job(autonomy: autonomy)
+        saveRun(id)
         await run(id, .specify, requirement: source.requirement, label: source.label, images: source.images)
     }
 
@@ -228,10 +273,11 @@ final class SpecCenter {
     func run(_ id: String, _ stage: SpecPrompts.Stage, requirement: String? = nil, label: String? = nil, answers: String? = nil,
              images: [(mediaType: String, data: Data)] = []) async {
         guard let r = repo else { return }
-        let s = scope
-        create(s, id) { $0.running = true; $0.stage = stage.rawValue; $0.status = "Starting…"; $0.error = nil; $0.draft = nil; $0.gate = false }
+        create(id) { $0.running = true; $0.stage = stage.rawValue; $0.status = "Starting…"; $0.error = nil; $0.draft = nil; $0.gate = false }
+        saveRun(id)
         let d = doc(id)
-        let assume = (store[s, id]?.autonomy ?? .step) != .step
+        let autonomy = jobs[id]?.autonomy ?? .step
+        let assume = autonomy != .step
         let prompt: String
         switch stage {
         case .specify:
@@ -241,17 +287,32 @@ final class SpecCenter {
         case .plan: prompt = SpecPrompts.plan(spec: d?.spec ?? "", constitution: constitution)
         case .tasks: prompt = SpecPrompts.tasks(spec: d?.spec ?? "", plan: d?.plan ?? "", constitution: constitution)
         }
-        do {
-            let reply = try await SpecStageRunner.run(prompt: prompt, cwd: r.dir, environment: env, images: images) { [weak self] p in Task { @MainActor in self?.change(s, id) { $0.status = p } } }
-            let text = SpecPrompts.extractDocument(reply)
-            if stage == .tasks, Specs.parseTasks(text).isEmpty { throw SpecStageError.failed("The agent did not write any tasks in the expected format. Try again.") }
-            if stage == .specify, Specs.title(of: text) == nil { throw SpecStageError.failed("The agent did not write a spec. Try again.") }
-            change(s, id) { $0.running = false; $0.status = ""; $0.draft = Draft(stage: stage, text: text) }
-            // Switched repository meanwhile: the draft waits in its own repository for you to come back and approve it.
-            if s == scope, shouldAutoApprove(id, stage, text) { await approve(id, text: text) }
-        } catch {
-            let message = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
-            change(s, id) { $0.running = false; $0.error = message }
+        // Nobody is watching a plan-for-me or hands-off run, so a stage that fails is tried again before it is reported.
+        let retries = autonomy == .step ? 0 : 2
+        var attempt = 0
+        while true {
+            do {
+                let reply = try await SpecStageRunner.run(prompt: prompt, cwd: r.dir, environment: env, images: images) { [weak self] p in Task { @MainActor in self?.change(id) { $0.status = p } } }
+                let text = SpecPrompts.extractDocument(reply)
+                if stage == .tasks, Specs.parseTasks(text).isEmpty { throw SpecStageError.failed("The agent did not write any tasks in the expected format. Try again.") }
+                if stage == .specify, Specs.title(of: text) == nil { throw SpecStageError.failed("The agent did not write a spec. Try again.") }
+                change(id) { $0.running = false; $0.status = ""; $0.draft = Draft(stage: stage, text: text) }
+                saveRun(id, attempts: 0)
+                if shouldAutoApprove(id, stage, text) { await approve(id, text: text) }
+                return
+            } catch {
+                if attempt < retries, !Task.isCancelled {
+                    attempt += 1
+                    change(id) { $0.status = "Trying again (\(attempt) of \(retries))…" }
+                    try? await Task.sleep(for: .seconds(attempt == 1 ? 5 : 20))
+                    continue
+                }
+                let message = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
+                change(id) { $0.running = false; $0.error = message }
+                saveRun(id)
+                if autonomy != .step { AppModel.shared.notify("\(d?.title ?? id): the \(stage.rawValue) could not be written", body: message) }
+                return
+            }
         }
     }
 
@@ -265,16 +326,16 @@ final class SpecCenter {
 
     func approve(_ id: String, text: String) async {
         guard let r = repo, let draft = jobs[id]?.draft else { return }
-        let s = scope
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
         do { try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir, tracked: tracked) } }
-        catch { let message = AppModel.shared.capture(error, action: "Save the \(file)"); change(s, id) { $0.error = message }; return }
-        change(s, id) { $0.draft = nil }
+        catch { let message = AppModel.shared.capture(error, action: "Save the \(file)"); change(id) { $0.error = message }; saveRun(id); return }
+        change(id) { $0.draft = nil }
+        saveRun(id)
         await refresh()
         await advance(id, after: draft.stage)
     }
 
-    func discard(_ id: String) { change(scope, id) { $0.draft = nil } }
+    func discard(_ id: String) { change(id) { $0.draft = nil }; saveRun(id) }
 
     private func advance(_ id: String, after stage: SpecPrompts.Stage) async {
         guard let d = doc(id) else { return }
@@ -288,7 +349,7 @@ final class SpecCenter {
             if autonomy == .step { return }
             await run(id, .tasks)
         case .tasks:
-            if autonomy == .hands { await implementReady(id) } else if autonomy == .plan { change(scope, id) { $0.gate = true } }
+            if autonomy == .hands { await implementReady(id) } else if autonomy == .plan { change(id) { $0.gate = true }; saveRun(id) }
         }
     }
 
@@ -296,7 +357,7 @@ final class SpecCenter {
 
     // MARK: Building
 
-    func startBuilding(_ id: String) async { change(scope, id) { $0.gate = false }; await implementReady(id) }
+    func startBuilding(_ id: String) async { change(id) { $0.gate = false }; saveRun(id); await implementReady(id) }
 
     /// Starts every task that can start now (up to two at a time), each on its own branch stacked on what it needs.
     func implementReady(_ id: String, limit: Int = 2) async {
@@ -308,34 +369,32 @@ final class SpecCenter {
 
     func implement(_ id: String, _ task: SpecTask, focus: Bool = true) async {
         guard let r = repo, let d = doc(id), let text = d.tasksText else { return }
-        let s = scope
         let branch = Specs.taskBranch(spec: id, task: task)
         let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
         let prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
         do {
             let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
-                                                         title: "\(task.id) \(task.title)", prompt: prompt, focus: focus, onTurnEnd: turnHandler(id, task.id, scope: s))
+                                                         title: "\(task.id) \(task.title)", prompt: prompt, focus: focus, onTurnEnd: turnHandler(id, task.id))
             taskSessions["\(id)/\(task.id)"] = c.id
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
             await refresh()
-        } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(s, id) { $0.error = message } }
+        } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message } }
     }
 
-    /// A task's turn ended. In another repository than the one showing, the follow-up is left to `resumeRuns`, which runs when you open it again.
-    func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController, scope s: String) async {
-        guard s == scope else { return }
+    /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
+    func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
         await continueBuilding(id)
     }
 
     private func continueBuilding(_ id: String) async {
         await refresh()
-        guard jobs[id]?.autonomy == .hands else { return }
+        guard jobs[id]?.autonomy == .hands, jobs[id]?.handedOn != true else { return }
         await implementReady(id)
         let d = doc(id)
         let all = d?.tasks ?? []
         let outstanding = all.filter { !$0.done && !($0.branch.map(merged.contains) ?? false) }
-        if outstanding.isEmpty, !all.isEmpty { runs.finish(id, in: scope); persistRuns(); return }   // everything merged: nothing left to carry on
+        if outstanding.isEmpty, !all.isEmpty { change(id) { $0.handedOn = true }; dropRun(id); return }   // everything merged: nothing left to carry on
         let allCoded = outstanding.allSatisfy { $0.branch.map(coded.contains) ?? false }
         if allCoded, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
     }
@@ -343,9 +402,8 @@ final class SpecCenter {
     /// Pushes the stack of this spec's branches, opens the pull requests, and lets the merge rules take it from there.
     func submitAndArm(_ id: String) async {
         guard let r = repo, jobs[id]?.submitting != true else { return }
-        let s = scope
-        create(s, id) { $0.submitting = true; $0.submitNote = nil }
-        defer { create(s, id) { $0.submitting = false } }
+        create(id) { $0.submitting = true; $0.submitNote = nil }
+        defer { create(id) { $0.submitting = false } }
         let e = env
         do {
             let count = try await Exec.with(e) { () -> Int in
@@ -355,13 +413,13 @@ final class SpecCenter {
                 return count
             }
             StackCenter.shared.arm(repo: r)
-            runs.finish(id, in: s); persistRuns()
-            create(s, id) { $0.submitFailed = false; $0.submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass." }
+            create(id) { $0.handedOn = true; $0.submitFailed = false; $0.submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass." }
+            dropRun(id)
             AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
             await refresh()
         } catch {
             let message = AppModel.shared.capture(error, action: "Submit the stack")
-            create(s, id) { $0.submitFailed = true; $0.submitNote = message }
+            create(id) { $0.submitFailed = true; $0.submitNote = message }
         }
     }
 
@@ -404,5 +462,54 @@ final class SpecCenter {
         let id = Specs.folderName(number: Specs.nextNumber(existing: docs.map(\.id)), title: title)
         for (name, text) in files { try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(name)", text, in: r.dir, tracked: tracked) } }
         await refresh(); selected = id
+    }
+}
+
+/// Every repository has its own `SpecCenter`; the hub holds them, says which one the Specs pane shows, and keeps the hands-off builds going
+/// on disk and in time: they are picked up again at launch, and looked at every few minutes in case a task finished while nobody listened.
+@MainActor @Observable
+final class SpecHub {
+    static let shared = SpecHub()
+    var shown = SpecCenter()
+    @ObservationIgnored private var centers: [String: SpecCenter] = [:]
+    @ObservationIgnored var runs = SpecRunState.load(from: SpecHub.url)
+    @ObservationIgnored private var watching: Task<Void, Never>?
+    private static let url = AppPaths().root.appendingPathComponent("spec-runs.json")
+
+    func save() { runs.save(to: Self.url) }
+
+    func center(for r: PRCenter.Repo) -> SpecCenter {
+        let key = RepoRef(dir: r.dir, environment: r.environment).key
+        if let c = centers[key] { return c }
+        let c = SpecCenter(repo: r); centers[key] = c; return c
+    }
+
+    @discardableResult func show(_ r: PRCenter.Repo) -> SpecCenter { let c = center(for: r); if shown !== c { shown = c }; return c }
+
+    /// At launch: every repository with a spec to carry on is read and carried on, whether or not you ever open Specs.
+    func resumeAll() async {
+        guard !AppModel.shared.demo else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for key in runs.scopes {
+                guard let ref = RepoRef(key: key) else { continue }
+                let c = center(for: PRCenter.Repo(dir: ref.dir, environment: ref.environment))
+                group.addTask { await c.load() }
+            }
+        }
+        keepWatching()
+    }
+
+    /// While any spec builds hands-off, look at it every three minutes. Costs nothing when none does.
+    func keepWatching() {
+        guard watching == nil else { return }
+        watching = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(180))
+                guard let self else { return }
+                let keys = self.runs.scopes.filter { k in self.runs.pending(in: k).contains { $0.entry.handsOff } }
+                if keys.isEmpty { self.watching = nil; return }
+                for k in keys { await self.centers[k]?.watchdog() }
+            }
+        }
     }
 }

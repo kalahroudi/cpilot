@@ -5,7 +5,7 @@ import AppKit
 import CPilotKit
 
 struct SpecsView: View {
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     let pr = PRCenter.shared
     @State private var mode = 0                 // 0 specs, 1 issues
     @State private var query = ""
@@ -58,7 +58,7 @@ struct SpecsView: View {
 }
 
 struct SpecList: View {
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     var body: some View {
         let groups: [(String, [SpecDoc.Status])] = [("In progress", [.inProgress]), ("Ready to build", [.ready]), ("Planned", [.planned]), ("Draft", [.draft]), ("Done", [.done])]
         ScrollView {
@@ -98,7 +98,7 @@ struct ProgressRing: View {
 }
 
 struct IssueList: View {
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     @Binding var query: String
     var body: some View {
         VStack(spacing: 0) {
@@ -130,7 +130,7 @@ struct IssueList: View {
 
 struct SpecDetail: View {
     let doc: SpecDoc
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     @State private var editing: (file: String, text: String)?
     @State private var answers = ""
 
@@ -265,7 +265,7 @@ struct TaskRow: View {
     let doc: SpecDoc
     let task: SpecTask
     let ready: Bool
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
 
     var body: some View {
         let isMerged = task.branch.map(center.merged.contains) ?? false
@@ -295,7 +295,7 @@ struct TaskRow: View {
 struct DraftCard: View {
     let doc: SpecDoc
     let draft: SpecCenter.Draft
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     @State private var text = ""
 
     var body: some View {
@@ -331,7 +331,7 @@ struct DocEditor: View {
 
 /// Every way in. All of them end at the same draft spec.
 struct NewWorkSheet: View {
-    let center = SpecCenter.shared
+    var center: SpecCenter { SpecCenter.shared }
     let ws = Workspace.shared
     @Environment(\.dismiss) private var dismiss
     enum Entry: String, CaseIterable { case issue, text, chat, code, capture, folder }
