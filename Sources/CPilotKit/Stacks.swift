@@ -3,7 +3,7 @@
 import Foundation
 
 /// A branch in a stack: the branch it sits on, the commit it was last built on, and where it stands.
-public struct StackBranch: Identifiable, Equatable, Sendable {
+public struct StackBranch: Identifiable, Equatable, Sendable, Codable {
     public var name: String
     public var parent: String
     /// The parent's tip when this branch was last created or restacked.
@@ -18,6 +18,8 @@ public struct StackBranch: Identifiable, Equatable, Sendable {
     public var title: String?
     /// The pull request's head commit when the stack was read.
     public var prHead: String?
+    /// GitHub's merge verdict for the pull request (`mergeStateStatus`), as of the last read.
+    public var mergeState: String?
     public var id: String { name }
     public var isMerged: Bool { prState == "MERGED" }
     public init(name: String, parent: String, base: String?, needsRestack: Bool = false, commits: Int = 0, depth: Int = 0, pr: Int? = nil, prState: String? = nil, title: String? = nil) {
@@ -25,7 +27,7 @@ public struct StackBranch: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct Stack: Equatable, Sendable, Identifiable {
+public struct Stack: Equatable, Sendable, Identifiable, Codable {
     public var trunk: String
     /// Bottom first.
     public var branches: [StackBranch]
@@ -50,6 +52,7 @@ public struct Stack: Equatable, Sendable, Identifiable {
 
 extension StackHost {
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await merge(number, method: method) }
+    public func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws { try await merge(number, method: method, expectedHead: expectedHead) }
 }
 
 /// What a stack needs from GitHub. The live version uses the GitHub command line; tests use a stand-in.
@@ -61,6 +64,8 @@ public protocol StackHost: Sendable {
     func merge(_ number: Int, method: MergeMethod) async throws
     /// Merges only if the branch is still at `expectedHead`; a push made after the stack was read is never left out and then deleted.
     func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws
+    /// `admin` merges past the repository's rules. Only ever on the user's explicit confirmation, never from auto-merge.
+    func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws
 }
 
 public struct LiveStackHost: StackHost {
@@ -82,6 +87,7 @@ public struct LiveStackHost: StackHost {
     public func setBody(_ number: Int, body: String) async throws { try await Shell.check("gh", ["pr", "edit", String(number), "--body", body], cwd: cwd, timeout: 60) }
     public func merge(_ number: Int, method: MergeMethod) async throws { try await GitHub.merge(number, method: method, auto: false, in: dir) }
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await GitHub.merge(number, method: method, auto: false, expectedHead: expectedHead, in: dir) }
+    public func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws { try await GitHub.merge(number, method: method, auto: false, admin: admin, expectedHead: expectedHead, in: dir) }
 }
 
 public enum StackError: Error, LocalizedError, Equatable {
@@ -165,7 +171,7 @@ public enum Stacks {
                 sb.needsRestack = !(await gitOK(["merge-base", "--is-ancestor", m.parent, b], in: dir))
                 sb.commits = Int((try? await git(["rev-list", "--count", "\(m.parent)..\(b)"], in: dir)) ?? "0") ?? 0
                 if let remote = try? await git(["rev-parse", "--verify", "--quiet", "origin/\(b)"], in: dir), let local = try? await git(["rev-parse", b], in: dir) { sb.pushed = remote == local }
-                if let p = info(b) { sb.pr = p.number; sb.prState = p.state; sb.title = p.title; sb.prHead = p.headRefOid }
+                if let p = info(b) { sb.pr = p.number; sb.prState = p.state; sb.title = p.title; sb.prHead = p.headRefOid; sb.mergeState = p.mergeStateStatus }
                 list.append(sb)
                 for child in live.filter({ $0.value.parent == b }).keys.sorted() { await visit(child, depth: depth + 1) }
             }
@@ -322,10 +328,10 @@ public enum Stacks {
 
     /// Merges the lowest open pull request. The next one is pointed at the trunk first so GitHub does not close it,
     /// then the rest of the stack is restacked on the updated trunk. One step at a time: checks must pass again before the next.
-    public static func mergeBottom(_ stack: Stack, in dir: String, host: StackHost, method: MergeMethod = .squash) async throws -> String {
+    public static func mergeBottom(_ stack: Stack, in dir: String, host: StackHost, method: MergeMethod = .squash, admin: Bool = false) async throws -> String {
         guard let bottom = stack.branches.first(where: { !$0.isMerged && $0.pr != nil && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("There is no open pull request to merge.") }
         for child in stack.branches where child.parent == bottom.name && child.pr != nil && child.prState == "OPEN" { try await host.setBase(child.pr!, base: stack.trunk) }
-        try await host.merge(n, method: method, expectedHead: bottom.prHead)
+        try await host.merge(n, method: method, expectedHead: bottom.prHead, admin: admin)
         _ = try? await git(["fetch", "--prune", "origin"], in: dir, timeout: 120)
         return bottom.name
     }

@@ -19,6 +19,9 @@ final class StackCenter {
     var conflict: (branch: String, files: [String])?
     var notice: String?
     var method: MergeMethod = .squash
+    /// Open pull requests GitHub's rules refuse to merge (a ruleset or branch protection), even though CPilot's own checks pass.
+    /// Auto-merge leaves them alone until GitHub's verdict changes; otherwise it would fail the same way every minute.
+    var policyBlocked: Set<Int> = []
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
 
     /// Repositories whose stacks CPilot merges by itself, bottom first, whenever the merge rules pass. Checked once a minute while any is armed.
@@ -53,6 +56,7 @@ final class StackCenter {
                 let host = LiveStackHost(dir: dir)
                 guard let stack = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { !$0.isMerged && $0.prState == "OPEN" } }),
                       let bottom = stack.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { return false }
+                if policyBlocked.contains(n) { if bottom.mergeState == "BLOCKED" { return true } else { policyBlocked.remove(n) } }
                 let gate = await PRCenter.shared.gateFor(n, dir: dir)
                 guard gate.ready else { return true }
                 do {
@@ -60,7 +64,13 @@ final class StackCenter {
                     _ = try await Stacks.sync(in: dir, host: host)
                     if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
                     AppModel.shared.notify("Merged #\(n)", body: stack.branches.last?.title ?? "")
-                } catch { AppLog.error(error, context: "auto-merge stack") }
+                } catch {
+                    if GitHub.isPolicyBlocked(error) {
+                        policyBlocked.insert(n)
+                        AppLog.info("auto-merge stack: GitHub's rules block #\(n); waiting for that to change")
+                        AppModel.shared.notify("#\(n) can't merge", body: "Its checks pass, but GitHub's rules for the repository refuse the merge.")
+                    } else { AppLog.error(error, context: "auto-merge stack") }
+                }
                 return true
             }
             if !open { armed[key] = nil; UserDefaults.standard.set(armed, forKey: "armedStacks") }
@@ -68,11 +78,46 @@ final class StackCenter {
         if armed.isEmpty { watcher?.cancel(); watcher = nil }
     }
 
-    func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; conflict = nil; error = nil; notice = nil; await refresh() }
+    // MARK: Cache
 
+    /// What was last read for a repository. Kept per repository and on disk, so a screen opens with the last known stacks while the new read runs.
+    private struct Snapshot: Codable { var stacks: [Stack]; var checks: [Int: [PullRequest.Check]]; var at: Date }
+    private static let freshFor: TimeInterval = 30
+    private static var cacheURL: URL { AppPaths().root.appendingPathComponent("stacks-cache.json") }
+    private var cache: [String: Snapshot] = {
+        guard let data = try? Data(contentsOf: StackCenter.cacheURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: Snapshot].self, from: data)) ?? [:]
+    }()
+    private(set) var loadedAt: Date?
+
+    private func cacheKey(_ r: PRCenter.Repo) -> String { r.dir + "|" + (r.environment ?? "") }
+
+    private func store(_ r: PRCenter.Repo) {
+        let now = Date()
+        cache[cacheKey(r)] = Snapshot(stacks: stacks, checks: checks, at: now); loadedAt = now
+        if let data = try? JSONEncoder().encode(cache) { try? data.write(to: Self.cacheURL, options: .atomic) }
+    }
+
+    var isStale: Bool { loadedAt.map { Date().timeIntervalSince($0) > Self.freshFor } ?? true }
+
+    /// Shows what is known right away. Reads again only when that is older than 30 seconds, or when `force` says something changed.
+    func open(_ r: PRCenter.Repo, force: Bool = false) async {
+        if r != repo {
+            repo = r; conflict = nil; error = nil; notice = nil
+            let c = cache[cacheKey(r)]
+            stacks = c?.stacks ?? []; checks = c?.checks ?? [:]; loadedAt = c?.at
+        }
+        Project.shared.current = r
+        if force || isStale { await refresh() }
+    }
+
+    /// Two steps, so the screen is useful early: the stacks and their pull requests as they are now, then the fetch and the check results.
     func refresh(manual: Bool = false) async {
         guard let r = repo, !loading else { return }
         loading = true; defer { loading = false }
+        let quick = await Exec.with(env) { await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir)) }
+        guard repo == r else { return }
+        if !quick.isEmpty || stacks.isEmpty { stacks = quick; noteBlocked() }
         let (loaded, results) = await Exec.with(env) { () -> ([Stack], [Int: [PullRequest.Check]]) in
             await Stacks.fetch(in: r.dir)
             let list = await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir))
@@ -80,10 +125,17 @@ final class StackCenter {
             for n in list.compactMap({ $0.bottomOpen?.pr }) { results[n] = await GitHub.checks(n, in: r.dir) }
             return (list, results)
         }
-        stacks = loaded; checks = results
+        guard repo == r else { return }
+        stacks = loaded; checks = results; noteBlocked(); store(r)
         // A conflict is whatever the repository says it is: a rebase stopped part-way. It survives a restart, and it clears once resolved or aborted.
         conflict = await Exec.with(env) { await Stacks.pendingConflict(in: r.dir) }.map { ($0.branch, $0.files) }
         if manual { AppModel.shared.show(stacks.isEmpty ? "Refreshed. No stacks in this repository." : "Refreshed \(stacks.count) stack\(stacks.count == 1 ? "" : "s").", error: false) }
+    }
+
+    /// A pull request GitHub no longer calls blocked is free to try again.
+    private func noteBlocked() {
+        let blocked = Set(stacks.compactMap { $0.bottomOpen }.filter { $0.mergeState == "BLOCKED" }.compactMap(\.pr))
+        policyBlocked.formIntersection(blocked)
     }
 
     /// Runs one stack operation with a visible label, on the right machine, and turns failures into plain messages.
@@ -124,12 +176,18 @@ final class StackCenter {
     }
 
     /// Merges the lowest pull request if every rule passes, then restacks and resubmits the rest.
-    func mergeBottom(_ s: Stack) async {
+    /// `admin` merges past the repository's rules; the card only offers it after a warning the user confirms.
+    func mergeBottom(_ s: Stack, admin: Bool = false) async {
         await run("Merging") { [method] dir, host in
             guard let bottom = s.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("Submit the stack first. There is no open pull request to merge.") }
             let gate = await PRCenter.shared.gateFor(n, dir: dir)
             guard gate.ready else { throw StackError.message("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
-            _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method)
+            do { _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method, admin: admin) }
+            catch where GitHub.isPolicyBlocked(error) {
+                self.policyBlocked.insert(n)
+                if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
+                throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
+            }
             _ = try await Stacks.sync(in: dir, host: host)
             if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
             if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
@@ -199,7 +257,7 @@ struct StacksView: View {
             }
         }
         .background(Theme.pane)
-        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.repo { Task { await center.open(r) } } }
+        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current { Task { await center.open(r) } } }
         .onChange(of: Project.shared.current) { _, r in if let r, r != center.repo { Task { await center.open(r) } } }
         .sheet(isPresented: $splitting) { SplitSheet() }
     }
@@ -259,6 +317,7 @@ struct StacksView: View {
 struct StackCard: View {
     let stack: Stack
     let center = StackCenter.shared
+    @State private var confirmBypass = false
 
     var body: some View {
         @Bindable var c = center
@@ -318,8 +377,20 @@ extension StackCard {
                 return Step(icon: "xmark.octagon", tint: Theme.danger, title: "#\(n) failed its checks",
                             detail: "\(failed) failed. Fix it on the branch and Submit. If it looks unrelated, such as a flaky test, merge a fix into \(stack.trunk) first, then Sync.")
             case .pending: return Step(icon: "clock", tint: Theme.accent, title: "Waiting for checks on #\(n)", detail: "It can merge once they pass. Refresh to see the latest.")
-            default: return Step(icon: "checkmark.circle", tint: Theme.ok, title: "Ready to merge from the bottom",
-                                 detail: "Everything is pushed. #\(n) merges once its checks and reviews pass.")
+            default:
+                let state = stack.bottomOpen?.mergeState
+                if center.policyBlocked.contains(n) || state == "BLOCKED" {
+                    return Step(icon: "lock.fill", tint: Theme.warn, title: "GitHub's rules block #\(n)",
+                                detail: "Its checks pass, but the repository's rules still refuse the merge, for example a required review or a rule that restricts who can update \(stack.trunk). Auto-merge waits until GitHub allows it.")
+                }
+                switch state {
+                case "DIRTY": return Step(icon: "exclamationmark.triangle.fill", tint: Theme.warn, title: "#\(n) has merge conflicts", detail: "Resolve them on the branch, then Submit.")
+                case "BEHIND": return Step(icon: "arrow.down.circle", tint: Theme.warn, title: "#\(n) is behind \(stack.trunk)", detail: "Sync pulls the new commits in and restacks.")
+                case "DRAFT": return Step(icon: "pencil.circle", tint: Theme.accent, title: "#\(n) is still a draft", detail: "Mark it ready for review on GitHub. Nothing merges until then.")
+                case "UNKNOWN", nil: return Step(icon: "clock", tint: Theme.accent, title: "Waiting for GitHub on #\(n)", detail: "GitHub has not said yet whether it can merge. Refresh in a moment.")
+                default: return Step(icon: "checkmark.circle", tint: Theme.ok, title: "#\(n) is ready to merge",
+                                     detail: center.isArmed(center.repo ?? .init(dir: "")) ? "GitHub allows it. Auto-merge merges it within a minute." : "GitHub allows it. Press Merge from the bottom.")
+                }
             }
         case nil: return Step(icon: "tray", tint: .secondary, title: "Nothing to do", detail: "No open pull requests in this stack.")
         }
@@ -339,6 +410,15 @@ extension StackCard {
                 Text(st.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
+            if stack.nextStep == .merge, let n = stack.bottomOpen?.pr, center.policyBlocked.contains(n) || stack.bottomOpen?.mergeState == "BLOCKED", checkState != .failed, checkState != .pending {
+                Button("Merge as admin…") { confirmBypass = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
+                    .confirmationDialog("Bypass the repository's rules to merge #\(n)?", isPresented: $confirmBypass, titleVisibility: .visible) {
+                        Button("Merge #\(n) as admin", role: .destructive) { Task { await center.mergeBottom(stack, admin: true) } }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("GitHub's rules for \(stack.trunk) refuse this merge. As an administrator you can override them for this one pull request. The rules stay in place for everyone else, and the merge is recorded as a bypass.")
+                    }
+            }
             if stack.nextStep == .sync {
                 AsyncButton("Sync now") { await center.sync() }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
             } else if stack.nextStep == .merge, checkState == .failed, let link = bottomChecks.first(where: \.failed)?.link, let url = URL(string: link) {

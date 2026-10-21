@@ -248,7 +248,7 @@ struct SpecDetail: View {
                 Button { Task { await center.submitAndArm(doc.id) } } label: { BusyLabel(title: "Submit stack", busyTitle: "Submitting…", busy: job.submitting) }.buttonStyle(Pill(kind: .plain))
                     .disabled(job.submitting || !doc.tasks.contains { $0.branch.map(center.unsubmitted.contains) ?? false })
                     .help("Push this spec's finished task branches, open their pull requests, and turn on auto-merge so they land bottom first when the rules pass. Disabled when there is nothing new to push. Hands-off mode does this by itself.")
-                Button("View stack") { if let r = center.repo { Nav.shared.pane = .stacks; Task { await StackCenter.shared.open(r) } } }.buttonStyle(Pill(kind: .plain))
+                Button("View stack") { if let r = center.repo { Nav.shared.pane = .stacks; Task { await StackCenter.shared.open(r, force: true) } } }.buttonStyle(Pill(kind: .plain))
             }.padding(12)
             if let note = job.submitNote {
                 Label { job.submitFailed ? AnyView(ErrorLine(text: note)) : AnyView(Text(note)) } icon: { Image(systemName: job.submitFailed ? "exclamationmark.triangle" : "checkmark.circle").foregroundStyle(job.submitFailed ? Theme.danger : Theme.ok) }

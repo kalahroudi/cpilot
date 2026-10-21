@@ -318,4 +318,19 @@ final class MergeSafetyGitTests: XCTestCase {
         let differ = await Git.filesDiffering(work, head: tip, base: "main", files: ["a.txt"])
         XCTAssertEqual(differ, ["a.txt"])
     }
+
+    func testStackSurvivesTheCache() throws {
+        var b = StackBranch(name: "a", parent: "main", base: "abc", commits: 2, depth: 0, pr: 7, prState: "OPEN", title: "T")
+        b.mergeState = "BLOCKED"; b.prHead = "deadbeef"
+        var st = Stack(trunk: "main", branches: [b]); st.trunkBehind = 3
+        let back = try JSONDecoder().decode(Stack.self, from: JSONEncoder().encode(st))
+        XCTAssertEqual(back, st)
+        XCTAssertEqual(back.bottomOpen?.mergeState, "BLOCKED")
+    }
+
+    func testPolicyBlockIsRecognised() {
+        let e = ShellError.failed(command: "gh pr merge 2", status: 1, stderr: "X Pull request #2 is not mergeable: the base branch policy prohibits the merge.")
+        XCTAssertTrue(GitHub.isPolicyBlocked(e))
+        XCTAssertFalse(GitHub.isPolicyBlocked(ShellError.failed(command: "gh", status: 1, stderr: "network down")))
+    }
 }

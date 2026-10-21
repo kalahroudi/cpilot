@@ -28,6 +28,8 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public var deletions: Int?
     public var reviewDecision: String?
     public var mergeable: String?
+    /// GitHub's own verdict on merging now: CLEAN, BLOCKED (rules, reviews or required checks), BEHIND, DIRTY, DRAFT, UNSTABLE, UNKNOWN.
+    public var mergeStateStatus: String?
     public var autoMergeRequest: AutoMerge?
     public struct AutoMerge: Codable, Equatable, Sendable { public var mergeMethod: String?; public init(mergeMethod: String?) { self.mergeMethod = mergeMethod } }
     public init(number: Int, title: String, state: String, isDraft: Bool, headRefName: String, baseRefName: String, author: Author?, url: String,
@@ -41,7 +43,7 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public var isOpen: Bool { state == "OPEN" }
     public var autoMerge: Bool { autoMergeRequest != nil }
 
-    public static let listFields = "number,title,state,isDraft,headRefName,headRefOid,baseRefName,author,url,autoMergeRequest,reviewDecision"
+    public static let listFields = "number,title,state,isDraft,headRefName,headRefOid,baseRefName,author,url,autoMergeRequest,reviewDecision,mergeStateStatus"
     public static let viewFields = listFields + ",body,additions,deletions,mergeable,headRefOid"
 }
 
@@ -117,6 +119,12 @@ public enum GitHub {
         if auto { a.append("--auto") }
         if admin { a.append("--admin") }
         try await Shell.check("gh", a, cwd: url(dir), timeout: 90)
+    }
+
+    /// True when GitHub refused because of the repository's rules (a ruleset or branch protection), not because of anything CPilot can fix.
+    public static func isPolicyBlocked(_ error: Error) -> Bool {
+        let s = "\(error)".lowercased()
+        return s.contains("base branch policy prohibits") || s.contains("repository rule violations")
     }
 
     /// True when the branch got a new commit after the merge was started.
