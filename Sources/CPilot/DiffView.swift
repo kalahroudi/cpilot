@@ -149,20 +149,26 @@ struct CreatePRSheet: View {
     }
 }
 
-/// The strip under a session's chat: its branch, its commits, and the pull request (open or already merged) or a way to make one.
+/// The strip under a session's chat: the branch it is on now, its commits, and the pull request (open or already merged) or a way to make one.
+/// A session can move to another branch (the agent starts a fix branch and opens its own PR), so this follows what is checked out, not what the
+/// session started on, and keeps the branch it started on as a second entry.
 struct SessionPRBar: View {
     let session: SessionController
-    @State private var pr: PullRequest?
+    private struct Entry: Identifiable { let branch: String; let pr: PullRequest?; var id: String { branch } }
+    @State private var entries: [Entry] = []
     @State private var commits: [Git.Commit] = []
     @State private var showCommits = false
     @State private var showCreate = false
     @State private var stackPos: String?
     @State private var opening = false
 
+    private var current: Entry? { entries.first }
+    private var pr: PullRequest? { current?.pr }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.pull").foregroundStyle(.secondary)
-            Text(session.meta.branch ?? "").font(.system(size: 12, design: .monospaced)).lineLimit(1)
+            Text(current?.branch ?? session.meta.branch ?? "").font(.system(size: 12, design: .monospaced)).lineLimit(1)
             if let stackPos { Badge(text: stackPos, kind: .accent) }
             if let pr {
                 Badge(text: "#\(pr.number)", kind: .accent)
@@ -176,12 +182,19 @@ struct SessionPRBar: View {
                 }.buttonStyle(.soft).foregroundStyle(.secondary)
                 .popover(isPresented: $showCommits, arrowEdge: .top) { CommitList(commits: commits) }
             }
+            ForEach(entries.dropFirst()) { e in
+                Divider().frame(height: 14)
+                Button { if let n = e.pr?.number { open(n) } } label: {
+                    HStack(spacing: 5) {
+                        Text(e.branch).font(.system(size: 11.5, design: .monospaced)).lineLimit(1)
+                        if let n = e.pr?.number { Badge(text: "#\(n)", kind: .neutral) }
+                    }
+                }.buttonStyle(.soft).foregroundStyle(.secondary).disabled(e.pr == nil)
+                .help(e.pr == nil ? "This session also touched \(e.branch)" : "Open pull request #\(e.pr!.number) on \(e.branch)")
+            }
             Spacer()
             if let pr {
-                Button {
-                    opening = true
-                    Task { await PRCenter.shared.jump(repo: session.meta.cwd, environment: session.meta.environment, number: pr.number); opening = false }
-                } label: {
+                Button { open(pr.number) } label: {
                     HStack(spacing: 6) { if opening { ProgressView().controlSize(.mini) }; Text(opening ? "Opening…" : pr.isOpen ? "Review & merge" : "View PR") }
                 }.buttonStyle(Pill(kind: pr.isOpen ? .primary : .plain)).disabled(opening)
             } else {
@@ -189,24 +202,42 @@ struct SessionPRBar: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 7).background(Theme.sidebar.opacity(0.6))
-        .task(id: session.meta.branch) { await load() }
+        // Reload when the branch changes and whenever a turn ends, since that is when the agent may have pushed or switched.
+        .task(id: "\(session.meta.branch ?? "")|\(session.state)") { await load() }
         .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory, env: session.env) { _ in Task { await load() } } }
     }
 
-    private func load() async {
-        guard let b = session.meta.branch else { return }
-        let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", b, "--state", "all", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
+    private func open(_ n: Int) {
+        opening = true
+        Task { await PRCenter.shared.jump(repo: session.meta.cwd, environment: session.meta.environment, number: n); opening = false }
+    }
+
+    private func pullRequest(for branch: String) async -> PullRequest? {
+        let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", branch, "--state", "all", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
         let found = out.flatMap { try? JSONDecoder().decode([PullRequest].self, from: Data($0.utf8)) } ?? []
         // An open PR wins; otherwise the newest one, so a merged session says so instead of offering "Create PR".
-        pr = found.first(where: \.isOpen) ?? found.max(by: { $0.number < $1.number })
+        return found.first(where: \.isOpen) ?? found.max(by: { $0.number < $1.number })
+    }
+
+    private func load() async {
+        if session.state == .running || session.state == .waiting { return }   // reloads once the turn ends
+        let dir = session.meta.workingDirectory
+        let now = await Exec.with(session.env) { await Git.info(dir)?.branch } ?? ""
+        var names: [String] = []
+        for b in [now, session.meta.branch ?? ""] where !b.isEmpty && !names.contains(b) { names.append(b) }
+        guard !names.isEmpty else { return }
+        var list: [Entry] = []
+        for b in names { list.append(Entry(branch: b, pr: await pullRequest(for: b))) }
+        entries = list
+        let primary = list[0]
         commits = await Exec.with(session.env) {
             // A merged branch has nothing ahead of main any more, so the pull request is the record of what it carried.
-            if let pr, !pr.isOpen { return await GitHub.commits(pr.number, in: session.meta.cwd) }
-            let base = await Git.defaultBranch(session.meta.workingDirectory)
-            return await Git.commits(session.meta.workingDirectory, since: "origin/\(base)")
+            if let pr = primary.pr, !pr.isOpen { return await GitHub.commits(pr.number, in: session.meta.cwd) }
+            let base = await Git.defaultBranch(dir)
+            return await Git.commits(dir, since: "origin/\(base)")
         }
         let stacks = await Exec.with(session.env) { await Stacks.load(in: session.meta.cwd) }
-        if let st = stacks.first(where: { $0.branches.contains { $0.name == b } }), st.branches.count > 1, let i = st.branches.firstIndex(where: { $0.name == b }) { stackPos = "Stack \(i + 1) of \(st.branches.count)" } else { stackPos = nil }
+        if let st = stacks.first(where: { $0.branches.contains { $0.name == primary.branch } }), st.branches.count > 1, let i = st.branches.firstIndex(where: { $0.name == primary.branch }) { stackPos = "Stack \(i + 1) of \(st.branches.count)" } else { stackPos = nil }
     }
 }
 
