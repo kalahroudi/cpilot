@@ -91,6 +91,17 @@ final class SpecTests: XCTestCase {
         XCTAssertEqual(docs[1].status(), .draft); XCTAssertEqual(docs[1].source, "Described by you"); XCTAssertEqual(constitution, "# Rules")
     }
 
+    func testRemoveDeletesOnlyThatSpec() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("specs-\(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try await Specs.write("\(Specs.folder)/001-a/source.md", "a", in: dir)
+        try await Specs.write("\(Specs.folder)/002-b/source.md", "b", in: dir)
+        try await Specs.remove("002-b", in: dir)
+        let (docs, _) = await Specs.list(in: dir)
+        XCTAssertEqual(docs.map(\.id), ["001-a"])
+        do { try await Specs.remove("../x", in: dir); XCTFail("a path must be refused") } catch {}
+    }
+
     func testMergedWorkMatchesByIdOrBranch() {
         let t = SpecTask(id: "T001", title: "Pin favorites first in ChatListFilter.apply", done: false)
         XCTAssertTrue(Specs.isMergedWork(task: t, spec: "001-pin", head: "spec-001-t001", title: "x"))

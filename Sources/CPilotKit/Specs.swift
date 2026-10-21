@@ -195,6 +195,13 @@ public enum Specs {
         await setTracked(tracked, in: dir)
     }
 
+    /// Deletes a spec's folder. `id` must be a bare folder name (like `014-cursor-pagination`), never a path.
+    public static func remove(_ id: String, in dir: String) async throws {
+        guard !id.isEmpty, !id.contains("/"), !id.hasPrefix(".") else { throw ShellError.failed(command: "remove", status: 1, stderr: "Not a spec folder: \(id)") }
+        let r = try await Shell.run("sh", ["-c", #"cd "$1" && rm -rf "$2/$3""#, "sh", dir, folder, id], timeout: 30)
+        guard r.ok else { throw ShellError.failed(command: "remove", status: r.status, stderr: r.stderr) }
+    }
+
     /// Adds or removes the local ignore line for `.cpilot`. Only the clone's own exclude file is touched, never a committed .gitignore.
     public static func setTracked(_ tracked: Bool, in dir: String) async {
         let script = tracked

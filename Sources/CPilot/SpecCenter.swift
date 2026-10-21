@@ -431,6 +431,15 @@ final class SpecCenter {
         await refresh()
     }
 
+    /// Deletes a spec that has not been built: its folder and anything saved about its run.
+    func delete(_ id: String) async {
+        guard let r = repo, jobs[id]?.running != true else { return }
+        do { try await Exec.with(env) { try await Specs.remove(id, in: r.dir) } } catch { jobs[id, default: Job()].error = "\(error)"; return }
+        jobs[id] = nil; dropRun(id)
+        if selected == id { selected = nil }
+        await refresh()
+    }
+
     // MARK: Other ways in
 
     func fromSession(_ s: SessionController) {
