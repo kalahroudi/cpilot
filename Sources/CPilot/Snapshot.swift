@@ -29,10 +29,16 @@ enum SnapshotMode {
                 return AnyView(ManagerView(agentsTab: agents))
             }
         }
+        func side() -> Shot {
+            Shot(name: "manager-sessions-side", dark: false, size: CGSize(width: 1000, height: 700)) {
+                Nav.shared.pane = .sessions; Prefs.shared.tabsOnSide = true
+                return AnyView(ManagerView())
+            }
+        }
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), manager(.pulls), manager(.pulls, dark: true), manager(.repo),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.pulls), manager(.pulls, dark: true), manager(.repo),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 

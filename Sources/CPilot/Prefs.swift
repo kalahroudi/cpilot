@@ -3,6 +3,7 @@
 import SwiftUI
 import ServiceManagement
 import AppKit
+import CPilotKit
 
 enum ThemeChoice: String, CaseIterable { case system, light, dark
     var label: String { rawValue.capitalized }
@@ -28,6 +29,9 @@ final class Prefs {
     /// Minutes of silence before a tab's agent process is stopped. The session resumes with full context on the next message.
     /// Sessions as tabs across the top, or as a list down the left.
     var tabsOnSide: Bool { didSet { d.set(tabsOnSide, forKey: "tabsOnSide") } }
+    /// "files" (CPilot notes only) or "engine" (also connect a long-term memory engine over MCP).
+    var memoryEngine: String { didSet { d.set(memoryEngine, forKey: "memoryEngine") } }
+    var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -50,6 +54,8 @@ final class Prefs {
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        memoryEngine = d.string(forKey: "memoryEngine") ?? "files"
+        memoryEngineURL = d.string(forKey: "memoryEngineURL") ?? MemoryEngine.defaultURL
         tabsOnSide = d.bool(forKey: "tabsOnSide")
         cloneFolder = d.string(forKey: "cloneFolder") ?? NSHomeDirectory() + "/code"
         useWorktrees = d.bool(forKey: "useWorktrees")

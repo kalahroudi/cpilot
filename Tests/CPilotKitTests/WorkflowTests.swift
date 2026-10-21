@@ -134,3 +134,13 @@ final class RegistryTests: XCTestCase {
         XCTAssertNil(list[2].config)
     }
 }
+
+final class MemoryEngineTests: XCTestCase {
+    func testConfigShapes() throws {
+        XCTAssertEqual(MemoryEngine.mcpURL(base: "http://localhost:8888/", bank: "shop-1"), "http://localhost:8888/mcp/shop-1/")
+        let j = try JSONSerialization.jsonObject(with: Data(MemoryEngine.claudeConfig(base: "http://h:1", bank: "b").utf8)) as! [String: Any]
+        let server = (j["mcpServers"] as! [String: Any])["memory"] as! [String: Any]
+        XCTAssertEqual(server["url"] as? String, "http://h:1/mcp/b/"); XCTAssertEqual(server["type"] as? String, "http")
+        XCTAssertEqual(MemoryEngine.acpServers(base: "http://h:1", bank: "b").first?["name"] as? String, "memory")
+    }
+}

@@ -8,16 +8,12 @@ enum StatusIcon {
     enum State { case active, idle, busy, attention }
 
     static func image(_ state: State) -> NSImage {
-        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { _ in
-            let c = NSPoint(x: 9, y: 9)
-            let arc = NSBezierPath()
-            arc.appendArc(withCenter: c, radius: 6, startAngle: 40, endAngle: 320, clockwise: false)
-            arc.lineCapStyle = .round
-            NSColor.black.setStroke(); NSColor.black.setFill()
+        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
+            let mark = rect.insetBy(dx: 0.5, dy: 0.5)
             switch state {
-            case .idle: arc.lineWidth = 1.6; arc.stroke()
-            case .busy: arc.lineWidth = 1.6; arc.setLineDash([3, 2.2], count: 2, phase: 0); arc.stroke()
-            case .active, .attention: arc.lineWidth = 2.6; arc.stroke(); NSBezierPath(ovalIn: NSRect(x: 7, y: 7, width: 4, height: 4)).fill()
+            case .idle: Mark.draw(in: mark, color: .black, style: .outline, plane: false)
+            case .busy: Mark.draw(in: mark, color: .black, style: .dashed)
+            case .active, .attention: Mark.draw(in: mark, color: .black, style: .solid)
             }
             if state == .attention { NSBezierPath(ovalIn: NSRect(x: 12.5, y: 0.5, width: 5, height: 5)).fill() }
             return true

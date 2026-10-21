@@ -128,6 +128,7 @@ final class SessionController: Identifiable {
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
         c.appendSystemPrompt = ws.memory.context(forProject: meta.cwd)
+        if Prefs.shared.memoryEngine == "engine" { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
         let r = ClaudeRunner(config: c, onLine: { [weak self] line in
             Task { @MainActor in self?.handle(line: line) }
         }, onExit: { [weak self] status in
@@ -199,6 +200,7 @@ final class SessionController: Identifiable {
         let client = AcpClient(config: cfg, cwd: URL(fileURLWithPath: meta.workingDirectory)) { [weak self] ev in
             Task { @MainActor in self?.handle(acp: ev) }
         }
+        if Prefs.shared.memoryEngine == "engine" { client.mcpServers = MemoryEngine.acpServers(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
         try await client.start()
         let session: String
         if let rid = meta.remoteId { session = try await client.loadSession(rid) } else { session = try await client.newSession() }
@@ -319,6 +321,17 @@ final class SessionController: Identifiable {
         meta.access = level; ws.save(meta)
         if !isBusy { sleep() } else { addNotice("Access changes after the current turn.") }
     }
+
+    /// Hands the session to Terminal: the same session id, so the conversation continues there with full context.
+    func openInTerminal() {
+        guard meta.backend.kind == .claude, let rid = meta.remoteId else { return }
+        let cmd = "cd \(shellQuote(meta.workingDirectory)) && claude --resume \(rid)"
+        sleep()
+        let script = "tell application \"Terminal\" to do script \"\(cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"\ntell application \"Terminal\" to activate"
+        Task { _ = try? await Shell.run("/usr/bin/osascript", ["-e", script]) }
+    }
+
+    private func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     func close() {
         flush()

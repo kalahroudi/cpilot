@@ -134,6 +134,8 @@ public final class AcpClient: @unchecked Sendable {
     private var permissionIds: [String: Any] = [:]       // string key -> original JSON-RPC id
     private var reducer = AcpUpdateReducer()
     public private(set) var canLoadSession = false
+    /// MCP servers handed to every session this client opens (for example the memory engine).
+    public var mcpServers: [[String: Any]] = []
 
     public init(config: AcpAgentConfig, cwd: URL, onEvent: @escaping @Sendable (AcpEvent) -> Void) {
         self.config = config; self.cwd = cwd; self.onEvent = onEvent
@@ -171,7 +173,7 @@ public final class AcpClient: @unchecked Sendable {
     // MARK: Calls
 
     public func newSession() async throws -> String {
-        let r = try await request("session/new", ["cwd": cwd.path, "mcpServers": [Any]()])
+        let r = try await request("session/new", ["cwd": cwd.path, "mcpServers": mcpServers])
         guard let id = r["sessionId"] as? String else { throw AcpError.badResponse }
         return id
     }
@@ -179,7 +181,7 @@ public final class AcpClient: @unchecked Sendable {
     /// Restores a session with its context. Falls back to a new session when the agent cannot load.
     public func loadSession(_ id: String) async throws -> String {
         guard canLoadSession else { return try await newSession() }
-        _ = try await request("session/load", ["sessionId": id, "cwd": cwd.path, "mcpServers": [Any]()])
+        _ = try await request("session/load", ["sessionId": id, "cwd": cwd.path, "mcpServers": mcpServers])
         return id
     }
 

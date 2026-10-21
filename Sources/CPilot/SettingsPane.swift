@@ -61,6 +61,13 @@ struct SettingsPane: View {
                     }
                     SettingRow("Isolate new sessions in a worktree", "Each session on a new branch gets its own copy of the files, so parallel sessions never collide.") { toggle($p.useWorktrees) }
                 }
+                SettingsGroup("Memory") {
+                    SettingRow("Notes", "Plain Markdown notes every session starts with. Always on. Edit them in the Memory screen.") { Badge(text: "always on", kind: .ok) }
+                    SettingRow("Long-term memory engine", "Optional. Connects a memory engine over MCP so sessions can recall what earlier sessions learned.") {
+                        Segmented(options: [("files", "Off"), ("engine", "On")], selection: $p.memoryEngine)
+                    }
+                    if prefs.memoryEngine == "engine" { MemoryEngineRow() }
+                }
                 SettingsGroup("Notifications") {
                     SettingRow("Notify me", "When a session needs approval or finishes while CPilot is in the background.") { toggle($p.notify) }
                 }
@@ -89,6 +96,24 @@ struct SettingsPane: View {
             }.font(.system(size: 13))
             Text("Licensed under the Apache License 2.0.").font(.system(size: 12)).foregroundStyle(.secondary)
         }
+    }
+}
+
+struct MemoryEngineRow: View {
+    @State private var up: Bool?
+    var body: some View {
+        @Bindable var p = Prefs.shared
+        VStack(spacing: 0) {
+            SettingRow("Engine address", up == nil ? "Checking…" : up == true ? "Reachable. Each project gets its own memory bank." : "Not reachable. Start the engine, then check again.") {
+                HStack(spacing: 6) {
+                    TextField("http://localhost:8888", text: $p.memoryEngineURL).textFieldStyle(.roundedBorder).frame(width: 190)
+                    Button("Check") { Task { up = await MemoryEngine.isReachable(base: Prefs.shared.memoryEngineURL) } }.buttonStyle(Pill(kind: .plain))
+                }
+            }
+            if up == false {
+                SettingRow("Start it with Docker", "Copy this into Terminal. It stores data in its own volume and needs a language model key for extracting memories.") { CopyButton(text: MemoryEngine.dockerCommand, label: "Copy command") }
+            }
+        }.task { up = await MemoryEngine.isReachable(base: Prefs.shared.memoryEngineURL) }
     }
 }
 

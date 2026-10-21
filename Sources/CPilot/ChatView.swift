@@ -64,6 +64,10 @@ struct ChatHeader: View {
             }
             Spacer()
             stateView
+            if session.meta.backend.kind == .claude, session.meta.remoteId != nil {
+                Button { session.openInTerminal() } label: { Image(systemName: "terminal") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help("Continue this session in Terminal").accessibilityLabel("Open in Terminal")
+            }
             accessMenu
         }
         .padding(.horizontal, 16).padding(.vertical, 10)

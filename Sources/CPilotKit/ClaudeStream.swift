@@ -216,6 +216,7 @@ public final class ClaudeRunner: @unchecked Sendable {
         public var access: AccessLevel = .askFirst
         public var appendSystemPrompt: String?
         public var addDirs: [String] = []
+        /// A path to an MCP config file, or the JSON itself; the command line accepts either.
         public var mcpConfigPath: String?
         public init(cwd: String) { self.cwd = cwd }
     }
