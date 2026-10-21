@@ -34,6 +34,7 @@ public enum AppLog {
 public enum UserError {
     public static func message(for error: Error, action: String) -> String {
         if let e = error as? UserFacingError { return e.message }
+        if let e = error as? ShellError, case .failed(_, _, let stderr) = e, let known = knownGitHubFailure(stderr, action: action) { return known }
         if let e = error as? URLError {
             switch e.code {
             case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .timedOut:
@@ -45,6 +46,19 @@ public enum UserError {
             return "Couldn't \(action.lowercased()): the app doesn't have permission to access a file it needs."
         }
         return "Couldn't \(action.lowercased()). Please try again; if it keeps happening, use Details to copy or report it."
+    }
+}
+
+extension UserError {
+    /// GitHub refusals that are expected and have a clear meaning, so they get their own sentence instead of a generic one.
+    static func knownGitHubFailure(_ stderr: String, action: String) -> String? {
+        let s = stderr.lowercased()
+        if s.contains("can not approve your own pull request") { return "GitHub doesn't let you approve your own pull request. Ask someone else to review it, or merge it yourself if the rules allow." }
+        if s.contains("can not request changes on your own pull request") { return "GitHub doesn't let you request changes on your own pull request. Leave a comment instead." }
+        if s.contains("auth login") || s.contains("not logged in") || s.contains("bad credentials") { return "Couldn't \(action.lowercased()): GitHub isn't signed in. Run `gh auth login` in Terminal and try again." }
+        if s.contains("resource not accessible") || s.contains("must have admin rights") || s.contains("permission") && s.contains("denied") { return "Couldn't \(action.lowercased()): your GitHub account doesn't have permission to do that here." }
+        if s.contains("not mergeable") || s.contains("merge conflict") { return "Couldn't \(action.lowercased()): the pull request has conflicts or unmet requirements. Open it on GitHub to see which." }
+        return nil
     }
 }
 

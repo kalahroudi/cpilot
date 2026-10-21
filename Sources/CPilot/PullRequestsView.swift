@@ -443,35 +443,99 @@ struct SecurityPanel: View {
 struct ReviewAndMerge: View {
     let pr: PullRequest
     let center = PRCenter.shared
-    @State private var advanced = false
+
+    private static let styles: [(MergeMethod, String)] = [(.merge, "Create a merge commit"), (.squash, "Squash and merge"), (.rebase, "Rebase and merge")]
+
     var body: some View {
-        let gate = center.gate
-        @Bindable var c = center
-        VStack(spacing: 0) {
-            SettingRow("Review", "Ask an agent to read the change in a fresh read-only session, or review it yourself.") {
-                HStack(spacing: 6) {
-                    Button("Review with Claude") {
-                        Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: true) }
-                    }.buttonStyle(Pill(kind: .plain))
-                    Button("Approve") { Task { await center.review(.approve) } }.buttonStyle(Pill(kind: .plain))
-                    Button("Request changes") { Task { await center.review(.requestChanges, body: "Please see the review notes.") } }.buttonStyle(Pill(kind: .plain))
-                }
+        VStack(spacing: 12) {
+            review
+            mergeBox
+        }
+    }
+
+    private var review: some View {
+        SettingRow("Review", "Ask an agent to read the change in a fresh read-only session, or review it yourself.") {
+            HStack(spacing: 6) {
+                Button("Review with Claude") {
+                    Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: true) }
+                }.buttonStyle(Pill(kind: .plain))
+                let own = pr.author?.login.caseInsensitiveCompare(AppModel.shared.github?.login ?? "") == .orderedSame   // GitHub refuses both on your own PR
+                Button("Approve") { Task { await center.review(.approve) } }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't approve your own pull request." : "")
+                Button("Request changes") { Task { await center.review(.requestChanges, body: "Please see the review notes.") } }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't request changes on your own pull request." : "")
             }
-            DisclosureGroup("Advanced options", isExpanded: $advanced) {
-        VStack(spacing: 0) {
-                SettingRow("Merge automatically", "Merges by itself as soon as every rule passes, then deletes the branch. CPilot checks once a minute while this is on.") {
-                    Toggle("", isOn: Binding(get: { center.isArmed(pr.number) }, set: { center.setArmed($0, pr.number) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent)
-                }
-                SettingRow("Merge style", "How the commits land on \(pr.baseRefName).") {
-                    Segmented(options: [(MergeMethod.squash, "Squash"), (.merge, "Merge"), (.rebase, "Rebase")], selection: $c.method)
-                }
-                SettingRow(gate?.ready == true ? "Ready to merge" : "Waiting", gate?.reasons.joined(separator: " ") ?? "") {
-                    Button("Merge now") { Task { await center.mergeNow() } }.buttonStyle(Pill(kind: .primary)).disabled(gate?.ready != true)
-                }
         }
-            }.font(.system(size: 12.5)).padding(.vertical, 10)
+        .padding(.horizontal, 14).padding(.vertical, 10).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+    }
+
+    /// Like GitHub's merge box: what is blocking the merge, then one button whose arrow picks the merge style.
+    @ViewBuilder private var mergeBox: some View {
+        if pr.isOpen {
+            let gate = center.gate
+            let ready = gate?.ready == true
+            let armed = center.isArmed(pr.number)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .font(.system(size: 18)).foregroundStyle(ready ? Theme.ok : Theme.warn)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(ready ? "Ready to merge" : "Merging is blocked").font(.system(size: 13.5, weight: .semibold))
+                        if ready { Text("Every rule passes.").font(.system(size: 12)).foregroundStyle(.secondary) }
+                        else { ForEach(gate?.reasons ?? [], id: \.self) { Text("• " + $0).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }
+                    }
+                    Spacer(minLength: 0)
+                }.padding(14)
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 0) {
+                        Button { Task { await center.mergeNow() } } label: { Text(Self.label(center.method)).frame(minWidth: 130) }
+                            .buttonStyle(MergeSplit(position: .leading, ready: ready)).disabled(!ready)
+                        Menu {
+                            ForEach(Self.styles, id: \.0) { m, title in
+                                Button { center.method = m } label: { if center.method == m { Label(title, systemImage: "checkmark") } else { Text(title) } }
+                            }
+                        } label: { Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)) }
+                            .menuStyle(.button).buttonStyle(MergeSplit(position: .trailing, ready: ready)).menuIndicator(.hidden).fixedSize()
+                    }
+                    Text(Self.blurb(center.method, base: pr.baseRefName)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Toggle(isOn: Binding(get: { armed }, set: { center.setArmed($0, pr.number) })) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Merge automatically when ready").font(.system(size: 12.5))
+                            Text("Merges as soon as every rule passes, then deletes the branch. CPilot checks once a minute while this is on.")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.toggleStyle(.checkbox)
+                }.padding(14)
+            }
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(ready ? Theme.ok.opacity(0.5) : Theme.hairline))
         }
-        .padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+    }
+
+    static func label(_ m: MergeMethod) -> String { styles.first { $0.0 == m }?.1 ?? "Merge" }
+    static func blurb(_ m: MergeMethod, base: String) -> String {
+        switch m {
+        case .merge: "All commits from this branch are added to \(base) with a merge commit."
+        case .squash: "The commits from this branch are combined into one commit on \(base)."
+        case .rebase: "The commits from this branch are added to \(base) one by one, without a merge commit."
+        }
+    }
+}
+
+/// One half of a split button: the left half runs the action, the right half opens the menu.
+private struct MergeSplit: ButtonStyle {
+    enum Position { case leading, trailing }
+    let position: Position
+    let ready: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let on = ready
+        let shape = UnevenRoundedRectangle(topLeadingRadius: position == .leading ? 8 : 0, bottomLeadingRadius: position == .leading ? 8 : 0,
+                                           bottomTrailingRadius: position == .trailing ? 8 : 0, topTrailingRadius: position == .trailing ? 8 : 0)
+        return configuration.label.font(.system(size: 12.5, weight: .semibold))
+            .padding(.horizontal, position == .leading ? 14 : 9).padding(.vertical, 7)
+            .foregroundStyle(on ? Theme.onAccent : Color.secondary.opacity(0.75))
+            .background(on ? Theme.ok.opacity(configuration.isPressed ? 0.8 : 1) : Theme.fill, in: shape)
+            .overlay(alignment: .leading) { if position == .trailing { Rectangle().fill(Color.black.opacity(0.2)).frame(width: 1) } }
     }
 }
 

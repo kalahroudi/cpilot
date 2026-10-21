@@ -24,6 +24,11 @@ final class KitTests: XCTestCase {
         XCTAssertTrue(body.contains("Send the review"))
     }
 
+    func testOwnPullRequestApprovalHasPlainMessage() {
+        let err = ShellError.failed(command: "gh pr review 4 --approve", status: 1, stderr: "failed to create review: GraphQL: Review Can not approve your own pull request (addPullRequestReview)\n")
+        XCTAssertTrue(UserError.message(for: err, action: "Send the review").contains("approve your own pull request"))
+    }
+
     func testChecksumLookup() {
         let sums = "abc123  CPilot-0.1.0.dmg\ndef456 *other.dmg\n"
         XCTAssertEqual(UpdateChecker.checksum(in: sums, for: "CPilot-0.1.0.dmg"), "abc123")
