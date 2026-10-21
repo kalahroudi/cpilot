@@ -124,6 +124,8 @@ public enum Git {
         /// What carries the title here: a commit's short sha, or "title" for the pull request's own title.
         public var mine: String
         public var onBase: String
+        /// Found by comparing the changes themselves (the same diff under another title), not the titles.
+        public var sameChange = false
         public var id: String { mine + onBase }
     }
 
@@ -146,9 +148,35 @@ public enum Git {
     }
 
     /// Recent titles on the remote base branch. Fetches that one branch first, so it is not judged against a stale copy.
-    public static func baseLog(_ dir: String, base: String, limit: Int = 400) async -> [Commit] {
+    public static func baseLog(_ dir: String, base: String, limit: Int = 1500) async -> [Commit] {
         _ = try? await Shell.run("git", ["fetch", "origin", base], cwd: url(dir), timeout: 60)
         let out = (try? await Shell.check("git", ["log", "--format=%h%x09%s%x09%cr", "-\(limit)", "origin/\(base)"], cwd: url(dir))) ?? ""
         return parseCommits(out)
+    }
+
+    /// Commits of `head` whose exact change is already in `base`, even under another title (`git cherry` compares patch ids).
+    public static func alreadyOnBase(_ dir: String, base: String, head: String, subjects: [String: String]) async -> [Duplicate] {
+        let out = (try? await Shell.check("git", ["cherry", "origin/\(base)", head], cwd: url(dir), timeout: 60)) ?? ""
+        return out.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: " ")
+            guard f.count == 2, f[0] == "-" else { return nil }
+            let sha = String(f[1].prefix(7))
+            return Duplicate(subject: subjects[sha] ?? "", mine: sha, onBase: "", sameChange: true)
+        }
+    }
+
+    /// Merge commits inside the branch. A rebase merge would flatten them away, so squash or a merge commit is the safer choice.
+    public static func mergeCommitCount(_ dir: String, base: String, head: String) async -> Int {
+        let out = (try? await Shell.check("git", ["rev-list", "--merges", "--count", "origin/\(base)..\(head)"], cwd: url(dir))) ?? ""
+        return Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    /// After a merge: the files of the pull request whose content on `base` differs from the pull request's last commit.
+    /// Empty means everything it changed is on `base` exactly as reviewed.
+    public static func filesDiffering(_ dir: String, head: String, base: String, files: [String]) async -> [String] {
+        guard !files.isEmpty else { return [] }
+        _ = try? await Shell.run("git", ["fetch", "origin", base], cwd: url(dir), timeout: 60)
+        let out = (try? await Shell.check("git", ["diff", "--name-only", head, "origin/\(base)", "--"] + files, cwd: url(dir), timeout: 60)) ?? ""
+        return out.split(separator: "\n").map(String.init)
     }
 }

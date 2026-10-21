@@ -78,12 +78,33 @@ struct CreatePRSheet: View {
     @State private var drafting = false
     @State private var error: String?
     @State private var failure: ErrorReport?
+    @State private var baseLog: [Git.Commit] = []
+    @State private var mine: [Git.Commit] = []
+    @State private var sameChange: [Git.Duplicate] = []
+
+    /// Titles (the pull request's and its commits') that the base branch already has, and changes it already has under another title.
+    private var duplicates: [Git.Duplicate] {
+        Git.findDuplicates([("title", title)] + mine.map { ($0.sha, $0.subject) }, baseLog: baseLog) + sameChange
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Create pull request").font(.system(size: 17, weight: .semibold))
             Text("\(branch) → \(base)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
             TextField("Title", text: $title).textFieldStyle(CPField())
+            if !duplicates.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(duplicates.contains { !$0.sameChange } ? "\(base) already has a commit with this title" : "\(base) already has this change", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.warn)
+                    ForEach(duplicates.prefix(3)) { x in
+                        Text(x.sameChange ? "commit \(x.mine)  \(x.subject)  ←  same change is already on \(base)"
+                                          : "\(x.onBase)  \(x.subject)  ←  \(x.mine == "title" ? "this title" : "commit \(x.mine)")")
+                            .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Text("It may be the same change committed twice. Give the pull request a title that describes all of it, or check that this work is not already on \(base).")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 9))
+            }
             TextEditor(text: $prBody).font(.system(size: 12.5)).frame(height: 140).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             HStack {
                 Toggle("Draft", isOn: $draft)
@@ -107,6 +128,9 @@ struct CreatePRSheet: View {
                 branch = await Git.info(dir)?.branch ?? ""
                 base = await Git.defaultBranch(dir)
                 title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                baseLog = await Git.baseLog(dir, base: base)
+                mine = await Git.commits(dir, since: "origin/\(base)")
+                sameChange = await Git.alreadyOnBase(dir, base: base, head: "HEAD", subjects: Dictionary(mine.map { ($0.sha, $0.subject) }, uniquingKeysWith: { a, _ in a }))
             }
         }
     }

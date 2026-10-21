@@ -16,6 +16,8 @@ public struct StackBranch: Identifiable, Equatable, Sendable {
     /// The remote has this branch at exactly the local tip.
     public var pushed = false
     public var title: String?
+    /// The pull request's head commit when the stack was read.
+    public var prHead: String?
     public var id: String { name }
     public var isMerged: Bool { prState == "MERGED" }
     public init(name: String, parent: String, base: String?, needsRestack: Bool = false, commits: Int = 0, depth: Int = 0, pr: Int? = nil, prState: String? = nil, title: String? = nil) {
@@ -46,6 +48,10 @@ public struct Stack: Equatable, Sendable, Identifiable {
     public init(trunk: String, branches: [StackBranch]) { self.trunk = trunk; self.branches = branches }
 }
 
+extension StackHost {
+    public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await merge(number, method: method) }
+}
+
 /// What a stack needs from GitHub. The live version uses the GitHub command line; tests use a stand-in.
 public protocol StackHost: Sendable {
     func pullRequests() async -> [PullRequest]
@@ -53,6 +59,8 @@ public protocol StackHost: Sendable {
     func setBase(_ number: Int, base: String) async throws
     func setBody(_ number: Int, body: String) async throws
     func merge(_ number: Int, method: MergeMethod) async throws
+    /// Merges only if the branch is still at `expectedHead`; a push made after the stack was read is never left out and then deleted.
+    func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws
 }
 
 public struct LiveStackHost: StackHost {
@@ -73,6 +81,7 @@ public struct LiveStackHost: StackHost {
     public func setBase(_ number: Int, base: String) async throws { try await Shell.check("gh", ["pr", "edit", String(number), "--base", base], cwd: cwd, timeout: 60) }
     public func setBody(_ number: Int, body: String) async throws { try await Shell.check("gh", ["pr", "edit", String(number), "--body", body], cwd: cwd, timeout: 60) }
     public func merge(_ number: Int, method: MergeMethod) async throws { try await GitHub.merge(number, method: method, auto: false, in: dir) }
+    public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await GitHub.merge(number, method: method, auto: false, expectedHead: expectedHead, in: dir) }
 }
 
 public enum StackError: Error, LocalizedError, Equatable {
@@ -156,7 +165,7 @@ public enum Stacks {
                 sb.needsRestack = !(await gitOK(["merge-base", "--is-ancestor", m.parent, b], in: dir))
                 sb.commits = Int((try? await git(["rev-list", "--count", "\(m.parent)..\(b)"], in: dir)) ?? "0") ?? 0
                 if let remote = try? await git(["rev-parse", "--verify", "--quiet", "origin/\(b)"], in: dir), let local = try? await git(["rev-parse", b], in: dir) { sb.pushed = remote == local }
-                if let p = info(b) { sb.pr = p.number; sb.prState = p.state; sb.title = p.title }
+                if let p = info(b) { sb.pr = p.number; sb.prState = p.state; sb.title = p.title; sb.prHead = p.headRefOid }
                 list.append(sb)
                 for child in live.filter({ $0.value.parent == b }).keys.sorted() { await visit(child, depth: depth + 1) }
             }
@@ -266,7 +275,7 @@ public enum Stacks {
     public static func mergeBottom(_ stack: Stack, in dir: String, host: StackHost, method: MergeMethod = .squash) async throws -> String {
         guard let bottom = stack.branches.first(where: { !$0.isMerged && $0.pr != nil && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("There is no open pull request to merge.") }
         for child in stack.branches where child.parent == bottom.name && child.pr != nil && child.prState == "OPEN" { try await host.setBase(child.pr!, base: stack.trunk) }
-        try await host.merge(n, method: method)
+        try await host.merge(n, method: method, expectedHead: bottom.prHead)
         _ = try? await git(["fetch", "--prune", "origin"], in: dir, timeout: 120)
         return bottom.name
     }

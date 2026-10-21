@@ -257,3 +257,35 @@ final class DuplicateTitleTests: XCTestCase {
         XCTAssertEqual(d.count, 1)
     }
 }
+
+final class MergeSafetyGitTests: XCTestCase {
+    private func sh(_ cmd: String, in dir: String) async throws {
+        let r = try await Shell.run("sh", ["-c", cmd], cwd: URL(fileURLWithPath: dir))
+        XCTAssertTrue(r.ok, "\(cmd): \(r.stderr)")
+    }
+
+    func testSameChangeUnderAnotherTitleAndFileCheck() async throws {
+        let root = NSTemporaryDirectory() + "cpilot-merge-\(UUID().uuidString.prefix(6))"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let git = "git -c user.email=t@t -c user.name=t"
+        try await sh("git init -q -b main origin && cd origin && echo one > a.txt && git add . && \(git) commit -qm base", in: root)
+        try await sh("git clone -q origin work", in: root)
+        let work = root + "/work", origin = root + "/origin"
+        // The same edit lands on main under one title, and exists on a branch under another.
+        try await sh("git checkout -q -b feature && echo two >> a.txt && \(git) commit -qam 'Rewritten title'", in: work)
+        try await sh("echo two >> a.txt && \(git) commit -qam 'Original title'", in: origin)
+        try await sh("git fetch -q origin", in: work)
+        let found = await Git.alreadyOnBase(work, base: "main", head: "feature", subjects: [:])
+        XCTAssertEqual(found.count, 1)
+        XCTAssertTrue(found[0].sameChange)
+
+        // Files check: the branch tip's content for a.txt equals main's, so nothing differs.
+        let tip = try await Shell.check("git", ["rev-parse", "feature"], cwd: URL(fileURLWithPath: work)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let same = await Git.filesDiffering(work, head: tip, base: "main", files: ["a.txt"])
+        XCTAssertEqual(same, [])
+        try await sh("echo three >> a.txt && \(git) commit -qam later", in: origin)
+        let differ = await Git.filesDiffering(work, head: tip, base: "main", files: ["a.txt"])
+        XCTAssertEqual(differ, ["a.txt"])
+    }
+}

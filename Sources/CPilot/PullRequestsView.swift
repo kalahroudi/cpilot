@@ -25,6 +25,9 @@ final class PRCenter {
     /// Titles this pull request would add to its base branch that the base already has (the same change landing twice).
     var duplicates: [Git.Duplicate] = []
     var titleDraft = ""
+    /// Merge styles the repository allows, and a suggestion with its reason.
+    var allowed: Set<MergeMethod> = Set(MergeMethod.allCases)
+    var recommended: (method: MergeMethod, reason: String)?
     var showCreate = false
     var showInbox = false
     /// Pull requests CPilot merges by itself the moment every rule passes: "owner/repo#number" -> repo folder.
@@ -97,7 +100,7 @@ final class PRCenter {
 
     private func selectImpl(_ n: Int) async {
         guard let dir = repoDir else { return }
-        selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []; duplicates = []
+        selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []; duplicates = []; recommended = nil
         do {
             async let pr = GitHub.view(n, in: dir)
             async let diff = GitHub.diff(n, in: dir)
@@ -111,11 +114,32 @@ final class PRCenter {
         } catch { AppModel.shared.failQuietly(error, action: "Load the pull request") }
     }
 
+    /// Looks at what the merge would do before the button is pressed: titles or changes the base already has, which styles are allowed,
+    /// and which one keeps this pull request's commits intact.
     private func findDuplicates(_ p: PullRequest, dir: String) async {
         let commits = await GitHub.commits(p.number, in: dir)
-        let log = await Git.baseLog(dir, base: p.baseRefName)
+        async let log = Git.baseLog(dir, base: p.baseRefName)
+        async let allowedNow = GitHub.allowedMethods(in: dir)
+        _ = try? await Shell.run("git", ["fetch", "origin", "pull/\(p.number)/head"], cwd: URL(fileURLWithPath: dir), timeout: 120)
+        let titles = Git.findDuplicates([("title", p.title)] + commits.map { ($0.sha, $0.subject) }, baseLog: await log)
+        let subjects = Dictionary(commits.map { ($0.sha, $0.subject) }, uniquingKeysWith: { a, _ in a })
+        var same = await Git.alreadyOnBase(dir, base: p.baseRefName, head: "FETCH_HEAD", subjects: subjects)
+        same.removeAll { s in titles.contains { $0.mine == s.mine } }
+        let merges = await Git.mergeCommitCount(dir, base: p.baseRefName, head: "FETCH_HEAD")
+        let ok = await allowedNow
         guard selected == p.number else { return }
-        duplicates = Git.findDuplicates([("title", p.title)] + commits.map { ($0.sha, $0.subject) }, baseLog: log)
+        duplicates = titles + same
+        allowed = ok
+        recommended = Self.recommend(commits: commits.count, merges: merges, allowed: ok)
+        if !ok.contains(method), let first = [MergeMethod.squash, .merge, .rebase].first(where: ok.contains) { method = first }
+    }
+
+    /// One commit, or a branch that merged main into itself: squash. Several clean commits: whatever the repository allows, squash first.
+    nonisolated static func recommend(commits: Int, merges: Int, allowed: Set<MergeMethod>) -> (method: MergeMethod, reason: String)? {
+        if merges > 0, allowed.contains(.squash) { return (.squash, "This branch contains \(merges) merge commit\(merges == 1 ? "" : "s"), which a rebase merge would flatten away.") }
+        if commits <= 1, allowed.contains(.squash) { return (.squash, "A single commit lands the same way with any style.") }
+        if allowed.count == 1, let only = allowed.first { return (only, "It is the only style this repository allows.") }
+        return nil
     }
 
     func retitle(_ title: String) async {
@@ -174,15 +198,29 @@ final class PRCenter {
 
     private func mergeNowImpl() async {
         guard let dir = repoDir, let n = selected else { return }
+        // What the reviewer saw. If the branch moves before GitHub merges, the merge is refused instead of leaving the new commits behind.
+        let head = detail?.headRefOid, base = detail?.baseRefName ?? "main", names = files.map(\.path)
         do {
-            do { try await GitHub.merge(n, method: method, auto: false, in: dir) }
+            do { try await GitHub.merge(n, method: method, auto: false, expectedHead: head, in: dir) }
             catch where GitHub.isPolicyBlock(error) {
                 guard confirmAdminMerge(n) else { return }
-                try await GitHub.merge(n, method: method, auto: false, admin: true, in: dir)
+                try await GitHub.merge(n, method: method, auto: false, admin: true, expectedHead: head, in: dir)
             }
-            AppModel.shared.show("Merged #\(n)"); disarm(n)
+            disarm(n)
             await refreshList(); selected = nil; detail = nil
+            await announceMerged(n, head: head, base: base, files: names, dir: dir)
+        } catch where GitHub.isHeadMoved(error) {
+            AppModel.shared.show("#\(n) got new commits while you were looking. Nothing was merged. Review the new commits and merge again.", error: true)
+            await selectImpl(n)
         } catch { AppModel.shared.fail(error, action: "Merge") }
+    }
+
+    /// Says it is merged, and whether everything the pull request changed is on the base branch exactly as reviewed.
+    private func announceMerged(_ n: Int, head: String?, base: String, files: [String], dir: String) async {
+        guard let head, !files.isEmpty else { AppModel.shared.show("Merged #\(n)"); return }
+        let differing = await Git.filesDiffering(dir, head: head, base: base, files: files)
+        if differing.isEmpty { AppModel.shared.show("Merged #\(n). Checked: all \(files.count) changed file\(files.count == 1 ? "" : "s") match what you reviewed.") }
+        else { AppModel.shared.show("Merged #\(n). \(differing.count) file\(differing.count == 1 ? "" : "s") on \(base) differ from the branch (\(differing.prefix(2).joined(separator: ", "))\(differing.count > 2 ? "…" : "")). Expected if \(base) changed them too; check if not.", error: false) }
     }
 
     private func confirmAdminMerge(_ n: Int) -> Bool {
@@ -239,7 +277,7 @@ final class PRCenter {
             let gate = MergeGate.evaluate(pr: pr, checks: chk, scan: result, requireScan: Prefs.shared.securityScanOnPR)
             if gate.ready {
                 do {
-                    try await GitHub.merge(n, method: method, auto: false, in: dir)
+                    try await GitHub.merge(n, method: method, auto: false, expectedHead: pr.headRefOid, in: dir)
                     armed[k] = nil; persistArmed()
                     AppModel.shared.notify("Merged #\(n)", body: pr.title)
                 } catch { AppLog.error(error, context: "auto-merge #\(n)") }
@@ -524,13 +562,16 @@ struct ReviewAndMerge: View {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark").opacity(center.method == m ? 1 : 0).frame(width: 14)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(title).font(.system(size: 12.5, weight: .medium))
-                            Text(Self.blurb(m, base: pr.baseRefName)).font(.system(size: 11)).foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                Text(title).font(.system(size: 12.5, weight: .medium))
+                                if center.recommended?.method == m { Badge(text: "Recommended", kind: .ok) }
+                            }
+                            Text(center.allowed.contains(m) ? Self.blurb(m, base: pr.baseRefName) : "This repository does not allow it.").font(.system(size: 11)).foregroundStyle(.secondary)
                                 .frame(maxWidth: 260, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
-                }.buttonStyle(.soft)
+                }.buttonStyle(.soft).disabled(!center.allowed.contains(m))
             }
         }.padding(6).frame(width: 320)
     }
@@ -564,6 +605,13 @@ struct ReviewAndMerge: View {
                         .popover(isPresented: $choosing, arrowEdge: .bottom) { styleList }
                     }
                     Text(Self.blurb(center.method, base: pr.baseRefName)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let rec = center.recommended, rec.method != center.method {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Label("Recommended: \(Self.label(rec.method)). \(rec.reason)", systemImage: "lightbulb").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Button("Use it") { center.method = rec.method }.buttonStyle(Pill(kind: .plain))
+                        }
+                    }
                     if !center.duplicates.isEmpty { duplicateWarning(base: pr.baseRefName) }
                     Toggle(isOn: Binding(get: { armed }, set: { center.setArmed($0, pr.number) })) {
                         VStack(alignment: .leading, spacing: 1) {
@@ -583,9 +631,10 @@ struct ReviewAndMerge: View {
     private func duplicateWarning(base: String) -> some View {
         @Bindable var c = center
         return VStack(alignment: .leading, spacing: 8) {
-            Label("\(base) already has a commit with this title", systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.warn)
+            Label(center.duplicates.contains { !$0.sameChange } ? "\(base) already has a commit with this title" : "\(base) already has this change", systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.warn)
             ForEach(center.duplicates.prefix(3)) { d in
-                Text("\(d.onBase)  \(d.subject)  ←  \(d.mine == "title" ? "this pull request's title" : "commit \(d.mine)")")
+                Text(d.sameChange ? "commit \(d.mine)  \(d.subject)  ←  same change is already on \(base)"
+                                  : "\(d.onBase)  \(d.subject)  ←  \(d.mine == "title" ? "this pull request's title" : "commit \(d.mine)")")
                     .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
             }
             Text("It may be the same change committed twice. If the pull request has grown since it was opened, give it a title that describes all of it, so \(base) does not end up with two commits of one name.")

@@ -41,7 +41,7 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public var isOpen: Bool { state == "OPEN" }
     public var autoMerge: Bool { autoMergeRequest != nil }
 
-    public static let listFields = "number,title,state,isDraft,headRefName,baseRefName,author,url,autoMergeRequest,reviewDecision"
+    public static let listFields = "number,title,state,isDraft,headRefName,headRefOid,baseRefName,author,url,autoMergeRequest,reviewDecision"
     public static let viewFields = listFields + ",body,additions,deletions,mergeable,headRefOid"
 }
 
@@ -109,11 +109,32 @@ public enum GitHub {
     }
 
     /// With `auto`, GitHub merges as soon as the required checks pass. With `admin`, a bypass rule overrides the branch policy.
-    public static func merge(_ n: Int, method: MergeMethod, auto: Bool, admin: Bool = false, in dir: String) async throws {
+    /// `expectedHead` makes GitHub refuse the merge if the branch moved after it was reviewed. Without it, a push that lands between the
+    /// click and the merge is left out of the merge, and `--delete-branch` then deletes it.
+    public static func merge(_ n: Int, method: MergeMethod, auto: Bool, admin: Bool = false, expectedHead: String? = nil, in dir: String) async throws {
         var a = ["pr", "merge", String(n), "--\(method.rawValue)", "--delete-branch"]
+        if let expectedHead, !expectedHead.isEmpty { a += ["--match-head-commit", expectedHead] }
         if auto { a.append("--auto") }
         if admin { a.append("--admin") }
         try await Shell.check("gh", a, cwd: url(dir), timeout: 90)
+    }
+
+    /// True when the branch got a new commit after the merge was started.
+    public static func isHeadMoved(_ error: Error) -> Bool {
+        let s = "\(error)".lowercased()
+        return s.contains("head branch was modified") || s.contains("match-head-commit")
+    }
+
+    /// The merge styles this repository allows. All three when it cannot be read.
+    public static func allowedMethods(in dir: String) async -> Set<MergeMethod> {
+        struct R: Decodable { var squashMergeAllowed: Bool?; var mergeCommitAllowed: Bool?; var rebaseMergeAllowed: Bool? }
+        guard let out = try? await Shell.check("gh", ["repo", "view", "--json", "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"], cwd: url(dir)),
+              let r = try? JSONDecoder().decode(R.self, from: Data(out.utf8)) else { return Set(MergeMethod.allCases) }
+        var set = Set<MergeMethod>()
+        if r.squashMergeAllowed ?? true { set.insert(.squash) }
+        if r.mergeCommitAllowed ?? true { set.insert(.merge) }
+        if r.rebaseMergeAllowed ?? true { set.insert(.rebase) }
+        return set.isEmpty ? Set(MergeMethod.allCases) : set
     }
 
     /// True when `gh` refused because branch protection blocks the merge, which a bypass rule can override.
