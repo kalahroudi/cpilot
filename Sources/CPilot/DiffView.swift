@@ -77,6 +77,7 @@ struct CreatePRSheet: View {
     @State private var busy = false
     @State private var drafting = false
     @State private var error: String?
+    @State private var failure: ErrorReport?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -100,6 +101,7 @@ struct CreatePRSheet: View {
             }
         }
         .padding(20).frame(width: 520)
+        .sheet(item: $failure) { ErrorReportSheet(report: $0) }
         .task {
             await Exec.with(env) {
                 branch = await Git.info(dir)?.branch ?? ""
@@ -135,7 +137,10 @@ struct CreatePRSheet: View {
             let n = Int(url.split(separator: "/").last ?? "") ?? 0
             AppModel.shared.show("Pull request created")
             dismiss(); onCreated(n)
-        } catch { self.error = UserError.message(for: error, action: "Create the pull request") }
+        } catch {
+            let r = ErrorReport(error, action: "Create the pull request")
+            self.error = r.message; failure = r
+        }
     }
 }
 

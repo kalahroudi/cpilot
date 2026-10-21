@@ -104,6 +104,7 @@ struct SettingsPane: View {
             HStack(spacing: 10) {
                 Link("Source on GitHub", destination: URL(string: "https://github.com/kalahroudi/cpilot")!)
                 Link("Report an issue", destination: URL(string: "https://github.com/kalahroudi/cpilot/issues")!)
+                Button("Show log") { NSWorkspace.shared.activateFileViewerSelecting([AppLog.fileURL]) }.buttonStyle(.link)
                 Link("Website", destination: URL(string: "https://kalahroudi.github.io/cpilot/")!)
             }.font(.system(size: 13))
             Text("Licensed under the Apache License 2.0.").font(.system(size: 12)).foregroundStyle(.secondary)

@@ -75,10 +75,15 @@ struct MemoryView: View {
 struct SkillsView: View {
     @State private var skills: [Skill] = []
     @State private var query = ""
+    @State private var creating = false
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Skills", subtitle: "Found in ~/.claude/skills and each project's .claude/skills") {
-                SearchBox(prompt: "Search skills", text: $query).frame(width: 220)
+                HStack(spacing: 8) {
+                    SearchBox(prompt: "Search skills", text: $query).frame(width: 220)
+                    Button("Refresh") { skills = SkillCatalog.discover(project: Workspace.shared.current?.meta.cwd) }.buttonStyle(Pill(kind: .plain))
+                    Button("New skill") { creating = true }.buttonStyle(Pill(kind: .primary))
+                }
             }
             ScrollView {
                 VStack(spacing: 10) {
@@ -97,6 +102,59 @@ struct SkillsView: View {
             }
         }
         .background(Theme.pane)
+        .sheet(isPresented: $creating) { NewSkillSheet() }
         .onAppear { skills = SkillCatalog.discover(project: Workspace.shared.current?.meta.cwd) }
+    }
+}
+
+/// Describe a skill in plain words; Claude's own skill-creator builds it in a chat you can keep refining.
+struct NewSkillSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var idea = ""
+    @State private var forProject = false
+    @State private var busy = false
+    @State private var failure: ErrorReport?
+    private var project: String? { Workspace.shared.current?.meta.cwd }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New skill").font(.system(size: 17, weight: .semibold))
+            Text("Say what the skill should do and when Claude should use it. Claude will use its skill creator to write it, ask you what it needs, and test it with you in a chat.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $idea).font(.system(size: 12.5)).frame(height: 130)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            Picker("Save to", selection: $forProject) {
+                Text("All my projects (~/.claude/skills)").tag(false)
+                if let project { Text("This project (\((project as NSString).lastPathComponent))").tag(true) }
+            }.pickerStyle(.radioGroup)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                Button { Task { await start() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Create with Claude") } }
+                    .buttonStyle(Pill(kind: .primary)).disabled(idea.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20).frame(width: 520)
+        .sheet(item: $failure) { ErrorReportSheet(report: $0) }
+    }
+
+    private func start() async {
+        busy = true; defer { busy = false }
+        let home = NSHomeDirectory()
+        let root = forProject ? (project ?? home) : home
+        let target = forProject ? "\(root)/.claude/skills" : "\(home)/.claude/skills"
+        let prompt = """
+        Create a new Claude Code skill with the skill-creator skill (use the Skill tool). If it is not available, write it yourself: a folder with a SKILL.md that has `name` and `description` frontmatter (say what it does and when to use it) followed by the instructions.
+        Save it as a new folder inside \(target) and do not touch other skills there. Ask me anything you need, then show me what you made.
+
+        What the skill should do:
+        \(idea)
+        """
+        do {
+            try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true)
+            try await Workspace.shared.create(.init(folder: root, access: .editFiles, firstMessage: prompt))
+            dismiss()
+        } catch { failure = ErrorReport(error, action: "Start the skill creator") }
     }
 }
