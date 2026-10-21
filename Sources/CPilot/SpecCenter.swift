@@ -46,6 +46,16 @@ final class SpecCenter {
     }
 
     var repo: PRCenter.Repo?
+    /// Repos whose specs are committed instead of hidden from git ("environment|folder").
+    private var trackedRepos: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "trackedSpecRepos") ?? [])
+    private func trackKey(_ r: PRCenter.Repo) -> String { "\(r.environment ?? "")|\(r.dir)" }
+    var tracked: Bool { repo.map { trackedRepos.contains(trackKey($0)) } ?? false }
+    func setTracked(_ on: Bool) async {
+        guard let r = repo else { return }
+        if on { trackedRepos.insert(trackKey(r)) } else { trackedRepos.remove(trackKey(r)) }
+        UserDefaults.standard.set(Array(trackedRepos), forKey: "trackedSpecRepos")
+        await Exec.with(env) { await Specs.setTracked(on, in: r.dir) }
+    }
     var docs: [SpecDoc] = []
     var constitution: String?
     var selected: String?
@@ -110,7 +120,7 @@ final class SpecCenter {
         var changed = false
         for t in d.tasks where !t.done && (t.branch.map(merged.contains) ?? false) { text = Specs.updateTask(text, id: t.id, done: true); changed = true }
         guard changed else { return }
-        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(d.id)/tasks.md", text, in: r.dir) }
+        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(d.id)/tasks.md", text, in: r.dir, tracked: tracked) }
         if let i = docs.firstIndex(where: { $0.id == d.id }) { docs[i].tasksText = text }
     }
 
@@ -130,8 +140,8 @@ final class SpecCenter {
         let id = Specs.folderName(number: number, title: source.title)
         do {
             try await Exec.with(e) {
-                if constitution == nil { try await Specs.write("\(Specs.folder)/constitution.md", Specs.defaultConstitution, in: r.dir) }
-                try await Specs.write("\(Specs.folder)/\(id)/source.md", "> Source: \(source.label)\n\n\(source.requirement)\n", in: r.dir)
+                if constitution == nil { try await Specs.write("\(Specs.folder)/constitution.md", Specs.defaultConstitution, in: r.dir, tracked: tracked) }
+                try await Specs.write("\(Specs.folder)/\(id)/source.md", "> Source: \(source.label)\n\n\(source.requirement)\n", in: r.dir, tracked: tracked)
             }
         } catch { AppModel.shared.failQuietly(error, action: "Create the spec"); return }
         if allowGit, autonomy == .hands { Workspace.shared.allowCommands(["git add", "git commit", "git status", "git diff"], for: r.dir) }
@@ -191,7 +201,7 @@ final class SpecCenter {
     func approve(_ id: String, text: String) async {
         guard let r = repo, let draft = jobs[id]?.draft else { return }
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
-        do { try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir) } }
+        do { try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir, tracked: tracked) } }
         catch { jobs[id]?.error = AppModel.shared.capture(error, action: "Save the \(file)"); return }
         jobs[id]?.draft = nil
         await refresh()
@@ -242,7 +252,7 @@ final class SpecCenter {
             }
             taskSessions["\(id)/\(task.id)"] = c.id
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
-            try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir) }
+            try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
             await refresh()
         } catch { jobs[id, default: Job()].error = AppModel.shared.capture(error, action: "Start \(task.id)") }
     }
@@ -287,7 +297,7 @@ final class SpecCenter {
 
     func save(_ id: String, file: String, text: String) async {
         guard let r = repo else { return }
-        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir) }
+        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir, tracked: tracked) }
         await refresh()
     }
 
@@ -320,7 +330,7 @@ final class SpecCenter {
         guard let spec = files["spec.md"] else { AppModel.shared.show("No spec.md or requirements.md found in that folder.", error: true); return }
         let title = Specs.title(of: spec) ?? url.lastPathComponent
         let id = Specs.folderName(number: Specs.nextNumber(existing: docs.map(\.id)), title: title)
-        for (name, text) in files { try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(name)", text, in: r.dir) } }
+        for (name, text) in files { try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(name)", text, in: r.dir, tracked: tracked) } }
         await refresh(); selected = id
     }
 }

@@ -48,7 +48,7 @@ public struct SpecDoc: Identifiable, Equatable, Sendable {
 }
 
 public enum Specs {
-    /// Kept out of the project tree and out of git: `.cpilot` is listed in `.git/info/exclude` the first time something is written.
+    /// Kept out of git by default: `.cpilot` is listed in `.git/info/exclude` the first time something is written. A repo can opt in to tracking it.
     public static let folder = ".cpilot/specs"
 
     // MARK: Parsing
@@ -178,9 +178,19 @@ public enum Specs {
         return (docs, files["\(folder)/constitution.md"])
     }
 
-    public static func write(_ relativePath: String, _ text: String, in dir: String) async throws {
-        let r = try await Shell.run("sh", ["-c", #"cd "$1" && mkdir -p "$(dirname "$2")" && cat > "$2" && { x="$(git rev-parse --git-path info/exclude 2>/dev/null)" && [ -n "$x" ] && { grep -qx '/.cpilot/' "$x" 2>/dev/null || { mkdir -p "$(dirname "$x")"; echo '/.cpilot/' >> "$x"; }; }; true; }"#, "sh", dir, relativePath], input: Data(text.utf8), timeout: 30)
+    /// `tracked` leaves `.cpilot` visible to git so the specs can be committed and shared; otherwise it is listed in `.git/info/exclude`.
+    public static func write(_ relativePath: String, _ text: String, in dir: String, tracked: Bool = false) async throws {
+        let r = try await Shell.run("sh", ["-c", #"cd "$1" && mkdir -p "$(dirname "$2")" && cat > "$2""#, "sh", dir, relativePath], input: Data(text.utf8), timeout: 30)
         guard r.ok else { throw ShellError.failed(command: "write", status: r.status, stderr: r.stderr) }
+        await setTracked(tracked, in: dir)
+    }
+
+    /// Adds or removes the local ignore line for `.cpilot`. Only the clone's own exclude file is touched, never a committed .gitignore.
+    public static func setTracked(_ tracked: Bool, in dir: String) async {
+        let script = tracked
+            ? #"cd "$1" && x="$(git rev-parse --git-path info/exclude 2>/dev/null)" && [ -f "$x" ] && grep -vx '/.cpilot/' "$x" > "$x.tmp"; [ -f "$x.tmp" ] && mv "$x.tmp" "$x"; true"#
+            : #"cd "$1" && x="$(git rev-parse --git-path info/exclude 2>/dev/null)" && [ -n "$x" ] && { grep -qx '/.cpilot/' "$x" 2>/dev/null || { mkdir -p "$(dirname "$x")"; echo '/.cpilot/' >> "$x"; }; }; true"#
+        _ = try? await Shell.run("sh", ["-c", script, "sh", dir], timeout: 30)
     }
 
     public static let defaultConstitution = """

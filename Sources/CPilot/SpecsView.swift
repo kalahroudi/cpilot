@@ -160,6 +160,9 @@ struct SpecDetail: View {
             Badge(text: center.status(doc).label, kind: center.status(doc) == .done ? .ok : center.status(doc) == .inProgress ? .accent : .neutral)
             if let s = doc.source { Badge(text: s) }
             Spacer()
+            Toggle("Track in git", isOn: Binding(get: { center.tracked }, set: { on in Task { await center.setTracked(on) } }))
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12)).foregroundStyle(.secondary)
+                .help(center.tracked ? "The specs folder (.cpilot/specs) shows up in git so you can commit and share it." : "The specs folder (.cpilot/specs) stays out of git. Turn on to commit and share it.")
             Button("Open folder") { if let r = center.repo, center.env == nil { NSWorkspace.shared.open(URL(fileURLWithPath: r.dir + "/" + Specs.folder + "/" + doc.id)) } }.buttonStyle(Pill(kind: .plain)).disabled(center.env != nil)
         }
     }
