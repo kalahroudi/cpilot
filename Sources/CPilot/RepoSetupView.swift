@@ -23,7 +23,7 @@ struct RepoSetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Repo setup", subtitle: "README, GitHub Pages, a protected main branch and a security scan, in one go") { RepoMenu() }
+            PaneHeader(title: "Repo setup", subtitle: "README, GitHub Pages, a protected main branch and a security scan, in one go") {}
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if account == nil {

@@ -536,11 +536,19 @@ final class Workspace {
     func select(_ id: String) {
         let previous = selected
         selected = id
-        if !tabs.contains(id) { tabs.append(id) }
+        // With the side list there is no tab strip, so browsing it must not pile every session into the tabs.
+        if !tabs.contains(id), !Prefs.shared.tabsOnSide { tabs.append(id) }
         controller(id)?.loadIfNeeded()
         controller(id)?.showRecapIfAway()
+        if Prefs.shared.followSession, let m = sessions.first(where: { $0.id == id }) { Project.shared.follow(dir: m.cwd, environment: m.environment) }
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
+    }
+
+    /// Back on the tab strip: the session on screen gets its tab, the rest stay as they were.
+    func ensureSelectedTab() {
+        guard let id = selected, !tabs.contains(id) else { return }
+        tabs.append(id); persistTabs()
     }
 
     var archived: [SessionMeta] { store.list(includeArchived: true).filter(\.archived) }
@@ -696,7 +704,7 @@ final class Workspace {
     }
 
     func session(forBranch branch: String, repo: String, environment: String?) -> SessionMeta? {
-        sessions.first { $0.branch == branch && $0.cwd == repo && $0.environment == environment }
+        sessions.first { $0.branch == branch && RepoRef(dir: repo, environment: environment).contains($0.cwd) && $0.environment == environment }
     }
 
     /// Opens (or creates) a session working on a branch that already exists, in its own worktree when git allows it.

@@ -92,6 +92,7 @@ struct Rail: View {
         VStack(spacing: 4) {
             Color.clear.frame(height: 36)                                   // room for the window buttons
             toggle
+            RepoSwitcher(expanded: expanded)
             Spacer().frame(height: 6)
             ForEach([Pane.sessions, .specs, .stacks, .pulls, .memory, .skills, .repo, .remote]) { item($0) }
             Spacer()
@@ -248,6 +249,7 @@ struct TabStrip: View {
                 .popover(isPresented: $showHistory, arrowEdge: .bottom) { SessionHistory { showHistory = false } }
         }
         .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 0)
+        .onAppear { ws.ensureSelectedTab() }
         .background(Theme.sidebar)
         .overlay(alignment: .bottom) { Divider() }
     }

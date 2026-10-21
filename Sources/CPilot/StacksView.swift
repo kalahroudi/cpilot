@@ -230,7 +230,6 @@ struct StacksView: View {
         VStack(spacing: 0) {
             PaneHeader(title: "Stacks", subtitle: center.repo?.name ?? "Small pull requests that build on each other") {
                 HStack(spacing: 8) {
-                    RepoMenu()
                     AsyncButton { await center.sync() } label: {
                         if center.busy == "Syncing" { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.triangle.2.circlepath") }
                     }.buttonStyle(.soft).disabled(center.busy != nil || center.loading || center.conflict != nil).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")

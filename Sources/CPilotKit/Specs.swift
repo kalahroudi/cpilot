@@ -152,6 +152,16 @@ public enum Specs {
         return trunk
     }
 
+    /// Whether a merged pull request (its branch and title) is this task's work: the task's own branch, or its id in the branch or title.
+    public static func isMergedWork(task: SpecTask, spec: String, head: String, title: String) -> Bool {
+        let id = task.id.lowercased(), h = head.lowercased(), t = title.lowercased()
+        if h == taskBranch(spec: spec, task: task) { return true }
+        func has(_ s: String) -> Bool { s.range(of: "(^|[^a-z0-9])\(id)([^a-z0-9]|$)", options: .regularExpression) != nil }
+        if h.hasPrefix("spec-") { return h.hasPrefix("spec-\(spec.prefix(3))-") && has(h) }
+        let name = task.title.lowercased().prefix(30)
+        return has(t) || (name.count >= 20 && t.contains(name))
+    }
+
     public static func taskBranch(spec: String, task: SpecTask) -> String { "spec-\(spec.prefix(3))-\(task.id.lowercased())" }
 
     // MARK: Reading and writing the folder (local or on a server, through the active environment)

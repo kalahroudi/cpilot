@@ -47,6 +47,7 @@ struct SettingsPane: View {
                 SettingsGroup("Appearance") {
                     SettingRow("Theme", "Applies to the window and the menu bar popover.") { Segmented(options: ThemeChoice.allCases.map { ($0, $0.label) }, selection: $p.theme) }
                     SettingRow("Dock icon", "Keep CPilot in the Dock as well as the menu bar.") { toggle($p.showDockIcon) }
+                    SettingRow("Follow the session", "Opening a session makes its repository the active one, so Specs, Stacks and Pull requests show the repository you are working in.") { toggle($p.followSession) }
                     SettingRow("Sessions as", "Tabs across the top, or a list down the left grouped by project.") { Segmented(options: [(false, "Tabs"), (true, "Side list")], selection: $p.tabsOnSide) }
                 }
                 SettingsGroup("Capture") {
@@ -79,9 +80,10 @@ struct SettingsPane: View {
                 }
                 SettingsGroup("Notifications") {
                     SettingRow("Notify me", "When a session needs approval or finishes while CPilot is in the background.") { toggle($p.notify) }
+                    SettingRow("Pull request checks", "Tells you when the checks on your open pull requests pass or fail. One request per repository: every minute while checks run, every ten minutes otherwise.") { toggle($p.notifyChecks) }
                 }
                 SettingsGroup("Performance") {
-                    SettingRow("Nothing runs while hidden", "No polling or timers while the popover and window are closed. Sleeping tabs hold no memory.") { Badge(text: "always on", kind: .ok) }
+                    SettingRow("Nothing runs while hidden", "No polling or timers while the popover and window are closed, except the pull request check watcher above. Sleeping tabs hold no memory.") { Badge(text: "always on", kind: .ok) }
                     SettingRow("App memory", "How much memory CPilot uses right now.") { Text(AppMemory.footprint).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 }
             }.frame(maxWidth: .infinity)

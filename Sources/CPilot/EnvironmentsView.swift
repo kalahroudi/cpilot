@@ -267,7 +267,7 @@ struct AddEnvironmentSheet: View {
                     TextField("~/projects, ~/work  (comma separated)", text: $folders).textFieldStyle(CPField())
                     Toggle(isOn: $persistent) { Text("Keep sessions running while I am away").font(.system(size: 12.5)) }.toggleStyle(.switch).tint(Theme.accent)
                     Text(r.has("node") ? "Copies a small helper (one Node.js file, no network port) so agents survive a dropped connection."
-                         : "Needs Node.js on the server. Install it there to turn this on.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                         : "Node.js is not on the server, so CPilot installs it for you (in ~/.cpilot, no admin rights needed) when you add it.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
             }
             if let error { ErrorLine(text: error) }
@@ -275,7 +275,7 @@ struct AddEnvironmentSheet: View {
                 Spacer()
                 Button("Cancel") { if existing == nil { SSHPassword.delete(draftId) }; dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
                 AsyncButton { await add() } label: { if busy { ProgressView().controlSize(.small) } else { Text(existing == nil ? "Add \(name.isEmpty ? (host.isEmpty ? "server" : host) : name)" : "Save") } }
-                    .buttonStyle(Pill(kind: .primary)).disabled(busy || host.trimmingCharacters(in: .whitespaces).isEmpty || (existing == nil && report?.connected != true) || (persistent && report?.connected == true && report?.has("node") != true))
+                    .buttonStyle(Pill(kind: .primary)).disabled(busy || host.trimmingCharacters(in: .whitespaces).isEmpty || (existing == nil && report?.connected != true))
                     .keyboardShortcut(.defaultAction)
             }
         }.padding(22).frame(width: 580).fixedSize(horizontal: false, vertical: true)
@@ -292,7 +292,7 @@ struct AddEnvironmentSheet: View {
                 Divider(); line("Claude command line", r.tools["claude"] ?? "Not found. Sessions need it on the server.", r.has("claude") ? .ok : .warn)
                 Divider(); line("Git", r.tools["git"] ?? "Not found", r.has("git") ? .ok : .warn)
                 Divider(); line("GitHub command line", r.has("gh") ? (r.gitHubSignedIn ? "Signed in" : "Found. Run gh auth login on the server.") : "Not found. Needed for pull requests there.", r.gitHubSignedIn ? .ok : .warn)
-                Divider(); line("Node.js", r.tools["node"] ?? "Not found. Needed only to keep sessions running.", r.has("node") ? .ok : .neutral)
+                Divider(); line("Node.js", r.tools["node"] ?? "Not found. CPilot installs it if you keep sessions running.", r.has("node") ? .ok : .neutral)
                 Divider(); line("Docker", r.tools["docker"] ?? "Not found. Only needed to prove security findings.", r.has("docker") ? .ok : .neutral)
             }
         }.background(Theme.card, in: RoundedRectangle(cornerRadius: 9)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline))

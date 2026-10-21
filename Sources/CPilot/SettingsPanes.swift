@@ -6,6 +6,31 @@ import CPilotKit
 
 private func toggle(_ b: Binding<Bool>) -> some View { Toggle("", isOn: b).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
 
+/// One approval: a plain headline, with the full command behind a "Details" toggle.
+struct ApprovalRow: View {
+    let entry: AuditEntry
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingRow(entry.headline, entry.ts.formatted(date: .abbreviated, time: .shortened), separator: false) {
+                HStack(spacing: 8) {
+                    Badge(text: entry.outcome, kind: entry.outcome.hasPrefix("denied") ? .warn : .ok)
+                    if entry.summary.count > entry.headline.count {
+                        Button(open ? "Hide details" : "Details") { open.toggle() }.buttonStyle(.soft).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if open {
+                Text(entry.summary).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
+                    .padding(.horizontal, 14).padding(.bottom, 6)
+            }
+            Divider()
+        }
+    }
+}
+
 /// What agents may do, per project, and a log of every approval.
 struct AccessSettings: View {
     let ws = Workspace.shared
@@ -39,9 +64,7 @@ struct AccessSettings: View {
             }
             SettingsGroup("Approvals") {
                 if log.isEmpty { SettingRow("Nothing yet", "Every approval and denial is listed here.") { EmptyView() } }
-                ForEach(log.prefix(12)) { e in
-                    SettingRow("\(e.tool): \(e.summary)", e.ts.formatted(date: .abbreviated, time: .shortened)) { Badge(text: e.outcome, kind: e.outcome.hasPrefix("denied") ? .warn : .ok) }
-                }
+                ForEach(log.prefix(12)) { e in ApprovalRow(entry: e) }
                 SettingRow("Revoke everything", "Forgets all project command rules. Sessions ask again from now on.") {
                     Button("Revoke") { for i in w.policy.rules.indices { w.policy.rules[i].allowCommands = [] }; w.savePolicy() }.buttonStyle(Pill(kind: .danger))
                 }
@@ -154,6 +177,8 @@ struct AgentSettings: View {
     @State private var loadingRegistry = false
     @State private var showRegistry = false
     @State private var custom = false
+    @State private var installing: String?
+    @State private var installNotes: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -163,7 +188,7 @@ struct AgentSettings: View {
                 }
                 ForEach(ws.acpAgents) { a in
                     SettingRow(a.name, ([a.command] + a.args).joined(separator: " ")) {
-                        Button { ws.acpAgents.removeAll { $0.id == a.id }; ws.saveAgents() } label: { Image(systemName: "trash") }
+                        Button { AgentInstaller.remove(a); ws.acpAgents.removeAll { $0.id == a.id }; ws.saveAgents() } label: { Image(systemName: "trash") }
                             .buttonStyle(.soft).foregroundStyle(.secondary).help("Remove \(a.name)").accessibilityLabel("Remove \(a.name)")
                     }
                 }
@@ -192,7 +217,7 @@ struct AgentSettings: View {
     private var registrySheet: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Agent registry").font(.system(size: 15, weight: .semibold))
-            Text("From the official ACP registry. Agents that run through npx or uvx can be added in one click; they download on first use.").font(.system(size: 12)).foregroundStyle(.secondary)
+            Text("From the official ACP registry. Agents that run through npx or uvx are added in one click and download on first use. Native agents (Antigravity, Cursor, goose, OpenCode and others) are downloaded, checked against the registry's checksum and unpacked by CPilot.").font(.system(size: 12)).foregroundStyle(.secondary)
             if loadingRegistry { ProgressView().controlSize(.small) }
             List(registry) { a in
                 HStack {
@@ -202,11 +227,38 @@ struct AgentSettings: View {
                         if ws.acpAgents.contains(where: { $0.id == a.id }) { Badge(text: "Added", kind: .ok) }
                         else if Shell.find(c.command) == nil { Badge(text: "Needs \(a.needsRuntime ?? c.command)", kind: .warn) }
                         else { Button("Add") { ws.acpAgents.append(c); ws.saveAgents() }.buttonStyle(Pill(kind: .primary)) }
-                    } else { Badge(text: "Manual install") }
+                    } else if a.binary != nil { binaryControl(a) }
+                    else { Badge(text: "Not for this Mac") }
                 }
             }.frame(height: 360)
             HStack { Spacer(); Button("Done") { showRegistry = false }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.defaultAction) }
         }.padding(18).frame(width: 520)
+    }
+}
+
+extension AgentSettings {
+    /// Install, update or show as added an agent that ships as a native download.
+    @ViewBuilder func binaryControl(_ a: RegistryAgent) -> some View {
+        let existing = ws.acpAgents.first { $0.id == a.id }
+        let current = existing.flatMap { AgentInstaller.installedVersion(of: $0) }
+        VStack(alignment: .trailing, spacing: 3) {
+            if installing == a.id { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Installing…").font(.system(size: 11.5)).foregroundStyle(.secondary) } }
+            else if existing != nil, current == a.version || current == nil { Badge(text: "Added", kind: .ok) }
+            else { Button(existing == nil ? "Install" : "Update to \(a.version)") { install(a) }.buttonStyle(Pill(kind: .primary)).disabled(installing != nil) }
+            if let note = installNotes[a.id] { Text(note).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.trailing).frame(maxWidth: 220, alignment: .trailing) }
+        }
+    }
+
+    private func install(_ a: RegistryAgent) {
+        installing = a.id; installNotes[a.id] = nil
+        Task {
+            do {
+                let done = try await AgentInstaller.install(a)
+                ws.acpAgents.removeAll { $0.id == a.id }; ws.acpAgents.append(done.config); ws.saveAgents()
+                installNotes[a.id] = done.verified ? "Checksum verified." : "The registry gives no checksum for this download."
+            } catch { installNotes[a.id] = error.localizedDescription }
+            installing = nil
+        }
     }
 }
 
