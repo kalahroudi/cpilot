@@ -55,6 +55,14 @@ public enum Shell {
     }
 
     private static func makeProcess(_ tool: String, _ args: [String], cwd: URL? = nil, env: [String: String] = [:]) throws -> Process {
+        // Inside `Exec.with(environment)` every command runs on that server, over SSH.
+        if let remote = Exec.environment {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: SSH.executable)
+            p.arguments = SSH.baseArgs(remote, acceptNewHostKeys: Exec.acceptNewHostKeys) + [remote.target, SSH.remoteCommand(tool, args, cwd: cwd?.path, env: env)]
+            p.environment = environment
+            return p
+        }
         guard let path = find(tool) else { throw ShellError.toolNotFound(tool) }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
@@ -66,13 +74,14 @@ public enum Shell {
 
     /// Run to completion and collect output. Does not throw on non-zero exit; check `ok`.
     @discardableResult
-    public static func run(_ tool: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval? = 60) async throws -> ShellResult {
+    public static func run(_ tool: String, _ args: [String], cwd: URL? = nil, input: Data? = nil, timeout: TimeInterval? = 60) async throws -> ShellResult {
         let process = try makeProcess(tool, args, cwd: cwd)
         let out = Buffer(), err = Buffer()
         let outPipe = Pipe(), errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
-        process.standardInput = FileHandle.nullDevice
+        let inPipe = Pipe()
+        process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
         outPipe.fileHandleForReading.readabilityHandler = { out.append($0.availableData) }
         errPipe.fileHandleForReading.readabilityHandler = { err.append($0.availableData) }
         let command = ([tool] + args).joined(separator: " ")
@@ -88,6 +97,7 @@ public enum Shell {
                 cont.resume(returning: ShellResult(stdout: out.string, stderr: err.string, status: proc.terminationStatus))
             }
             do { try process.run() } catch { cont.resume(throwing: error); return }
+            if let input { try? inPipe.fileHandleForWriting.write(contentsOf: input); try? inPipe.fileHandleForWriting.close() }
             if let timeout {
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                     if process.isRunning { timedOut.append(Data("1".utf8)); process.terminate() }
@@ -98,8 +108,8 @@ public enum Shell {
 
     /// Run and throw if the exit status is not zero. Returns trimmed stdout.
     @discardableResult
-    public static func check(_ tool: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval? = 60) async throws -> String {
-        let r = try await run(tool, args, cwd: cwd, timeout: timeout)
+    public static func check(_ tool: String, _ args: [String], cwd: URL? = nil, input: Data? = nil, timeout: TimeInterval? = 60) async throws -> String {
+        let r = try await run(tool, args, cwd: cwd, input: input, timeout: timeout)
         guard r.ok else { throw ShellError.failed(command: ([tool] + args).joined(separator: " "), status: r.status, stderr: r.stderr.isEmpty ? r.stdout : r.stderr) }
         return r.stdout
     }

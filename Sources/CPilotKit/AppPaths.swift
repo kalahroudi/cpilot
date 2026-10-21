@@ -20,6 +20,7 @@ public struct AppPaths: Sendable {
     public var auditFile: URL { root.appendingPathComponent("audit.jsonl") }
     public var policyFile: URL { root.appendingPathComponent("policy.json") }
     public var agentsFile: URL { root.appendingPathComponent("agents.json") }
+    public var environmentsFile: URL { root.appendingPathComponent("environments.json") }
     public var settingsFile: URL { root.appendingPathComponent("settings.json") }
     /// Written by the running app so the MCP server can find it (loopback port + token), 0600.
     public var controlFile: URL { root.appendingPathComponent("control.json") }
