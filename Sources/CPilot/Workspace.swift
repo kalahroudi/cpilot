@@ -99,15 +99,24 @@ final class SessionController: Identifiable {
         let atts = attachments
         draft = ""; attachments = []; meta.draft = nil
         let composed = Capture.compose(message: text, attachments: atts)
+        let isFirst = !items.contains { $0.kind == .user }
         let row = ChatItem(kind: .user, text: text, attachments: atts, ts: .now)
-        items.append(row); ws.store.append(row, to: id)
+        items.append(row); ws.store.append(row, to: id); ws.retain(row, in: meta)
         if meta.title == "New session" { meta.title = String(text.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines) }
         meta.updatedAt = .now; ws.save(meta)
         state = .running
         sleepTask?.cancel()
-        switch meta.backend.kind {
-        case .claude: sendClaude(composed.text, composed.images)
-        case .acp: sendAcp(composed.text, composed.images)
+        Task { @MainActor in
+            var body = composed.text
+            if isFirst, !text.isEmpty, let r = await ws.recall(for: text, in: meta) {
+                body = r.prefix + body
+                let note = ChatItem(kind: .notice, text: "Recalled earlier context from \(r.sources.joined(separator: ", ")).", status: .done)
+                items.append(note); ws.store.append(note, to: id)
+            }
+            switch meta.backend.kind {
+            case .claude: sendClaude(body, composed.images)
+            case .acp: sendAcp(body, composed.images)
+            }
         }
     }
 
@@ -158,7 +167,7 @@ final class SessionController: Identifiable {
                 if meta.remoteId != sid || meta.forkPending == true { meta.remoteId = sid; meta.forkPending = nil; ws.save(meta) }
             case .item(let item):
                 items.upsert(item)
-                if item.status != .running { ws.store.append(item, to: id) } else { checkpoint(item) }
+                if item.status != .running { ws.store.append(item, to: id); ws.retain(item, in: meta) } else { checkpoint(item) }
             case .permission(let req):
                 handlePermission(PermissionRequestEnvelope(source: .claude(req), request: req))
             case .turnEnded(let isError, let text, let cost):
@@ -224,7 +233,7 @@ final class SessionController: Identifiable {
     private func handle(acp ev: AcpEvent) {
         switch ev {
         case .items(let list):
-            for item in list { items.upsert(item); if item.status != .running { ws.store.append(item, to: id) } else { checkpoint(item) } }
+            for item in list { items.upsert(item); if item.status != .running { ws.store.append(item, to: id); ws.retain(item, in: meta) } else { checkpoint(item) } }
         case .permission(let p):
             let tool: String = switch p.detail { case "read", "search", "fetch", "think": "Read"; case "edit", "delete", "move": "Edit"; default: "Bash" }
             let req = PermissionRequest(id: p.id, tool: tool, summary: p.title, input: "{}", path: p.path)
@@ -358,7 +367,8 @@ final class Workspace {
     static let shared = Workspace()
 
     let store = SessionStore()
-    let memory = MemoryStore()
+    let index = MemoryIndex()
+    let memory: MemoryStore
     let audit = AuditLog()
     var policy = AccessPolicy.load()
     var acpAgents = AcpAgentConfig.load()
@@ -368,10 +378,45 @@ final class Workspace {
     private var controllers: [String: SessionController] = [:]
 
     private init() {
+        memory = MemoryStore(index: index)
         sessions = store.list()
         let saved = UserDefaults.standard.stringArray(forKey: "openTabs") ?? []
         tabs = saved.filter { id in sessions.contains { $0.id == id } }
         selected = UserDefaults.standard.string(forKey: "selectedTab").flatMap { tabs.contains($0) ? $0 : nil } ?? tabs.first
+        if !UserDefaults.standard.bool(forKey: "memoryBackfilled") { UserDefaults.standard.set(true, forKey: "memoryBackfilled"); rebuildIndex() }
+    }
+
+    /// Indexes existing notes and the latest sessions once, in the background, so recall works on day one.
+    func rebuildIndex() {
+        let index = index, memory = memory, store = store, sessions = sessions
+        DispatchQueue.global(qos: .utility).async {
+            for n in memory.allNotes() { index.replace(scope: n.scope, source: "note", ref: n.name, text: n.name + "\n\n" + n.body) }
+            for m in sessions.prefix(60) {
+                let scope = MemoryStore.scope(forProject: m.cwd)
+                for row in store.items(m.id, limit: 300) where row.status != .running && (row.kind == .user || row.kind == .assistant) {
+                    index.add(scope: scope, source: "chat", ref: m.id, text: row.text, ts: row.ts)
+                }
+            }
+        }
+    }
+
+    /// Keeps a finished user or assistant message for recall. Tool output and thinking are never indexed.
+    func retain(_ item: ChatItem, in meta: SessionMeta) {
+        guard Prefs.shared.recall, item.status != .running, item.kind == .user || item.kind == .assistant, !item.text.isEmpty else { return }
+        let index = index, scope = MemoryStore.scope(forProject: meta.cwd), ref = meta.id, text = item.text, ts = item.ts
+        DispatchQueue.global(qos: .utility).async { index.add(scope: scope, source: "chat", ref: ref, text: text, ts: ts) }
+    }
+
+    /// The best earlier context for a new session's first message, and what it was drawn from.
+    func recall(for text: String, in meta: SessionMeta) async -> (prefix: String, sources: [String])? {
+        guard Prefs.shared.recall, index.isOpen else { return nil }
+        let titles = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.title) })
+        let scopes = [MemoryStore.scope(forProject: meta.cwd), MemoryStore.globalScope]
+        let index = index, id = meta.id
+        let hits = await Task.detached { index.search(text, scopes: scopes, limit: 4, excludingRef: id) }.value
+        guard let ctx = Recall.context(hits, titles: titles) else { return nil }
+        let sources = hits.map { $0.source == "note" ? "note \"\($0.ref)\"" : "session \"\(titles[$0.ref] ?? "untitled")\"" }
+        return (ctx + "\n---\n\n", Array(Set(sources)).sorted())
     }
 
     /// Screenshots only: registers controllers for made-up sessions.
@@ -415,7 +460,7 @@ final class Workspace {
     func delete(_ id: String) {
         closeTab(id)
         if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree { Task { await Git.removeWorktree(repo: m.cwd, path: wt) } }
-        store.delete(id)
+        store.delete(id); index.remove(ref: id)
         sessions.removeAll { $0.id == id }
     }
 

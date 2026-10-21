@@ -181,3 +181,65 @@ final class MemoryQualityTests: XCTestCase {
         XCTAssertFalse(ClaudeRunner.arguments(c).contains("--fork-session"))
     }
 }
+
+/// A tiny deterministic "meaning" model: words in the same group get the same direction.
+struct FakeEmbedder: TextEmbedder {
+    static let groups = [["car", "vehicle", "automobile"], ["cookie", "session", "login"], ["banana", "fruit"]]
+    func embed(_ text: String) -> [Float]? {
+        var v = [Float](repeating: 0, count: Self.groups.count)
+        for w in text.lowercased().split(whereSeparator: { !$0.isLetter }) { for (i, g) in Self.groups.enumerated() where g.contains(String(w)) { v[i] += 1 } }
+        let n = sqrt(v.reduce(0) { $0 + $1 * $1 })
+        return n > 0 ? v.map { $0 / n } : nil
+    }
+}
+
+final class MemoryIndexTests: XCTestCase {
+    func index() -> MemoryIndex { MemoryIndex(path: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).db"), embedder: FakeEmbedder()) }
+
+    func testKeywordAndMeaningRecall() {
+        let ix = index(); XCTAssertTrue(ix.isOpen)
+        ix.add(scope: "shop", source: "chat", ref: "s1", text: "We fixed the flaky login test by waiting for the session response.")
+        ix.add(scope: "shop", source: "chat", ref: "s2", text: "The banana pricing table needs a rounding fix in the invoice code.")
+        ix.add(scope: "other", source: "chat", ref: "s3", text: "The login redirect in the other project was broken.")
+        // keyword
+        XCTAssertEqual(ix.search("flaky tests", scopes: ["shop"]).first?.ref, "s1")
+        // meaning: "cookie" shares no word with the text but sits in the same group as "session"/"login"
+        XCTAssertEqual(ix.search("cookie problem", scopes: ["shop"]).first?.ref, "s1")
+        // scope is respected
+        XCTAssertFalse(ix.search("login", scopes: ["shop"]).contains { $0.ref == "s3" })
+        XCTAssertTrue(ix.search("login").contains { $0.ref == "s3" })
+        XCTAssertFalse(ix.search("login", scopes: ["shop"], excludingRef: "s1").contains { $0.ref == "s1" })
+        XCTAssertEqual(ix.counts().chats, 3)
+    }
+
+    func testReplaceRemoveDedupeAndRedaction() {
+        let ix = index()
+        ix.replace(scope: "g", source: "note", ref: "n", text: "Use the old deploy script for staging servers.")
+        ix.replace(scope: "g", source: "note", ref: "n", text: "Use the new release pipeline for staging servers.")
+        XCTAssertEqual(ix.counts().notes, 1)
+        XCTAssertTrue(ix.search("pipeline").first?.text.contains("new release") == true)
+        XCTAssertTrue(ix.search("script deploy").isEmpty)
+        ix.add(scope: "g", source: "chat", ref: "c", text: "My key is sk-abcdefghijklmnop1234 please keep it.")
+        XCTAssertFalse(ix.search("please keep").first?.text.contains("sk-abc") ?? false)
+        ix.remove(ref: "n"); XCTAssertEqual(ix.counts().notes, 0)
+        let again = "Same sentence repeated here."
+        ix.add(scope: "g", source: "chat", ref: "d", text: again); ix.add(scope: "g", source: "chat", ref: "d", text: again)
+        XCTAssertEqual(ix.counts().chats, 2)   // "c" plus a single "d"
+    }
+
+    func testChunkingAndRecallText() {
+        XCTAssertEqual(MemoryIndex.chunks("short").count, 1)
+        XCTAssertGreaterThan(MemoryIndex.chunks(String(repeating: "A sentence here. ", count: 80)).count, 1)
+        let hit = MemoryIndex.Hit(id: 1, scope: "s", source: "chat", ref: "r", text: "Fixed it", score: 1)
+        XCTAssertTrue(Recall.context([hit], titles: ["r": "Login fix"])!.contains("Login fix"))
+        XCTAssertNil(Recall.context([]))
+    }
+
+    func testRealEmbedderRelatesSimilarSentences() throws {
+        let e = NLEmbedder()
+        try XCTSkipUnless(e.isAvailable, "no on-device embedding")
+        let a = e.embed("The car would not start this morning")!, b = e.embed("My vehicle failed to turn on today")!, c = e.embed("Quarterly tax filing deadlines")!
+        func dot(_ x: [Float], _ y: [Float]) -> Float { zip(x, y).reduce(0) { $0 + $1.0 * $1.1 } }
+        XCTAssertGreaterThan(dot(a, b), dot(a, c))
+    }
+}

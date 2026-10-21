@@ -47,7 +47,7 @@ private func requireString(_ a: Args, _ key: String) throws -> String {
 //  - Deleting needs the session's exact title as `confirm_title`.
 
 private let store = SessionStore()
-private let memory = MemoryStore()
+private let memory = MemoryStore(index: MemoryIndex())
 
 private func int(_ a: Args, _ k: String, _ d: Int) -> Int { (a[k] as? Int) ?? d }
 
@@ -97,11 +97,12 @@ let allTools: [Tool] = {
         return try json(store.items(id, limit: int(a, "tail", 20)).map { Row(kind: $0.kind.rawValue, text: String($0.text.prefix(2000)), title: $0.title, status: $0.status?.rawValue) })
     })
 
-    t.append(Tool(name: "search_memory", description: "Search the notes CPilot keeps for the user's projects.", properties: ["query": prop("string", "Words to look for.")], required: ["query"]) { a in
+    t.append(Tool(name: "search_memory", description: "Search what CPilot remembers: the user's saved notes and finished messages from earlier sessions, by words and by meaning.",
+                  properties: ["query": prop("string", "What to look for."), "project_folder": prop("string", "Optional: only this project's memory plus global notes.")], required: ["query"]) { a in
         let q = try requireString(a, "query")
-        let scopes = (try? FileManager.default.contentsOfDirectory(atPath: memory.root.path)) ?? []
-        struct Row: Encodable { let scope: String; let name: String; let body: String }
-        return try json(memory.search(q, scopes: scopes).prefix(10).map { Row(scope: $0.scope, name: $0.name, body: String($0.body.prefix(1500))) })
+        let scopes = (a["project_folder"] as? String).map { [MemoryStore.scope(forProject: $0), MemoryStore.globalScope] }
+        struct Row: Encodable { let source: String; let ref: String; let text: String }
+        return try json(MemoryIndex().search(q, scopes: scopes, limit: 8).map { Row(source: $0.source, ref: $0.ref, text: String($0.text.prefix(800))) })
     })
 
     t.append(Tool(name: "save_memory", description: "Save a note to CPilot's memory so future sessions start with it. Use `project_folder` for a note about one project, or leave it empty for a note that applies everywhere.",

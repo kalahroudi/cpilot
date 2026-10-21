@@ -14,8 +14,10 @@ public struct MemoryNote: Identifiable, Equatable, Sendable {
 /// Notes are either global or tied to one project folder, and are added to the session's instructions when it starts.
 public final class MemoryStore: @unchecked Sendable {
     public let root: URL
-    public init(root: URL = AppPaths().memoryDir) {
-        self.root = root
+    /// When set, saved notes are also indexed for recall.
+    public var index: MemoryIndex?
+    public init(root: URL = AppPaths().memoryDir, index: MemoryIndex? = nil) {
+        self.root = root; self.index = index
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
@@ -59,10 +61,14 @@ public final class MemoryStore: @unchecked Sendable {
         let safe = Self.safeName(name)
         let u = d.appendingPathComponent(safe + ".md")
         guard (try? body.write(to: u, atomically: true, encoding: .utf8)) != nil else { return nil }
+        index?.replace(scope: scope, source: "note", ref: safe, text: safe + "\n\n" + body)
         return MemoryNote(scope: scope, name: safe, body: body, modified: .now)
     }
 
-    public func delete(scope: String, name: String) { try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(name + ".md")) }
+    public func delete(scope: String, name: String) {
+        try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(name + ".md"))
+        index?.remove(ref: name)
+    }
 
     /// Notes that match every word, best first: title hits count most, then how often the words appear, then how recent the note is.
     public func search(_ q: String, scopes: [String]) -> [MemoryNote] {

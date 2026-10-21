@@ -63,6 +63,8 @@ struct SettingsPane: View {
                 }
                 SettingsGroup("Memory") {
                     SettingRow("Notes", "Plain Markdown notes every session starts with. Always on. Edit them in the Memory screen.") { Badge(text: "always on", kind: .ok) }
+                    SettingRow("Recall from earlier sessions", "Finished messages are kept in a small local index on this Mac. A new session starts with the best matches for its first message. Nothing is sent anywhere.") { toggle($p.recall) }
+                    if prefs.recall { RecallStatsRow() }
                     SettingRow("Long-term memory engine", "Optional. Connects a memory engine over MCP so sessions can recall what earlier sessions learned.") {
                         Segmented(options: [("files", "Off"), ("engine", "On")], selection: $p.memoryEngine)
                     }
@@ -95,6 +97,18 @@ struct SettingsPane: View {
                 Link("Website", destination: URL(string: "https://kalahroudi.github.io/cpilot/")!)
             }.font(.system(size: 13))
             Text("Licensed under the Apache License 2.0.").font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct RecallStatsRow: View {
+    @State private var counts = Workspace.shared.index.counts()
+    var body: some View {
+        SettingRow("\(counts.notes) notes and \(counts.chats) message chunks indexed", "Secrets such as API keys are removed before anything is stored. Tool output is never stored.") {
+            HStack(spacing: 6) {
+                Button("Rebuild") { Workspace.shared.rebuildIndex(); counts = Workspace.shared.index.counts() }.buttonStyle(Pill(kind: .plain))
+                Button("Forget chats") { Workspace.shared.index.removeAll(source: "chat"); counts = Workspace.shared.index.counts() }.buttonStyle(Pill(kind: .danger))
+            }
         }
     }
 }

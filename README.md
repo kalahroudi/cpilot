@@ -30,7 +30,8 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
 - **Capture.** Press Control-Option-Command-C to grab part of the screen, or add selected text, the front browser page or the clipboard. It lands in the active session's composer.
 - **Pull requests, end to end.** Create, read the diff, review with an agent, run a security scan, and merge automatically when your rules pass. Everything goes through your own GitHub login.
 - **Repo setup in one go.** README, license, GitHub Pages, a protected main branch and a scan on every pull request.
-- **Memory and skills.** Plain Markdown notes every session starts with, skills found on your Mac, and an optional long-term memory engine over MCP.
+- **Memory that recalls.** Plain Markdown notes every session starts with, plus a local index (full-text and on-device meaning search, one SQLite file) of your finished messages. A new session starts with the best matches from earlier work. Fork a session or hand it to another agent with a summary, save what a session learned as a note in one click, and see exactly which notes a session loaded. An optional long-term memory engine can also connect over MCP.
+- **Skills.** Skills found on your Mac are listed and one click away in the composer.
 - **MCP built in.** Other tools can list sessions, read results, search memory and start sessions (you approve each one).
 - **Self-updating.** Checks GitHub Releases once a day and rolls back by itself if a new version fails to start.
 
@@ -55,7 +56,7 @@ The core lives in `Sources/CPilotKit` (no UI, unit tested), the app in `Sources/
 
 ## Where your data lives
 
-Everything CPilot owns is under `~/Library/Application Support/CPilot/`: sessions, notes, the approval log and settings. Delete that folder to uninstall completely.
+Everything CPilot owns is under `~/Library/Application Support/CPilot/`: sessions, notes, the recall index (`memory.db`), the approval log and settings. Nothing is sent anywhere; secrets such as API keys are removed before text is indexed. Delete that folder to uninstall completely.
 
 ## License
 

@@ -32,6 +32,8 @@ final class Prefs {
     /// "files" (CPilot notes only) or "engine" (also connect a long-term memory engine over MCP).
     var memoryEngine: String { didSet { d.set(memoryEngine, forKey: "memoryEngine") } }
     var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
+    /// Index finished messages and recall the best matches at the start of a new session.
+    var recall: Bool { didSet { d.set(recall, forKey: "recall") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -47,13 +49,14 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "securityScanOnPR": true])
+                              "autoMergeDefault": false, "recall": true, "securityScanOnPR": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        recall = d.bool(forKey: "recall")
         memoryEngine = d.string(forKey: "memoryEngine") ?? "files"
         memoryEngineURL = d.string(forKey: "memoryEngineURL") ?? MemoryEngine.defaultURL
         tabsOnSide = d.bool(forKey: "tabsOnSide")
