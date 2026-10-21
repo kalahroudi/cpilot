@@ -327,7 +327,7 @@ struct SessionMenu: View {
         if archived { Button("Restore") { ws.restore(id) } }
         else { Button("Archive") { ws.archive(id) } }
         Divider()
-        Button("Delete…", role: .destructive) { ws.requestDelete(id) }
+        Button("Delete", role: .destructive) { ws.requestDelete(id) }
     }
 }
 
@@ -402,7 +402,7 @@ struct HistoryRow: View {
                     if ws.tabs.contains(meta.id) { iconButton("xmark", "Close tab") { ws.closeTab(meta.id) } }
                     iconButton("archivebox", "Archive") { ws.archive(meta.id) }
                 }
-                iconButton("trash", "Delete…") { ws.requestDelete(meta.id); done() }
+                iconButton("trash", "Delete") { ws.requestDelete(meta.id); done() }
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
