@@ -44,6 +44,10 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
   <img src="docs/assets/manager-stacks.png" alt="Stacks" width="49%">
 </p>
 
+## Roadmap
+
+What we want to build next is in [ROADMAP.md](ROADMAP.md).
+
 ## Requirements
 
 macOS 15 or later on Apple silicon. First launch checks for Git and the Claude command line and offers to install the optional GitHub command line and Node.js. For servers: SSH access with a key, and the agents installed there (Node.js 18 or newer only if you want sessions to keep running while you are away).
