@@ -102,7 +102,7 @@ struct NewSessionSheet: View {
             }
 
             TextField("First message (optional)", text: $first, axis: .vertical).textFieldStyle(CPField()).lineLimit(1...4)
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
@@ -138,7 +138,7 @@ struct NewSessionSheet: View {
             do {
                 try? FileManager.default.createDirectory(atPath: Prefs.shared.cloneFolder, withIntermediateDirectories: true)
                 folder = try await GitHub.clone(slug, into: Prefs.shared.cloneFolder)
-            } catch { self.error = UserError.message(for: error, action: "Clone the repository") }
+            } catch { self.error = AppModel.shared.capture(error, action: "Clone the repository") }
             busy = false
         }
     }
@@ -165,7 +165,7 @@ struct NewSessionSheet: View {
                                      useWorktree: worktree && newBranch, firstMessage: first, environment: envId)
         Task {
             do { try await ws.create(n); dismiss(); AppDelegate.shared.showManager(pane: .sessions) }
-            catch { self.error = UserError.message(for: error, action: "Start the session"); busy = false }
+            catch { self.error = AppModel.shared.capture(error, action: "Start the session"); busy = false }
         }
     }
 }

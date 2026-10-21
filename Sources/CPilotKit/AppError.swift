@@ -44,7 +44,7 @@ public enum UserError {
         if (error as NSError).domain == NSCocoaErrorDomain, [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains((error as NSError).code) {
             return "Couldn't \(action.lowercased()): the app doesn't have permission to access a file it needs."
         }
-        return "Couldn't \(action.lowercased()). Please try again; if it keeps happening, open Settings → About → Show log."
+        return "Couldn't \(action.lowercased()). Please try again; if it keeps happening, use Details to copy or report it."
     }
 }
 
@@ -69,7 +69,7 @@ public struct ErrorReport: Identifiable, Sendable {
         return said == raw ? said : "\(said)\n\n\(raw)"
     }
 
-    /// Removes the home folder, user and host names, emails, addresses, command arguments and anything shaped like a token.
+    /// Removes the home folder, user and host names, emails, addresses, repository names, command arguments and anything shaped like a token.
     static func redact(_ text: String) -> String {
         var s = text
         // A reflected ShellError carries the whole command line, including titles, bodies and paths the user typed.
@@ -80,6 +80,7 @@ public struct ErrorReport: Identifiable, Sendable {
         s = s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         let patterns = ["gh[pousr]_[A-Za-z0-9]{20,}", "github_pat_[A-Za-z0-9_]{20,}", "sk-[A-Za-z0-9_-]{20,}",
                         "(?i)(token|password|secret|authorization)([\"'=: ]+)[^\\s\"']+", "https?://[^/\\s:@]+:[^@\\s]+@",
+                        "github\\.com[/:][^/\\s]+/[^/\\s]+", "--repo [^\\s\"']+", "\\\\?'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\\\?'",
                         "/(Users|home)/[^/\\s\"']+", "/var/folders/[^\\s\"']+", "/Volumes/[^/\\s\"']+",
                         "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "\\b\\d{1,3}(\\.\\d{1,3}){3}\\b",
                         "\\b[A-Za-z0-9-]+\\.(ts\\.net|local|lan|internal)\\b", "\\b[0-9a-fA-F:]{12,}\\b"]

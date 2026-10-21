@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     func applicationDidFinishLaunching(_ notification: Notification) {
         if SnapshotMode.dir != nil { SnapshotMode.run(); return }
         if CommandLine.arguments.contains("--bench") { Bench.run(delegate: self) }
+        NSSetUncaughtExceptionHandler { e in AppLog.info("UNCAUGHT \(e.name.rawValue): \(e.reason ?? "")\n\(e.callStackSymbols.prefix(20).joined(separator: "\n"))") }
         Prefs.shared.applyTheme()
         Prefs.shared.applyDockIcon()
         NSApp.applicationIconImage = AppIcon.image(size: 512, padded: true)

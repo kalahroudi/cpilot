@@ -17,6 +17,13 @@ final class KitTests: XCTestCase {
         }
     }
 
+    func testIssueReportHidesRepositoryNames() {
+        let err = ShellError.failed(command: "gh pr review 4 --approve", status: 1, stderr: "GraphQL: Could not resolve to a Repository with the name 'acme-corp/secret-app'. See https://github.com/acme-corp/secret-app/pull/4")
+        let body = ErrorReport(err, action: "Send the review").issueBody(version: "1")
+        for leak in ["acme-corp", "secret-app"] { XCTAssertFalse(body.contains(leak), "leaked \(leak)") }
+        XCTAssertTrue(body.contains("Send the review"))
+    }
+
     func testChecksumLookup() {
         let sums = "abc123  CPilot-0.1.0.dmg\ndef456 *other.dmg\n"
         XCTAssertEqual(UpdateChecker.checksum(in: sums, for: "CPilot-0.1.0.dmg"), "abc123")

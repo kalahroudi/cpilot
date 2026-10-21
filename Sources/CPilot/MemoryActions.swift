@@ -62,7 +62,7 @@ struct SummarizeSheet: View {
             TextField("Title", text: $title).textFieldStyle(CPField())
             TextEditor(text: $text).font(.system(size: 12.5, design: .monospaced)).frame(height: 190).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Toggle("Only for \(session.meta.project)", isOn: $forProject).toggleStyle(.switch).tint(Theme.accent)
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
@@ -144,7 +144,7 @@ struct DelegateSheet: View {
             }
             Toggle("Own copy of the files (worktree)", isOn: $worktree).toggleStyle(.switch).tint(Theme.accent)
             Text("Keeps the task from editing the same files as this session. Needs a git repository.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
@@ -158,7 +158,7 @@ struct DelegateSheet: View {
         busy = true
         Task {
             do { try await Workspace.shared.delegate(from: parent, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines), backend: backend, worktree: worktree); dismiss() }
-            catch { self.error = UserError.message(for: error, action: "Start the task"); busy = false }
+            catch { self.error = AppModel.shared.capture(error, action: "Start the task"); busy = false }
         }
     }
 }

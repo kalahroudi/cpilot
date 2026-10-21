@@ -111,7 +111,7 @@ final class SpecCenter {
         guard let r = repo else { return }
         issuesLoading = true; issueError = nil; defer { issuesLoading = false }
         do { issues = try await Exec.with(env) { try await GitHub.issues(in: r.dir, search: search) } }
-        catch { issueError = UserError.message(for: error, action: "Load issues"); issues = [] }
+        catch { issueError = AppModel.shared.capture(error, action: "Load issues"); issues = [] }
     }
 
     // MARK: Starting new work
@@ -126,7 +126,7 @@ final class SpecCenter {
                 if constitution == nil { try await Specs.write("specs/constitution.md", Specs.defaultConstitution, in: r.dir) }
                 try await Specs.write("specs/\(id)/source.md", "> Source: \(source.label)\n\n\(source.requirement)\n", in: r.dir)
             }
-        } catch { AppModel.shared.show(UserError.message(for: error, action: "Create the spec"), error: true); return }
+        } catch { AppModel.shared.failQuietly(error, action: "Create the spec"); return }
         if allowGit, autonomy == .hands { Workspace.shared.allowCommands(["git add", "git commit", "git status", "git diff"], for: r.dir) }
         await refresh()
         selected = id
@@ -169,7 +169,7 @@ final class SpecCenter {
             jobs[id]?.draft = Draft(stage: stage, text: text)
             if shouldAutoApprove(id, stage, text) { await approve(id, text: text) }
         } catch {
-            jobs[id]?.running = false; jobs[id]?.error = UserError.message(for: error, action: "Write the \(stage.rawValue)")
+            jobs[id]?.running = false; jobs[id]?.error = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
         }
     }
 
@@ -185,7 +185,7 @@ final class SpecCenter {
         guard let r = repo, let draft = jobs[id]?.draft else { return }
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
         do { try await Exec.with(env) { try await Specs.write("specs/\(id)/\(file)", text, in: r.dir) } }
-        catch { jobs[id]?.error = UserError.message(for: error, action: "Save the \(file)"); return }
+        catch { jobs[id]?.error = AppModel.shared.capture(error, action: "Save the \(file)"); return }
         jobs[id]?.draft = nil
         await refresh()
         await advance(id, after: draft.stage)
@@ -237,7 +237,7 @@ final class SpecCenter {
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("specs/\(id)/tasks.md", updated, in: r.dir) }
             await refresh()
-        } catch { jobs[id, default: Job()].error = UserError.message(for: error, action: "Start \(task.id)") }
+        } catch { jobs[id, default: Job()].error = AppModel.shared.capture(error, action: "Start \(task.id)") }
     }
 
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
@@ -265,7 +265,7 @@ final class SpecCenter {
             StackCenter.shared.arm(repo: r)
             AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
             await refresh()
-        } catch { jobs[id, default: Job()].error = UserError.message(for: error, action: "Submit the stack") }
+        } catch { jobs[id, default: Job()].error = AppModel.shared.capture(error, action: "Submit the stack") }
     }
 
     // MARK: Editing

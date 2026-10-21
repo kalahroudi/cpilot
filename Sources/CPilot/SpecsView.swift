@@ -105,7 +105,7 @@ struct IssueList: View {
         VStack(spacing: 0) {
             SearchBox(prompt: "Search issues", text: $query).padding(.horizontal, 10).padding(.bottom, 8).onSubmit { Task { await center.loadIssues(search: query) } }
             if center.issuesLoading { ProgressView().controlSize(.small).padding() }
-            if let e = center.issueError { Text(e).font(.system(size: 12)).foregroundStyle(Theme.danger).padding(10) }
+            if let e = center.issueError { ErrorLine(text: e).padding(10) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(center.issues) { i in
@@ -189,7 +189,7 @@ struct SpecDetail: View {
         }
         if let e = job.error {
             VStack(alignment: .leading, spacing: 8) {
-                Label(e, systemImage: "exclamationmark.triangle").font(.system(size: 12.5)).foregroundStyle(Theme.danger)
+                Label { ErrorLine(text: e) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
                 Button("Try again") { Task { await center.run(doc.id, SpecPrompts.Stage(rawValue: job.stage) ?? .specify) } }.buttonStyle(Pill(kind: .plain))
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 10))
         }

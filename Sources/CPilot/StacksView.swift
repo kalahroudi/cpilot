@@ -84,7 +84,7 @@ final class StackCenter {
             notice = msg
         } catch let e as StackError {
             if case .conflict(let b, let f) = e { conflict = (b, f) } else { error = e.localizedDescription }
-        } catch { self.error = UserError.message(for: error, action: label) }
+        } catch { self.error = AppModel.shared.capture(error, action: label) }
         await refresh()
     }
 
@@ -183,7 +183,7 @@ struct StacksView: View {
     @ViewBuilder private var banners: some View {
         if let b = center.busy { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("\(b)…").font(.system(size: 12.5)) }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 9)) }
         if let n = center.notice { Label(n, systemImage: "checkmark.circle").font(.system(size: 12.5)).foregroundStyle(Theme.ok).padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.card, in: RoundedRectangle(cornerRadius: 9)) }
-        if let e = center.error { Label(e, systemImage: "exclamationmark.triangle").font(.system(size: 12.5)).foregroundStyle(Theme.danger).padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 9)) }
+        if let e = center.error { Label { ErrorLine(text: e) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.danger) }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 9)) }
         if let c = center.conflict {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Restacking \(c.branch) hit a conflict", systemImage: "exclamationmark.triangle.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.warn)
@@ -306,7 +306,7 @@ struct SplitSheet: View {
                     }
                 }
             }.frame(height: 260)
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)

@@ -106,7 +106,7 @@ struct EnvironmentsView: View {
         if e.persistent { ws.environments[i].persistent = false; ws.saveEnvironments(); return }
         Task {
             do { try await Exec.with(e) { try await RemoteHost.install() }; ws.environments[i].persistent = true; ws.saveEnvironments(); AppModel.shared.show("Sessions on \(e.name) now keep running while you are away") }
-            catch { AppModel.shared.show(UserError.message(for: error, action: "Install the helper"), error: true) }
+            catch { AppModel.shared.failQuietly(error, action: "Install the helper") }
         }
     }
 }
@@ -259,7 +259,7 @@ struct AddEnvironmentSheet: View {
                          : "Needs Node.js on the server. Install it there to turn this on.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
             }
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 Spacer()
                 Button("Cancel") { if existing == nil { SSHPassword.delete(draftId) }; dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
@@ -321,7 +321,7 @@ struct AddEnvironmentSheet: View {
         e.persistent = existing?.persistent ?? false
         if persistent, !e.persistent {
             do { try await Exec.with(e) { try await RemoteHost.install() }; e.persistent = true }
-            catch { self.error = UserError.message(for: error, action: "Install the helper"); return }
+            catch { self.error = AppModel.shared.capture(error, action: "Install the helper"); return }
         } else if !persistent { e.persistent = false }
         if let i = Workspace.shared.environments.firstIndex(where: { $0.id == e.id }) { Workspace.shared.environments[i] = e } else { Workspace.shared.environments.append(e) }
         Workspace.shared.saveEnvironments()
@@ -350,7 +350,7 @@ struct RemoteFolderPicker: View {
                 if loading { ProgressView().controlSize(.small) }
             }
             List(dirs, id: \.self) { d in Button { path = path == "/" ? "/\(d)" : "\(path)/\(d)"; load() } label: { Label(d, systemImage: "folder") }.buttonStyle(.plain) }.frame(height: 240)
-            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            if let error { ErrorLine(text: error) }
             HStack {
                 if !env.folders.isEmpty { FlowLayout(spacing: 6) { ForEach(env.folders, id: \.self) { f in Button { path = f.replacingOccurrences(of: "~", with: env.remoteHome); load() } label: { Badge(text: f, kind: .accent) }.buttonStyle(.plain) } } }
                 Spacer()

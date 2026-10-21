@@ -201,7 +201,7 @@ final class SessionController: Identifiable {
             let r = try await ensureRunner()
             r.send(ClaudeWire.userMessage(text: takeHandoff() + text, images: images))
         } catch {
-            fail(UserError.message(for: error, action: "Start Claude"))
+            fail(AppModel.shared.capture(error, action: "Start Claude"))
         }
     }
 
@@ -290,7 +290,7 @@ final class SessionController: Identifiable {
                 _ = try await client.prompt(sessionId: session, text: prefix + text, images: images)
                 finishTurn()
             } catch {
-                fail(UserError.message(for: error, action: "Talk to the agent"))
+                fail(AppModel.shared.capture(error, action: "Talk to the agent"))
             }
         }
     }

@@ -51,6 +51,7 @@ struct ManagerView: View {
         .frame(minWidth: 860, minHeight: 560)
         .onAppear { model.setManagerVisible(true) }
         .sheet(isPresented: Bindable(nav).showNewSession) { NewSessionSheet() }
+        .sheet(item: Bindable(model).errorReport) { ErrorReportSheet(report: $0) }
     }
 
     @ViewBuilder private var detail: some View {

@@ -16,6 +16,9 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let message: String
     var isError = false
+    /// When set, the toast offers a "Details" button that opens the error sheet.
+    var report: ErrorReport?
+    static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
 }
 
 /// App-wide state. Data is only refreshed while the popover or the manager window is visible, so an idle app costs nothing.
@@ -36,6 +39,9 @@ final class AppModel {
     // UI state
     var tasks: [BackgroundTask] = []
     var toast: Toast?
+    /// The failure the global error sheet is showing. Set through `fail`, never directly.
+    var errorReport: ErrorReport?
+    private var reports: [String: ErrorReport] = [:]
     var setupState = SetupState.detect()
 
     var onStatusChange: ((StatusIcon.State) -> Void)?
@@ -105,9 +111,9 @@ final class AppModel {
                 finish(id, .done); after?(true)
                 if notifyDone { notify("\(title) finished") }
             } catch {
-                AppLog.error(error, context: title)                         // full detail goes to the log only
-                let friendly = UserError.message(for: error, action: title)  // the user sees a short, plain sentence
-                finish(id, .failed(friendly)); after?(false)
+                let r = ErrorReport(error, action: title)                   // logged in full; the user sees a short, plain sentence
+                let friendly = r.message
+                finish(id, .failed(friendly), report: r); after?(false)
                 notify("\(title) failed", body: friendly)
             }
             await refresh()
@@ -116,15 +122,50 @@ final class AppModel {
         }
     }
 
-    private func finish(_ id: UUID, _ state: BackgroundTask.State) {
+    private func finish(_ id: UUID, _ state: BackgroundTask.State, report: ErrorReport? = nil) {
         if let i = tasks.firstIndex(where: { $0.id == id }) { tasks[i].state = state }
-        if case .failed(let m) = state { show(m, error: true) } else if let t = tasks.first(where: { $0.id == id }) { show("\(t.title) finished") }
+        if case .failed(let m) = state { show(m, error: true, report: report) } else if let t = tasks.first(where: { $0.id == id }) { show("\(t.title) finished") }
     }
 
-    func show(_ message: String, error: Bool = false) {
-        let t = Toast(message: message, isError: error)
+    func show(_ message: String, error: Bool = false, report: ErrorReport? = nil) {
+        let t = Toast(message: message, isError: error, report: report)
         toast = t
-        Task { try? await Task.sleep(for: .seconds(error ? 8 : 3.5)); if toast == t { toast = nil } }
+        Task { try? await Task.sleep(for: .seconds(report != nil ? 12 : error ? 8 : 3.5)); if toast == t { toast = nil } }
+    }
+
+    // MARK: Failures
+    // Every failure goes through one of these three: it is logged in full, the user gets a plain sentence, and the details
+    // (already redacted) can be read, copied or sent as a GitHub issue from the error sheet.
+
+    /// The user asked for something and it failed: open the error sheet right away.
+    func fail(_ error: Error, action: String) {
+        guard !Self.isCancellation(error) else { return }
+        errorReport = ErrorReport(error, action: action)
+    }
+
+    /// Something failed that the user did not directly ask for (a refresh, a prefetch): a toast with a "Details" button.
+    func failQuietly(_ error: Error, action: String) {
+        guard !Self.isCancellation(error) else { return }
+        let r = ErrorReport(error, action: action)
+        show(r.message, error: true, report: r)
+    }
+
+    /// For views that show the sentence themselves: logs, remembers the report for `ErrorLine`'s "Details" button, returns the sentence.
+    func capture(_ error: Error, action: String) -> String {
+        let r = ErrorReport(error, action: action)
+        if reports.count > 30 { reports.removeAll() }
+        reports[r.message] = r
+        return r.message
+    }
+
+    func report(forMessage m: String) -> ErrorReport? { reports[m] }
+
+    private static func isCancellation(_ e: Error) -> Bool { e is CancellationError || (e as? URLError)?.code == .cancelled }
+
+    func showDetails(_ r: ErrorReport) {
+        errorReport = r
+        toast = nil
+        AppDelegate.shared.showManager()   // the sheet lives in the Manager window; from the popover this brings it forward
     }
 
     func notify(_ title: String, body: String = "") {

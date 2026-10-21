@@ -20,7 +20,6 @@ final class PRCenter {
     var scanning = false
     var scanLog: [String] = []
     var loading = false
-    var error: String?
     var method: MergeMethod = .squash
     var fileFilter = ""
     var showCreate = false
@@ -62,7 +61,7 @@ final class PRCenter {
     }
 
     private func switchRepo(_ repo: String, _ environment: String?) {
-        repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []; error = nil
+        repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []
         prs = cache[cacheKey(repo, environment)]?.prs ?? []
         Project.shared.current = Repo(dir: repo, environment: environment)
     }
@@ -85,7 +84,7 @@ final class PRCenter {
     private func refreshListImpl() async {
         guard let dir = repoDir else { return }
         loading = true; defer { loading = false }
-        do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { self.error = UserError.message(for: error, action: "Load pull requests") }
+        do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { AppModel.shared.failQuietly(error, action: "Load pull requests") }
     }
 
     func select(_ n: Int) async {
@@ -103,7 +102,7 @@ final class PRCenter {
             guard selected == n else { return }
             detail = p; files = DiffParser.parse(d); checks = c
             scan = scans["\(dir)#\(n)#\(p.headRefName)"]
-        } catch { self.error = UserError.message(for: error, action: "Load the pull request") }
+        } catch { AppModel.shared.failQuietly(error, action: "Load the pull request") }
     }
 
     func runScan() async {
@@ -121,7 +120,7 @@ final class PRCenter {
             scanLog.append(mode.note)
             let result = try await SecurityCage.scan(folder: tmp, deep: mode.deep, environment: mode.environment, configured: Prefs.shared.securityCagePath) { [weak self] line in Task { @MainActor in self?.scanLog.append(line) } }
             scan = result; scans["\(dir)#\(pr.number)#\(pr.headRefName)"] = result
-        } catch { self.error = UserError.message(for: error, action: "Run the security scan") }
+        } catch { AppModel.shared.fail(error, action: "Run the security scan") }
         await Git.removeWorktree(repo: dir, path: tmp)
     }
 
@@ -132,7 +131,7 @@ final class PRCenter {
     private func reviewImpl(_ action: ReviewAction, body: String = "") async {
         guard let dir = repoDir, let n = selected else { return }
         do { try await GitHub.review(n, action: action, body: body, in: dir); AppModel.shared.show(action == .approve ? "Approved" : "Review sent"); await select(n) }
-        catch { self.error = UserError.message(for: error, action: "Send the review") }
+        catch { AppModel.shared.fail(error, action: "Send the review") }
     }
 
     func mergeNow() async {
@@ -145,7 +144,7 @@ final class PRCenter {
             try await GitHub.merge(n, method: method, auto: false, in: dir)
             AppModel.shared.show("Merged #\(n)"); disarm(n)
             await refreshList(); selected = nil; detail = nil
-        } catch { self.error = UserError.message(for: error, action: "Merge") }
+        } catch { AppModel.shared.fail(error, action: "Merge") }
     }
 
     func post(comment: String) async {
@@ -154,7 +153,7 @@ final class PRCenter {
 
     private func postImpl(comment: String) async {
         guard let dir = repoDir, let n = selected else { return }
-        do { try await GitHub.comment(n, body: comment, in: dir); AppModel.shared.show("Comment posted") } catch { self.error = UserError.message(for: error, action: "Post the comment") }
+        do { try await GitHub.comment(n, body: comment, in: dir); AppModel.shared.show("Comment posted") } catch { AppModel.shared.fail(error, action: "Post the comment") }
     }
 
     // MARK: Auto-merge. Polls only while something is armed.
@@ -243,7 +242,7 @@ final class PRCenter {
             Workspace.shared.select(meta.id)
             c.draft = prompt; c.send()
             AppDelegate.shared.showManager(pane: .sessions)
-        } catch { self.error = UserError.message(for: error, action: "Start the session") }
+        } catch { AppModel.shared.fail(error, action: "Start the session") }
     }
 }
 
@@ -285,9 +284,6 @@ struct PullRequestsView: View {
                 }
             }
         }
-        .alert("Something went wrong", isPresented: Binding(get: { center.error != nil }, set: { if !$0 { center.error = nil } })) {
-            Button("OK") { center.error = nil }
-        } message: { Text(center.error ?? "") }
     }
 }
 
@@ -614,7 +610,7 @@ final class InboxCenter {
             let dir = try await GitHub.clone(item.repository.nameWithOwner, into: Prefs.shared.cloneFolder)
             local[item.repository.nameWithOwner] = PRCenter.Repo(dir: dir, environment: nil)
             AppModel.shared.show("Cloned \(item.repository.nameWithOwner)")
-        } catch { AppModel.shared.show(UserError.message(for: error, action: "Clone"), error: true) }
+        } catch { AppModel.shared.failQuietly(error, action: "Clone") }
     }
 }
 

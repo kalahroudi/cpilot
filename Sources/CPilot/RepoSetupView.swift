@@ -49,7 +49,7 @@ struct RepoSetupView: View {
                     if !log.isEmpty || error != nil {
                         VStack(alignment: .leading, spacing: 3) {
                             ForEach(Array(log.enumerated()), id: \.offset) { _, l in Text("✓ " + l).foregroundStyle(Color.green.opacity(0.9)) }
-                            if let error { Text("✗ " + error).foregroundStyle(Color.red.opacity(0.9)) }
+                            if let error { ErrorLine(text: error) }
                         }.font(.system(size: 12, design: .monospaced)).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.terminal, in: RoundedRectangle(cornerRadius: 9))
                     }
                 }.padding(22).frame(maxWidth: 1100, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
@@ -184,7 +184,7 @@ struct RepoSetupView: View {
         let p = plan, f = folder
         Task {
             do { try await RepoSetup.run(p, folder: f) { line in Task { @MainActor in log.append(line) } }; existsOnGitHub = true }
-            catch { self.error = UserError.message(for: error, action: "Set up the repository") }
+            catch { self.error = AppModel.shared.capture(error, action: "Set up the repository") }
             running = false
         }
     }

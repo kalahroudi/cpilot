@@ -69,3 +69,17 @@ struct ErrorReportSheet: View {
         }
     }
 }
+
+/// An inline failure message. When the full report is known (the text came from `AppModel.capture`) it offers "Details".
+struct ErrorLine: View {
+    let text: String
+    @State private var detail: ErrorReport?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(text).font(.system(size: 12)).foregroundStyle(Theme.danger)
+            if let r = AppModel.shared.report(forMessage: text) { Button("Details") { detail = r }.buttonStyle(.link).font(.system(size: 12)) }
+        }
+        .sheet(item: $detail) { ErrorReportSheet(report: $0) }
+    }
+}
