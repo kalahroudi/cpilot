@@ -142,10 +142,23 @@ final class PRCenter {
     private func mergeNowImpl() async {
         guard let dir = repoDir, let n = selected else { return }
         do {
-            try await GitHub.merge(n, method: method, auto: false, in: dir)
+            do { try await GitHub.merge(n, method: method, auto: false, in: dir) }
+            catch where GitHub.isPolicyBlock(error) {
+                guard confirmAdminMerge(n) else { return }
+                try await GitHub.merge(n, method: method, auto: false, admin: true, in: dir)
+            }
             AppModel.shared.show("Merged #\(n)"); disarm(n)
             await refreshList(); selected = nil; detail = nil
         } catch { AppModel.shared.fail(error, action: "Merge") }
+    }
+
+    private func confirmAdminMerge(_ n: Int) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Merge #\(n) using your bypass rule?"
+        alert.informativeText = "The branch policy blocks this merge. If you can bypass it, GitHub will merge without waiting for the requirements."
+        alert.addButton(withTitle: "Merge anyway"); alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func post(comment: String) async {

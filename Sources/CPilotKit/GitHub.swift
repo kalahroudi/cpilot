@@ -96,11 +96,17 @@ public enum GitHub {
         return try await Shell.check("gh", a, cwd: url(dir), timeout: 90).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// With `auto`, GitHub merges as soon as the required checks pass.
-    public static func merge(_ n: Int, method: MergeMethod, auto: Bool, in dir: String) async throws {
+    /// With `auto`, GitHub merges as soon as the required checks pass. With `admin`, a bypass rule overrides the branch policy.
+    public static func merge(_ n: Int, method: MergeMethod, auto: Bool, admin: Bool = false, in dir: String) async throws {
         var a = ["pr", "merge", String(n), "--\(method.rawValue)", "--delete-branch"]
         if auto { a.append("--auto") }
+        if admin { a.append("--admin") }
         try await Shell.check("gh", a, cwd: url(dir), timeout: 90)
+    }
+
+    /// True when `gh` refused because branch protection blocks the merge, which a bypass rule can override.
+    public static func isPolicyBlock(_ error: Error) -> Bool {
+        "\(error)".contains("base branch policy prohibits the merge")
     }
 
     public static func review(_ n: Int, action: ReviewAction, body: String, in dir: String) async throws {
