@@ -38,11 +38,12 @@ final class EnvironmentCenter {
 
     /// Installs whatever the server is missing, as soon as it is added, and shows each step.
     private func prepare(_ env: EnvironmentConfig, _ report: EnvironmentReport) async {
-        let steps = await Provisioner.plan(env, report)
+        let agents = Workspace.shared.acpAgents
+        let steps = await Provisioner.plan(env, report, agents: agents)
         guard !steps.isEmpty else { setup[env.id] = nil; return }
         settingUp.insert(env.id); defer { settingUp.remove(env.id) }
         setup[env.id] = steps
-        let (fresh, done) = await Provisioner.run(env, report: report) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
+        let (fresh, done) = await Provisioner.run(env, report: report, agents: agents) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
         setup[env.id] = done
         if fresh.connected { status[env.id] = .ok(fresh) }
         if done.allSatisfy({ $0.state == .done }) {
@@ -51,7 +52,7 @@ final class EnvironmentCenter {
         }
     }
 
-    func checkAll() { for e in Workspace.shared.environments { check(e) } }
+    func checkAll(retry: Bool = false) { for e in Workspace.shared.environments { check(e, retry: retry) } }
 }
 
 struct EnvironmentsView: View {

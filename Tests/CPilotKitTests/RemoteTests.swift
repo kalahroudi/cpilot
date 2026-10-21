@@ -39,6 +39,16 @@ final class RemoteTests: XCTestCase {
         XCTAssertTrue(ready.isEmpty)
     }
 
+    func testServerPlatformAndAgentPath() {
+        XCTAssertEqual(Provisioner.platform("Linux aarch64"), "linux-aarch64")   // Raspberry Pi 5
+        XCTAssertEqual(Provisioner.platform("Linux x86_64"), "linux-x86_64")
+        XCTAssertNil(Provisioner.platform("Linux armv7l"))
+        let local = AgentInstaller.folder(id: "goose", version: "1.2", root: AgentInstaller.root).appendingPathComponent("goose").path
+        let c = AgentInstaller.onServer(AcpAgentConfig(id: "goose", name: "Goose", command: local), home: "/home/pi")
+        XCTAssertEqual(c.command, "/home/pi/.cpilot/agents/goose/1.2/goose")
+        XCTAssertEqual(AgentInstaller.onServer(AcpAgentConfig(id: "x", name: "X", command: "npx"), home: "/home/pi").command, "npx")
+    }
+
     func testCommandsRunOnTheEnvironmentWithSpacesAndQuotes() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("my dir \(UUID().uuidString.prefix(6))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
