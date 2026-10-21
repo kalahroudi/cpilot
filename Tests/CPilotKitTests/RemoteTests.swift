@@ -59,3 +59,82 @@ final class RemoteTests: XCTestCase {
         XCTAssertEqual(EnvironmentConfig.load(from: store).first?.folders, ["~/p"])
     }
 }
+
+/// The real helper, run by real Node through the fake ssh: start an agent, attach, detach, attach again, nothing lost.
+final class DaemonTests: XCTestCase {
+    var home: URL!
+    override func setUpWithError() throws {
+        try XCTSkipIf(Shell.find("node") == nil, "node is not installed")
+        FakeSSH.use()
+        home = FileManager.default.temporaryDirectory.appendingPathComponent("cpilotd-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        setenv("CPILOTD_HOME", home.appendingPathComponent("sessions").path, 1)
+        RemoteHost.scriptLocation = home.appendingPathComponent("cpilotd.mjs").path
+    }
+    override func tearDown() { unsetenv("CPILOTD_HOME"); RemoteHost.scriptLocation = "$HOME/.cpilot/cpilotd.mjs" }
+
+    /// Runs `cpilotd attach`, writes `send`, waits for `expect` lines, then drops the connection.
+    func attach(_ id: String, from: Int, send: [String], expect: Int) async throws -> [String] {
+        let c = RemoteHost.command(["attach", id, "--from", String(from)])
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: Shell.find(c.tool) ?? "/bin/sh"); p.arguments = c.args
+        let i = Pipe(), o = Pipe(); p.standardInput = i; p.standardOutput = o
+        try p.run()
+        for l in send { try i.fileHandleForWriting.write(contentsOf: Data((l + "\n").utf8)) }
+        var got = ""
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            let d = o.fileHandleForReading.availableData
+            if d.isEmpty { break }
+            got += String(decoding: d, as: UTF8.self)
+            if got.split(separator: "\n").count >= expect { break }
+        }
+        p.terminate()
+        return got.split(separator: "\n").map(String.init)
+    }
+
+    func testInstallStartDetachReattachStop() async throws {
+        let env = EnvironmentConfig(name: "t", routes: ["good"])
+        try await Exec.with(env) {
+            let before = await RemoteHost.isInstalled()
+            XCTAssertFalse(before)
+            try await RemoteHost.install()
+            let after = await RemoteHost.isInstalled()
+            XCTAssertTrue(after)
+
+            // A stand-in agent: echoes each line it is given as JSON, and says hello first.
+            let agent = #"echo '{"hello":1}'; while read l; do echo "{\"echo\":\"$l\"}"; done"#
+            try await RemoteHost.start(id: "s1", cwd: home.path, command: "sh", args: ["-c", agent])
+            var st = await RemoteHost.status(id: "s1")
+            XCTAssertEqual(st?.running, true)
+
+            let first = try await attach("s1", from: 0, send: ["one"], expect: 2)
+            XCTAssertEqual(first, [#"{"hello":1}"#, #"{"echo":"one"}"#])
+
+            // The connection is gone, the agent keeps going and answers someone else.
+            let second = try await attach("s1", from: 2, send: ["two"], expect: 1)
+            XCTAssertEqual(second, [#"{"echo":"two"}"#])
+            // Reattaching from the start replays everything, in order.
+            let replay = try await attach("s1", from: 0, send: [], expect: 3)
+            XCTAssertEqual(replay, [#"{"hello":1}"#, #"{"echo":"one"}"#, #"{"echo":"two"}"#])
+
+            st = await RemoteHost.status(id: "s1")
+            XCTAssertEqual(st?.lines, 3)
+            await RemoteHost.stop(id: "s1")
+            for _ in 0..<40 { st = await RemoteHost.status(id: "s1"); if st?.running == false { break }; try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertEqual(st?.running, false)
+            // After it ended, the output can still be replayed.
+            let tail = try await attach("s1", from: 1, send: [], expect: 2)
+            XCTAssertEqual(tail, [#"{"echo":"one"}"#, #"{"echo":"two"}"#])
+        }
+    }
+
+    func testMissingCommandIsReported() async throws {
+        let env = EnvironmentConfig(name: "t", routes: ["good"])
+        try await Exec.with(env) {
+            try await RemoteHost.install()
+            do { try await RemoteHost.start(id: "s2", cwd: home.path, command: "definitely-not-a-real-command", args: []); XCTFail("should fail") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("not found")) }
+        }
+    }
+}
