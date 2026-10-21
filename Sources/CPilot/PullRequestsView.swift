@@ -81,6 +81,10 @@ final class PRCenter {
         async let list: Void = refreshList()
         await select(number)
         await list
+        // A pull request created a moment ago can be missing from GitHub's list while its detail already loads.
+        if let d = detail, d.number == number, d.isOpen, !prs.contains(where: { $0.number == number }) {
+            prs.insert(d, at: 0); cache[cacheKey(repo, environment)] = (prs, .now)
+        }
     }
     func open(_ r: Repo) async { await open(repo: r.dir, environment: r.environment) }
 
