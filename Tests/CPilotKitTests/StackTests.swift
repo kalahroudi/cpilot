@@ -123,6 +123,36 @@ final class StackTests: XCTestCase {
         let status = try await sh(["status", "--porcelain", "--untracked-files=no"]); XCTAssertEqual(status, "")
     }
 
+    /// The real-world failure: a session has the branch checked out in its own worktree, so git refuses to rebase it from the main folder.
+    func testBranchCheckedOutInAWorktreeIsRestackedThere() async throws {
+        try await buildStack()
+        let wt = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        defer { try? FileManager.default.removeItem(atPath: wt) }
+        try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
+        try await sh(["worktree", "add", wt, "b"])                // b is now "used by worktree"
+        let stack = await Stacks.load(in: dir)[0]
+        let r = try await Stacks.restack(stack, in: dir)
+        XCTAssertEqual(r, .restacked(["b", "c"]))
+        let tree = try await sh(["ls-tree", "-r", "--name-only", "c"]); XCTAssertTrue(tree.contains("a2.txt"))
+        let nowAt = try await sh(["-C", wt, "branch", "--show-current"]); XCTAssertEqual(nowAt, "b")
+    }
+
+    func testAConflictInAWorktreeIsFoundAndAbortedThere() async throws {
+        try await buildStack()
+        try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
+        try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
+        let wt = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        defer { try? FileManager.default.removeItem(atPath: wt) }
+        try await sh(["worktree", "add", wt, "b"])
+        let stack = await Stacks.load(in: dir)[0]
+        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") } catch { guard case .conflict = error as? StackError else { return XCTFail("\(error)") } }
+        let pending = await Stacks.pendingConflict(in: dir)
+        XCTAssertEqual(pending?.branch, "b"); XCTAssertEqual(pending?.files, ["shared.txt"])
+        XCTAssertTrue(pending?.dir.hasSuffix(URL(fileURLWithPath: wt).lastPathComponent) == true)   // the rebase is in the session's folder
+        await Stacks.abortRestack(in: dir)
+        let none = await Stacks.pendingConflict(in: dir); XCTAssertNil(none)
+    }
+
     func testDirtyTreeIsRefused() async throws {
         try await buildStack()
         try write("a.txt", "changed\n")

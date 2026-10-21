@@ -613,11 +613,12 @@ final class Workspace {
         var parentId: String?
         var handoff: String?
         var environment: String?
+        var title: String?
     }
 
     @discardableResult
     func create(_ n: NewSession) async throws -> SessionController {
-        var meta = SessionMeta(title: "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
+        var meta = SessionMeta(title: n.title ?? "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
         meta.parentId = n.parentId; meta.handoff = n.handoff; meta.environment = n.environment
         let remote = environment(n.environment)
         let isRepo = await Exec.with(remote) { await Git.isRepo(n.folder) }

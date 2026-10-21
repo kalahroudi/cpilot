@@ -81,19 +81,21 @@ final class StackCenter {
             return (list, results)
         }
         stacks = loaded; checks = results
+        // A conflict is whatever the repository says it is: a rebase stopped part-way. It survives a restart, and it clears once resolved or aborted.
+        conflict = await Exec.with(env) { await Stacks.pendingConflict(in: r.dir) }.map { ($0.branch, $0.files) }
         if manual { AppModel.shared.show(stacks.isEmpty ? "Refreshed. No stacks in this repository." : "Refreshed \(stacks.count) stack\(stacks.count == 1 ? "" : "s").", error: false) }
     }
 
     /// Runs one stack operation with a visible label, on the right machine, and turns failures into plain messages.
     func run(_ label: String, _ body: @escaping (String, StackHost) async throws -> String?) async {
         guard let r = repo, busy == nil else { return }
-        busy = label; error = nil; notice = nil; conflict = nil
+        busy = label; error = nil; notice = nil
         defer { busy = nil }
         do {
             let msg = try await Exec.with(env) { try await body(r.dir, LiveStackHost(dir: r.dir)) }
             notice = msg
         } catch let e as StackError {
-            if case .conflict(let b, let f) = e { conflict = (b, f) } else { error = e.localizedDescription }
+            if case .conflict = e { /* shown from the repository's real state by refresh() below */ } else { error = e.localizedDescription }
         } catch { self.error = AppModel.shared.capture(error, action: label) }
         await refresh()
     }
@@ -144,11 +146,18 @@ final class StackCenter {
 
     func abort() async { guard let r = repo else { return }; await Exec.with(env) { await Stacks.abortRestack(in: r.dir) }; conflict = nil; await refresh() }
 
+    /// Always a session of its own, started in the folder where the rebase is stopped. Reusing the branch's earlier session would put the
+    /// agent in a different folder, and that session may be stopped.
     func resolveWithAgent() async {
-        guard let r = repo, let c = conflict else { return }
-        let prompt = "A restack stopped on a merge conflict in \(c.files.joined(separator: ", ")) while rebasing the branch \(c.branch). Resolve the conflict markers so both sides' intent is kept, run the tests, stage the files and run `git rebase --continue`. Do not push."
-        _ = try? await Workspace.shared.startSession(onBranch: c.branch, repo: r.dir, environment: r.environment, prompt: prompt)
-        AppDelegate.shared.showManager(pane: .sessions)
+        guard let r = repo else { return }
+        guard let c = await Exec.with(env, { await Stacks.pendingConflict(in: r.dir) }) else { await refresh(); return }
+        let files = c.files.isEmpty ? "the conflicted files (see `git status`)" : c.files.joined(separator: ", ")
+        let prompt = "A restack stopped on a merge conflict in \(files) while rebasing the branch \(c.branch). This folder is in the middle of that rebase. Resolve the conflict markers so both sides' intent is kept, run the tests, `git add` the files and run `git -c core.editor=true rebase --continue`. If more conflicts appear, resolve them the same way. Do not push."
+        let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
+        do {
+            try await Workspace.shared.create(.init(folder: c.dir, access: level, firstMessage: prompt, environment: r.environment, title: "Resolve conflict: \(c.branch)"))
+            AppDelegate.shared.showManager(pane: .sessions)
+        } catch { AppModel.shared.fail(error, action: "Start the session that resolves the conflict") }
     }
 }
 
@@ -165,7 +174,7 @@ struct StacksView: View {
                     RepoMenu()
                     AsyncButton { await center.sync() } label: {
                         if center.busy == "Syncing" { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.triangle.2.circlepath") }
-                    }.buttonStyle(.soft).disabled(center.busy != nil || center.loading).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
+                    }.buttonStyle(.soft).disabled(center.busy != nil || center.loading || center.conflict != nil).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
                     AsyncButton { await center.refresh(manual: true) } label: {
                         if center.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
                     }.buttonStyle(.soft).disabled(center.loading || center.busy != nil).help("Reload the stacks and their pull requests").accessibilityLabel("Refresh")
@@ -240,11 +249,11 @@ struct StackCard: View {
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
-                Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || stack.nextStep == .sync || center.busy != nil)
+                Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || stack.nextStep == .sync || center.conflict != nil || center.busy != nil)
                 Button { Task { await center.submit(stack) } } label: { BusyLabel(title: "Submit", busyTitle: "Submitting…", busy: center.busy == "Submitting") }.buttonStyle(Pill(kind: .plain))
-                    .disabled(stack.nextStep == .sync || stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
+                    .disabled(center.conflict != nil || stack.nextStep == .sync || stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
                 Button { Task { await center.mergeBottom(stack) } } label: { BusyLabel(title: "Merge from the bottom", busyTitle: "Merging…", busy: center.busy == "Merging") }.buttonStyle(Pill(kind: .primary))
-                    .disabled(stack.nextStep != .merge || checkState == .failed || center.busy != nil)
+                    .disabled(center.conflict != nil || stack.nextStep != .merge || checkState == .failed || center.busy != nil)
             }
             nextStepBar
             Text("⎇ \(stack.trunk)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
@@ -272,6 +281,10 @@ extension StackCard {
 
     private var step: Step {
         let n = stack.bottomOpen?.pr ?? 0
+        if let c = center.conflict {
+            return Step(icon: "exclamationmark.triangle.fill", tint: Theme.warn, title: "Resolve the conflict in \(c.branch)",
+                        detail: "A restack stopped half-way. Resolve it with Claude, or abort the restack, before anything else.")
+        }
         switch stack.nextStep {
         case .sync: return Step(icon: "arrow.down.circle", tint: Theme.warn, title: "\(stack.trunk) has new commits",
                                 detail: "\(stack.trunkBehind) new on GitHub, for example a fix you merged. Sync pulls them in and restacks, so the branches are tested with them.")
