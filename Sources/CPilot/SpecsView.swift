@@ -245,7 +245,9 @@ struct SpecDetail: View {
                 Text("Tasks").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Button("Run all ready") { Task { await center.implementReady(doc.id, limit: 4) } }.buttonStyle(Pill(kind: .plain)).disabled(ready.isEmpty)
-                Button("Submit stack") { Task { await center.submitAndArm(doc.id) } }.buttonStyle(Pill(kind: .plain)).help("Push the branches, open the pull requests, and merge when the rules pass")
+                Button("Submit stack") { Task { await center.submitAndArm(doc.id) } }.buttonStyle(Pill(kind: .plain))
+                    .disabled(!doc.tasks.contains { $0.branch.map(center.coded.contains) ?? false })
+                    .help("Push this spec's finished task branches, open their pull requests, and turn on auto-merge so they land bottom first when the rules pass. Needs at least one task with code. Hands-off mode does this by itself.")
                 Button("View stack") { if let r = center.repo { Task { await StackCenter.shared.open(r); Nav.shared.pane = .stacks } } }.buttonStyle(Pill(kind: .plain))
             }.padding(12)
             ForEach(doc.tasks) { t in Divider(); TaskRow(doc: doc, task: t, ready: ready.contains { $0.id == t.id }) }

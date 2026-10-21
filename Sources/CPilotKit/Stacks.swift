@@ -13,6 +13,8 @@ public struct StackBranch: Identifiable, Equatable, Sendable {
     public var depth = 0
     public var pr: Int?
     public var prState: String?        // OPEN, MERGED, CLOSED
+    /// The remote has this branch at exactly the local tip.
+    public var pushed = false
     public var title: String?
     public var id: String { name }
     public var isMerged: Bool { prState == "MERGED" }
@@ -27,6 +29,17 @@ public struct Stack: Equatable, Sendable, Identifiable {
     public var branches: [StackBranch]
     public var id: String { branches.first?.name ?? trunk }
     public var needsRestack: Bool { branches.contains { $0.needsRestack || $0.isMerged } }
+    /// Branches Submit would act on: no open pull request yet, or commits the remote has not seen.
+    public var unsubmitted: [StackBranch] { branches.filter { !$0.isMerged && $0.commits > 0 && ($0.prState != "OPEN" || !$0.pushed) } }
+    /// The lowest pull request still open, the one "Merge from the bottom" would merge.
+    public var bottomOpen: StackBranch? { branches.first { !$0.isMerged && $0.prState == "OPEN" } }
+    /// What to do next, in order: restack, submit, merge.
+    public var nextStep: Step? {
+        if needsRestack { return .restack }
+        if !unsubmitted.isEmpty { return .submit }
+        return bottomOpen == nil ? nil : .merge
+    }
+    public enum Step: Sendable { case restack, submit, merge }
     public init(trunk: String, branches: [StackBranch]) { self.trunk = trunk; self.branches = branches }
 }
 
@@ -136,6 +149,7 @@ public enum Stacks {
                 var sb = StackBranch(name: b, parent: m.parent, base: m.base, depth: depth)
                 sb.needsRestack = !(await gitOK(["merge-base", "--is-ancestor", m.parent, b], in: dir))
                 sb.commits = Int((try? await git(["rev-list", "--count", "\(m.parent)..\(b)"], in: dir)) ?? "0") ?? 0
+                if let remote = try? await git(["rev-parse", "--verify", "--quiet", "origin/\(b)"], in: dir), let local = try? await git(["rev-parse", b], in: dir) { sb.pushed = remote == local }
                 if let p = info(b) { sb.pr = p.number; sb.prState = p.state; sb.title = p.title }
                 list.append(sb)
                 for child in live.filter({ $0.value.parent == b }).keys.sorted() { await visit(child, depth: depth + 1) }

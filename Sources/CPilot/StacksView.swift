@@ -227,9 +227,14 @@ struct StackCard: View {
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
                 Button("Restack") { Task { await center.restack(stack) } }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || center.busy != nil)
-                Button("Submit") { Task { await center.submit(stack) } }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
-                Button("Merge from the bottom") { Task { await center.mergeBottom(stack) } }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
+                Button("Submit") { Task { await center.submit(stack) } }.buttonStyle(Pill(kind: .plain))
+                    .disabled(stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
+                Button("Merge from the bottom") { Task { await center.mergeBottom(stack) } }.buttonStyle(Pill(kind: .primary))
+                    .disabled(stack.nextStep != .merge || center.busy != nil)
                 if let r = center.repo { Toggle("", isOn: Binding(get: { center.isArmed(r) }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent).help("Merge the stack automatically, bottom first, whenever every rule passes") }
+            }
+            if let step = stack.nextStep {
+                Text(nextStepText(step)).font(.system(size: 12)).foregroundStyle(.secondary)
             }
             if let r = center.repo {
                 Text(center.isArmed(r) ? "Auto-merge is on: the bottom pull request merges by itself once its checks and reviews pass, then the next one follows."
@@ -244,6 +249,17 @@ struct StackCard: View {
                 Segmented(options: [(MergeMethod.squash, "Squash"), (.merge, "Merge"), (.rebase, "Rebase")], selection: $c.method)
             }
         }.card(padding: 14)
+    }
+}
+
+extension StackCard {
+    fileprivate func nextStepText(_ step: Stack.Step) -> String {
+        switch step {
+        case .restack: "Next: Restack. A branch is behind its parent, or a lower pull request was merged. Submit and merge wait until then."
+        case .submit:
+            "Next: Submit. " + stack.unsubmitted.map(\.name).joined(separator: ", ") + " has no open pull request or commits that are not pushed yet."
+        case .merge: "Everything is pushed. Next: Merge from the bottom once #\(stack.bottomOpen?.pr ?? 0) has passed its checks and reviews."
+        }
     }
 }
 
