@@ -26,6 +26,7 @@ struct PopoverView: View {
         .overlay(alignment: .bottom) { ToastView() }
         .onAppear { model.setPopoverVisible(true) }
         .onDisappear { model.setPopoverVisible(false) }
+        .onChange(of: ws.deleteRisk?.id) { _, id in if id != nil { openManager(.sessions) } }  // the confirmation lives in the Manager window
     }
 
     private var header: some View {
@@ -114,6 +115,7 @@ struct SessionRow: View {
                 else if c?.state == .asleep || c == nil { Text("Resume").font(.system(size: 11.5)).foregroundStyle(Theme.accent) }
             }.padding(.horizontal, 12).padding(.vertical, 8).contentShape(Rectangle())
         }.buttonStyle(.soft)
+        .contextMenu { SessionMenu(id: meta.id, archived: false, open: open) }
     }
 
     private func subtitle(_ c: SessionController?) -> String {

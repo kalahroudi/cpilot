@@ -550,6 +550,13 @@ final class Workspace {
         m.archived = false; save(m); select(id)
     }
 
+    /// Puts a session away without deleting it: it leaves the tabs and the list, and Restore brings it back.
+    func archive(_ id: String) {
+        guard var m = sessions.first(where: { $0.id == id }) ?? store.load(id) else { return }
+        m.archived = true; save(m); closeTab(id)
+        sessions.removeAll { $0.id == id }
+    }
+
     func closeTab(_ id: String) {
         controllers[id]?.close(); controllers[id] = nil
         tabs.removeAll { $0 == id }
@@ -563,7 +570,7 @@ final class Workspace {
 
     /// Deletes a session, but first asks when its worktree holds uncommitted changes or commits that were never pushed.
     func requestDelete(_ id: String) {
-        guard let m = sessions.first(where: { $0.id == id }), let wt = m.worktree else { delete(id); return }
+        guard let m = sessions.first(where: { $0.id == id }) ?? store.load(id), let wt = m.worktree else { delete(id); return }
         Task {
             let w = await Exec.with(environment(m.environment)) { await Git.unsavedWork(wt) }
             var parts: [String] = []
@@ -577,7 +584,7 @@ final class Workspace {
     /// Removes the session. Its worktree always goes; its local branch goes too when everything on it is already on a remote.
     func delete(_ id: String, force: Bool = false) {
         closeTab(id)
-        if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree {
+        if let m = sessions.first(where: { $0.id == id }) ?? store.load(id), let wt = m.worktree {
             let e = environment(m.environment)
             Task { await Exec.with(e) {
                 let safe = await Git.unsavedWork(wt) == (0, 0)

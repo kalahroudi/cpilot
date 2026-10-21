@@ -223,17 +223,14 @@ struct SideRow: View {
             .background(selected ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7))
             .foregroundStyle(selected ? Theme.accent : Color.primary).contentShape(Rectangle())
         }.buttonStyle(.soft)
-        .contextMenu {
-            if ws.tabs.contains(meta.id) { Button("Close") { ws.closeTab(meta.id) } }
-            Button("Archive") { var m = meta; m.archived = true; ws.save(m); ws.closeTab(meta.id); ws.sessions.removeAll { $0.id == meta.id } }
-            Button("Delete…", role: .destructive) { ws.requestDelete(meta.id) }
-        }
+        .contextMenu { SessionMenu(id: meta.id, archived: false) }
     }
 }
 
 struct TabStrip: View {
     let ws = Workspace.shared
     let nav = Nav.shared
+    @State private var showHistory = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -246,11 +243,9 @@ struct TabStrip: View {
             }
             Button { nav.showNewSession = true } label: { Image(systemName: "plus").font(.system(size: 13)).frame(width: 28, height: 26) }
                 .buttonStyle(.soft).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
-            Menu {
-                ForEach(ws.sessions.prefix(15)) { m in Button(m.title) { ws.select(m.id) } }
-                let archived = ws.archived
-                if !archived.isEmpty { Divider(); Menu("Archived") { ForEach(archived.prefix(20)) { m in Button(m.title) { ws.restore(m.id) } } } }
-            } label: { Image(systemName: "clock.arrow.circlepath") }.menuStyle(.borderlessButton).fixedSize().help("Earlier sessions")
+            Button { showHistory.toggle() } label: { Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).frame(width: 28, height: 26) }
+                .buttonStyle(.soft).foregroundStyle(.secondary).help("All sessions").accessibilityLabel("All sessions")
+                .popover(isPresented: $showHistory, arrowEdge: .bottom) { SessionHistory { showHistory = false } }
         }
         .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 0)
         .background(Theme.sidebar)
@@ -280,11 +275,7 @@ struct TabButton: View {
         .opacity(session.state == .asleep && !selected ? 0.75 : 1)
         .onHover { hover = $0 }
         .onTapGesture { ws.select(session.id) }
-        .contextMenu {
-            Button("Close tab") { ws.closeTab(session.id) }
-            Button("Archive session") { var m = session.meta; m.archived = true; ws.save(m); ws.closeTab(session.id) }
-            Button("Delete session…", role: .destructive) { ws.requestDelete(session.id) }
-        }
+        .contextMenu { SessionMenu(id: session.id, archived: false) }
     }
 
     @ViewBuilder private var dot: some View {
@@ -321,5 +312,117 @@ struct Welcome: View {
             }
             Spacer()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// What can be done to a session, the same in the tab, the sidebar, the history list and the menu bar popover.
+struct SessionMenu: View {
+    let id: String
+    let archived: Bool
+    var open: (() -> Void)?
+    let ws = Workspace.shared
+    var body: some View {
+        if let open { Button("Open", action: open) }
+        if ws.tabs.contains(id) { Button("Close tab") { ws.closeTab(id) } }
+        if archived { Button("Restore") { ws.restore(id) } }
+        else { Button("Archive") { ws.archive(id) } }
+        Divider()
+        Button("Delete…", role: .destructive) { ws.requestDelete(id) }
+    }
+}
+
+/// Every session in one place: search, what is open, what is recent and what is archived, with the same actions as right-click.
+struct SessionHistory: View {
+    let done: () -> Void
+    let ws = Workspace.shared
+    @State private var query = ""
+    @State private var showArchived = false
+
+    var body: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let match: (SessionMeta) -> Bool = { q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.project.localizedCaseInsensitiveContains(q) }
+        let open = ws.sessions.filter { ws.tabs.contains($0.id) && match($0) }
+        let recent = ws.sessions.filter { !ws.tabs.contains($0.id) && match($0) }
+        let archived = ws.archived.filter(match)
+        VStack(spacing: 0) {
+            SearchBox(prompt: "Search sessions", text: $query).padding(10)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    group("Open", open, archived: false)
+                    group("Recent", recent, archived: false)
+                    if open.isEmpty && recent.isEmpty {
+                        Text(q.isEmpty ? "No sessions yet." : "No session matches “\(q)”.").font(.system(size: 12.5)).foregroundStyle(.secondary).padding(12)
+                    }
+                    if !archived.isEmpty {
+                        Button { showArchived.toggle() } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).rotationEffect(.degrees(showArchived || !q.isEmpty ? 90 : 0))
+                                SectionLabel("Archived (\(archived.count))"); Spacer()
+                            }.padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        if showArchived || !q.isEmpty { ForEach(archived) { HistoryRow(meta: $0, archived: true, done: done) } }
+                    }
+                }.padding(6)
+            }
+        }.frame(width: 380, height: 440)
+    }
+
+    @ViewBuilder private func group(_ title: String, _ items: [SessionMeta], archived: Bool) -> some View {
+        if !items.isEmpty {
+            SectionLabel(title).padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
+            ForEach(items) { HistoryRow(meta: $0, archived: archived, done: done) }
+        }
+    }
+}
+
+struct HistoryRow: View {
+    let meta: SessionMeta
+    let archived: Bool
+    let done: () -> Void
+    let ws = Workspace.shared
+    @State private var hover = false
+
+    var body: some View {
+        let c = ws.controller(meta.id)
+        HStack(spacing: 8) {
+            Button { if archived { ws.restore(meta.id) } else { ws.select(meta.id) }; done() } label: {
+                HStack(spacing: 8) {
+                    dot(archived ? .asleep : c?.state ?? .asleep)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text((meta.parentId != nil ? "↳ " : "") + meta.title).font(.system(size: 12.5, weight: ws.selected == meta.id ? .semibold : .regular)).lineLimit(1)
+                        Text("\(meta.project) · \(meta.updatedAt.formatted(.relative(presentation: .named)))").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if hover {
+                if archived { iconButton("arrow.uturn.backward", "Restore") { ws.restore(meta.id); done() } }
+                else {
+                    if ws.tabs.contains(meta.id) { iconButton("xmark", "Close tab") { ws.closeTab(meta.id) } }
+                    iconButton("archivebox", "Archive") { ws.archive(meta.id) }
+                }
+                iconButton("trash", "Delete…") { ws.requestDelete(meta.id); done() }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(hover ? Theme.fill : .clear, in: RoundedRectangle(cornerRadius: 7))
+        .onHover { hover = $0 }
+        .contextMenu { SessionMenu(id: meta.id, archived: archived) }
+    }
+
+    private func iconButton(_ symbol: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 11)).frame(width: 22, height: 22).contentShape(Rectangle()) }
+            .buttonStyle(.soft).foregroundStyle(.secondary).help(label).accessibilityLabel(label)
+    }
+
+    @ViewBuilder private func dot(_ s: SessionController.RunState) -> some View {
+        switch s {
+        case .running: ProgressView().controlSize(.mini).frame(width: 8, height: 8)
+        case .waiting, .reconnecting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
+        case .failed: Circle().fill(Theme.danger).frame(width: 8, height: 8)
+        case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
+        case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)
+        }
     }
 }
