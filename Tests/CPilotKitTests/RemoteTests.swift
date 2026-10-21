@@ -31,6 +31,14 @@ final class RemoteTests: XCTestCase {
         XCTAssertTrue(c.contains("cd") && c.contains("my project") && c.contains("exec"))
     }
 
+    func testPlanInstallsClaudeOnlyWhenMissing() async {
+        let env = EnvironmentConfig(name: "t", routes: ["good"])
+        let missing = await Provisioner.plan(env, EnvironmentReport(connected: true))
+        XCTAssertEqual(missing.map(\.id), ["claude"])
+        let ready = await Provisioner.plan(env, EnvironmentReport(connected: true, tools: ["claude": "/x/claude"]))
+        XCTAssertTrue(ready.isEmpty)
+    }
+
     func testCommandsRunOnTheEnvironmentWithSpacesAndQuotes() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("my dir \(UUID().uuidString.prefix(6))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

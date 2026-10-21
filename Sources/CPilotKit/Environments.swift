@@ -99,7 +99,9 @@ public enum SSH {
 
     /// The command line the server runs: a login shell, so PATH matches what you get when you sign in there.
     public static func remoteCommand(_ tool: String, _ args: [String], cwd: String?, env: [String: String] = [:]) -> String {
-        var inner = cwd.map { "cd \(quote($0)) && " } ?? ""
+        // Tools CPilot installs for the user (Claude, Node.js) live in the home folder, which a login shell may not have on PATH.
+        var inner = "PATH=\"$HOME/.local/bin:$HOME/.cpilot/claude/bin:$PATH\"; export PATH; "
+        inner += cwd.map { "cd \(quote($0)) && " } ?? ""
         inner += "exec "
         if !env.isEmpty { inner += "env " + env.sorted { $0.key < $1.key }.map { "\($0.key)=\(quote($0.value))" }.joined(separator: " ") + " " }
         inner += ([tool] + args).map(quote).joined(separator: " ")
