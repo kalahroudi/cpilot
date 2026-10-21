@@ -27,19 +27,22 @@ public struct Stack: Equatable, Sendable, Identifiable {
     public var trunk: String
     /// Bottom first.
     public var branches: [StackBranch]
+    /// Commits the remote trunk has that the local trunk does not (as of the last fetch). The stack cannot be restacked correctly until it is synced.
+    public var trunkBehind = 0
     public var id: String { branches.first?.name ?? trunk }
     public var needsRestack: Bool { branches.contains { $0.needsRestack || $0.isMerged } }
     /// Branches Submit would act on: no open pull request yet, or commits the remote has not seen.
     public var unsubmitted: [StackBranch] { branches.filter { !$0.isMerged && $0.commits > 0 && ($0.prState != "OPEN" || !$0.pushed) } }
     /// The lowest pull request still open, the one "Merge from the bottom" would merge.
     public var bottomOpen: StackBranch? { branches.first { !$0.isMerged && $0.prState == "OPEN" } }
-    /// What to do next, in order: restack, submit, merge.
+    /// What to do next, in order: sync, restack, submit, merge.
     public var nextStep: Step? {
+        if trunkBehind > 0 { return .sync }
         if needsRestack { return .restack }
         if !unsubmitted.isEmpty { return .submit }
         return bottomOpen == nil ? nil : .merge
     }
-    public enum Step: Sendable { case restack, submit, merge }
+    public enum Step: Sendable { case sync, restack, submit, merge }
     public init(trunk: String, branches: [StackBranch]) { self.trunk = trunk; self.branches = branches }
 }
 
@@ -130,6 +133,9 @@ public enum Stacks {
         return result
     }
 
+    /// Brings the remote's view up to date so "the trunk moved" can be noticed. Quiet: offline is fine.
+    public static func fetch(in dir: String) async { _ = try? await git(["fetch", "--prune", "origin"], in: dir, timeout: 60) }
+
     // MARK: Reading
 
     /// Every stack in the repository, each with its branches bottom first.
@@ -155,7 +161,10 @@ public enum Stacks {
                 for child in live.filter({ $0.value.parent == b }).keys.sorted() { await visit(child, depth: depth + 1) }
             }
             await visit(root, depth: 0)
-            out.append(Stack(trunk: live[root]!.parent == t || existing.contains(live[root]!.parent) ? live[root]!.parent : t, branches: list))
+            var stack = Stack(trunk: live[root]!.parent == t || existing.contains(live[root]!.parent) ? live[root]!.parent : t, branches: list)
+            let behind = (try? await git(["rev-list", "--count", "\(stack.trunk)..origin/\(stack.trunk)"], in: dir)) ?? "0"
+            stack.trunkBehind = Int(behind) ?? 0
+            out.append(stack)
         }
         return out
     }

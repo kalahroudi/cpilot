@@ -11,6 +11,8 @@ final class StackCenter {
     static let shared = StackCenter()
     var repo: PRCenter.Repo?
     var stacks: [Stack] = []
+    /// Check results of each stack's bottom open pull request, by number.
+    var checks: [Int: [PullRequest.Check]] = [:]
     var loading = false
     var busy: String?
     var error: String?
@@ -71,7 +73,14 @@ final class StackCenter {
     func refresh(manual: Bool = false) async {
         guard let r = repo, !loading else { return }
         loading = true; defer { loading = false }
-        stacks = await Exec.with(env) { await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir)) }
+        let (loaded, results) = await Exec.with(env) { () -> ([Stack], [Int: [PullRequest.Check]]) in
+            await Stacks.fetch(in: r.dir)
+            let list = await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir))
+            var results: [Int: [PullRequest.Check]] = [:]
+            for n in list.compactMap({ $0.bottomOpen?.pr }) { results[n] = await GitHub.checks(n, in: r.dir) }
+            return (list, results)
+        }
+        stacks = loaded; checks = results
         if manual { AppModel.shared.show(stacks.isEmpty ? "Refreshed. No stacks in this repository." : "Refreshed \(stacks.count) stack\(stacks.count == 1 ? "" : "s").", error: false) }
     }
 
@@ -231,11 +240,11 @@ struct StackCard: View {
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
-                Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || center.busy != nil)
+                Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || stack.nextStep == .sync || center.busy != nil)
                 Button { Task { await center.submit(stack) } } label: { BusyLabel(title: "Submit", busyTitle: "Submitting…", busy: center.busy == "Submitting") }.buttonStyle(Pill(kind: .plain))
-                    .disabled(stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
+                    .disabled(stack.nextStep == .sync || stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
                 Button { Task { await center.mergeBottom(stack) } } label: { BusyLabel(title: "Merge from the bottom", busyTitle: "Merging…", busy: center.busy == "Merging") }.buttonStyle(Pill(kind: .primary))
-                    .disabled(stack.nextStep != .merge || center.busy != nil)
+                    .disabled(stack.nextStep != .merge || checkState == .failed || center.busy != nil)
             }
             nextStepBar
             Text("⎇ \(stack.trunk)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
@@ -251,17 +260,36 @@ struct StackCard: View {
 
 extension StackCard {
     private struct Step { let icon: String, tint: Color, title: String, detail: String }
+    private enum CheckState { case unknown, passing, pending, failed }
+
+    private var bottomChecks: [PullRequest.Check] { stack.bottomOpen?.pr.flatMap { center.checks[$0] } ?? [] }
+    private var checkState: CheckState {
+        let c = bottomChecks
+        if c.isEmpty { return .unknown }
+        if c.contains(where: \.failed) { return .failed }
+        return c.allSatisfy(\.passed) ? .passing : .pending
+    }
 
     private var step: Step {
+        let n = stack.bottomOpen?.pr ?? 0
         switch stack.nextStep {
-        case .restack: Step(icon: "arrow.triangle.2.circlepath", tint: Theme.warn, title: "Restack first",
-                            detail: "A branch is behind its parent, or a lower pull request was merged. Submit and merge wait until then.")
-        case .submit:
-            Step(icon: "arrow.up.circle", tint: Theme.accent, title: "Submit to publish your changes",
-                 detail: names(stack.unsubmitted.map(\.name)) + " no open pull request, or has commits GitHub hasn't seen.")
-        case .merge: Step(icon: "checkmark.circle", tint: Theme.ok, title: "Ready to merge from the bottom",
-                          detail: "Everything is pushed. #\(stack.bottomOpen?.pr ?? 0) merges once its checks and reviews pass.")
-        case nil: Step(icon: "tray", tint: .secondary, title: "Nothing to do", detail: "No open pull requests in this stack.")
+        case .sync: return Step(icon: "arrow.down.circle", tint: Theme.warn, title: "\(stack.trunk) has new commits",
+                                detail: "\(stack.trunkBehind) new on GitHub, for example a fix you merged. Sync pulls them in and restacks, so the branches are tested with them.")
+        case .restack: return Step(icon: "arrow.triangle.2.circlepath", tint: Theme.warn, title: "Restack first",
+                                   detail: "A branch is behind its parent, or a lower pull request was merged. Submit and merge wait until then.")
+        case .submit: return Step(icon: "arrow.up.circle", tint: Theme.accent, title: "Submit to publish your changes",
+                                  detail: names(stack.unsubmitted.map(\.name)) + " no open pull request, or has commits GitHub hasn't seen.")
+        case .merge:
+            switch checkState {
+            case .failed:
+                let failed = bottomChecks.filter(\.failed).map(\.name).joined(separator: ", ")
+                return Step(icon: "xmark.octagon", tint: Theme.danger, title: "#\(n) failed its checks",
+                            detail: "\(failed) failed. Fix it on the branch and Submit. If it looks unrelated, such as a flaky test, merge a fix into \(stack.trunk) first, then Sync.")
+            case .pending: return Step(icon: "clock", tint: Theme.accent, title: "Waiting for checks on #\(n)", detail: "It can merge once they pass. Refresh to see the latest.")
+            default: return Step(icon: "checkmark.circle", tint: Theme.ok, title: "Ready to merge from the bottom",
+                                 detail: "Everything is pushed. #\(n) merges once its checks and reviews pass.")
+            }
+        case nil: return Step(icon: "tray", tint: .secondary, title: "Nothing to do", detail: "No open pull requests in this stack.")
         }
     }
 
@@ -269,7 +297,7 @@ extension StackCard {
         n.count <= 2 ? n.joined(separator: " and ") + (n.count == 1 ? " has" : " have") : "\(n[0]), \(n[1]) and \(n.count - 2) more have"
     }
 
-    /// One tidy row: what to do next on the left, the auto-merge switch on the right.
+    /// One tidy row: what to do next on the left, its action if it has one, and the auto-merge switch on the right.
     @ViewBuilder var nextStepBar: some View {
         let st = step
         HStack(alignment: .center, spacing: 12) {
@@ -279,6 +307,11 @@ extension StackCard {
                 Text(st.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
+            if stack.nextStep == .sync {
+                AsyncButton("Sync now") { await center.sync() }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
+            } else if stack.nextStep == .merge, checkState == .failed, let link = bottomChecks.first(where: \.failed)?.link, let url = URL(string: link) {
+                Button("View run") { NSWorkspace.shared.open(url) }.buttonStyle(Pill(kind: .plain))
+            }
             if let r = center.repo {
                 let on = center.isArmed(r)
                 Divider().frame(height: 30)

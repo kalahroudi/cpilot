@@ -216,3 +216,20 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(RepoSetup.suggest(folder: try tmp([:])).description, "")
     }
 }
+
+final class StackNextStepTests: XCTestCase {
+    private func stack(behind: Int = 0, restack: Bool = false, pushed: Bool = true, prState: String? = "OPEN") -> Stack {
+        var b = StackBranch(name: "a", parent: "main", base: nil, needsRestack: restack, commits: 1, pr: 2, prState: prState)
+        b.pushed = pushed
+        var s = Stack(trunk: "main", branches: [b]); s.trunkBehind = behind
+        return s
+    }
+
+    func testStepsComeInOrder() {
+        XCTAssertEqual(stack(behind: 3, restack: true, pushed: false).nextStep, .sync)
+        XCTAssertEqual(stack(restack: true, pushed: false).nextStep, .restack)
+        XCTAssertEqual(stack(pushed: false).nextStep, .submit)
+        XCTAssertEqual(stack().nextStep, .merge)
+        XCTAssertEqual(stack(prState: "MERGED").nextStep, .restack)   // a merged branch is cleared out by restacking
+    }
+}
