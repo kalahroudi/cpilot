@@ -52,6 +52,12 @@ final class Project {
         else { current = repos().first }
     }
 
+    /// Whether a session belongs to the active repository (a session in a subfolder counts). Every list of sessions follows the repository.
+    func owns(_ m: SessionMeta) -> Bool {
+        guard let c = current else { return true }
+        return c.environment == m.environment && RepoRef(dir: c.dir, environment: c.environment).contains(m.cwd)
+    }
+
     func choose(_ r: PRCenter.Repo) { current = r }
 
     /// You opened a session: its repository becomes the active one. Specs, Stacks and Pull requests load it when you open them.

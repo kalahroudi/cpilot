@@ -175,7 +175,7 @@ struct SessionSidebar: View {
     @State private var query = ""
 
     private var groups: [(String, [SessionMeta])] {
-        let list = ws.sessions.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+        let list = ws.sessions.filter { Project.shared.owns($0) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
         return Dictionary(grouping: list, by: \.project).map { ($0.key, $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
             .sorted { ($0.1.first?.updatedAt ?? .distantPast) > ($1.1.first?.updatedAt ?? .distantPast) }
     }
@@ -301,10 +301,11 @@ struct Welcome: View {
             Text("Start a session").font(.system(size: 20, weight: .semibold))
             Text("Pick a folder, an agent and how much it may do. Everything resumes later with its context.").font(.system(size: 13)).foregroundStyle(.secondary)
             Button("New session") { nav.showNewSession = true }.buttonStyle(Pill(kind: .primary)).keyboardShortcut("n", modifiers: .command)
-            if !ws.sessions.isEmpty {
+            let recent = ws.sessions.filter { Project.shared.owns($0) }
+            if !recent.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionLabel("Recent").padding(.bottom, 6)
-                    ForEach(ws.sessions.prefix(5)) { m in
+                    ForEach(recent.prefix(5)) { m in
                         Button { ws.select(m.id) } label: {
                             HStack { Text(m.title).lineLimit(1); Spacer(); Text(m.project).foregroundStyle(.secondary) }.font(.system(size: 12.5)).padding(.vertical, 6).contentShape(Rectangle())
                         }.buttonStyle(.soft)
@@ -342,7 +343,7 @@ struct SessionHistory: View {
 
     var body: some View {
         let q = query.trimmingCharacters(in: .whitespaces)
-        let match: (SessionMeta) -> Bool = { q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.project.localizedCaseInsensitiveContains(q) }
+        let match: (SessionMeta) -> Bool = { Project.shared.owns($0) && (q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.project.localizedCaseInsensitiveContains(q)) }
         let open = ws.sessions.filter { ws.tabs.contains($0.id) && match($0) }
         let recent = ws.sessions.filter { !ws.tabs.contains($0.id) && match($0) }
         let archived = ws.archived.filter(match)
