@@ -634,12 +634,20 @@ final class Workspace {
                 let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
                 try await Exec.with(remote) {
                     _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
-                    try await Git.addWorktree(repo: n.folder, branch: branch, base: await Git.defaultBranch(n.folder), to: path)
+                    try await Git.addWorktree(repo: n.folder, branch: branch, base: await Git.freshBase(n.folder), to: path)
                 }
                 meta.worktree = path
             } else {
                 let current = await Exec.with(remote) { await Git.info(n.folder)?.branch }
-                if current != branch { _ = try? await Exec.with(remote) { try await Shell.run("git", ["checkout", "-b", branch], cwd: URL(fileURLWithPath: n.folder)) } }
+                // A new branch starts from the default branch, not from whatever happens to be checked out. Uncommitted work comes along when it can; otherwise the branch starts here.
+                if current != branch {
+                    _ = try? await Exec.with(remote) {
+                        let dir = URL(fileURLWithPath: n.folder)
+                        let base = await Git.freshBase(n.folder)
+                        if (try await Shell.run("git", ["checkout", "--no-track", "-b", branch, base], cwd: dir)).ok { return }
+                        _ = try await Shell.run("git", ["checkout", "-b", branch], cwd: dir)
+                    }
+                }
             }
             meta.branch = branch
         }

@@ -43,6 +43,15 @@ public enum Git {
         return "main"
     }
 
+    /// The newest default branch to start a session from: the remote's after a fetch, else the local one.
+    public static func freshBase(_ dir: String) async -> String {
+        let name = await defaultBranch(dir)
+        _ = try? await Shell.run("git", ["fetch", "origin", name], cwd: url(dir), timeout: 60)
+        let remote = "origin/\(name)"
+        let ok = (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", remote], cwd: url(dir)))?.ok ?? false
+        return ok ? remote : name
+    }
+
     public static func slugify(_ title: String) -> String {
         let s = title.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
         let joined = String(s).split(separator: "-").prefix(6).joined(separator: "-")
@@ -55,7 +64,7 @@ public enum Git {
 
     /// A separate checkout for one session, so parallel sessions never touch each other's files.
     public static func addWorktree(repo: String, branch: String, base: String, to path: String) async throws {
-        try await Shell.check("git", ["worktree", "add", "-b", branch, path, base], cwd: url(repo))
+        try await Shell.check("git", ["worktree", "add", "--no-track", "-b", branch, path, base], cwd: url(repo))
     }
 
     public static func removeWorktree(repo: String, path: String) async {
