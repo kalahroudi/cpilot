@@ -120,11 +120,11 @@ final class SessionController: Identifiable {
 
     /// Called when you open a session: if you have been away a while, show the recap.
     func showRecapIfAway() {
-        guard Prefs.shared.recapAuto, !isBusy, !items.isEmpty, Recap.isDue(lastActivity: meta.updatedAt) else { return }
+        guard Prefs.shared.recapAuto, !isBusy, !items.isEmpty, Recap.isDue(lastActivity: meta.updatedAt), meta.recapSeenAt.map({ $0 < meta.updatedAt }) ?? true else { return }
         refreshRecap(); recapVisible = true
     }
 
-    func dismissRecap() { recapVisible = false }
+    func dismissRecap() { recapVisible = false; meta.recapSeenAt = .now; ws.save(meta) }
 
     // MARK: Sending
 

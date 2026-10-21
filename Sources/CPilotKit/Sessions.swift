@@ -56,6 +56,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var recap: String?
     public var recapRows: Int?
     public var recapHeadline: String?
+    /// When the recap was last shown and dismissed, so it is not offered again until the session moves on.
+    public var recapSeenAt: Date?
     /// The session this task was spun off from.
     public var parentId: String?
     /// The environment this session runs in; nil is this Mac.
