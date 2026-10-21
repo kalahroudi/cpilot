@@ -38,14 +38,12 @@ final class PRCenter {
     struct Repo: Hashable { var dir: String; var environment: String?
         @MainActor var name: String { URL(fileURLWithPath: dir).lastPathComponent + (environment.flatMap { Workspace.shared.environment($0)?.name }.map { " · \($0)" } ?? "") } }
 
-    func repos() -> [Repo] {
-        var seen = Set<Repo>(), out: [Repo] = []
-        for m in Workspace.shared.sessions { let r = Repo(dir: m.cwd, environment: m.environment); if seen.insert(r).inserted { out.append(r) } }
-        return out
-    }
+    func repos() -> [Repo] { Project.shared.repos() }
+    var currentRepo: Repo? { repoDir.map { Repo(dir: $0, environment: env?.id) } }
 
     func open(repo: String, environment: String? = nil) async {
         repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []; error = nil
+        Project.shared.current = Repo(dir: repo, environment: environment)
         await refreshList()
     }
     func open(_ r: Repo) async { await open(repo: r.dir, environment: r.environment) }
@@ -228,9 +226,7 @@ struct PullRequestsView: View {
             PaneHeader(title: "Pull requests", subtitle: center.showInbox ? "Everything that needs you, across your repositories" : center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
                 HStack(spacing: 8) {
                     Segmented(options: [(false, "Repository"), (true, "Inbox")], selection: Bindable(center).showInbox)
-                    Menu {
-                        ForEach(center.repos(), id: \.self) { r in Button(r.name) { Task { await center.open(r) } } }
-                    } label: { Label("Repository", systemImage: "folder") }.menuStyle(.borderlessButton).fixedSize()
+                    RepoMenu()
                     Button { Task { await center.refreshList() } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
                 }
@@ -250,9 +246,8 @@ struct PullRequestsView: View {
             }
         }
         .background(Theme.pane)
-        .onAppear {
-            if center.repoDir == nil, let first = center.repos().first { Task { await center.open(first) } }
-        }
+        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.currentRepo { Task { await center.open(r) } } }
+        .onChange(of: Project.shared.current) { _, r in if let r, r != center.currentRepo { Task { await center.open(r) } } }
         .sheet(isPresented: Bindable(center).showCreate) {
             if let dir = center.repoDir {
                 CreatePRSheet(dir: dir, env: center.env) { n in

@@ -40,8 +40,7 @@ struct SettingsPane: View {
 
     private var general: some View {
         @Bindable var p = prefs
-        return HStack(alignment: .top, spacing: 18) {
-            VStack(spacing: 18) {
+        let left = VStack(spacing: 18) {
                 SettingsGroup("Startup") {
                     SettingRow("Launch at login", "Starts in the menu bar and uses no CPU until you open it.", error: prefs.launchAtLoginError) { toggle(Binding(get: { prefs.launchAtLogin }, set: { prefs.setLaunchAtLogin($0) })) }
                 }
@@ -54,7 +53,7 @@ struct SettingsPane: View {
                     SettingRow("Capture shortcut", "Control-Option-Command-C drags out a region of the screen and attaches it to the active session.") { toggle($p.captureHotkey) }
                 }
             }.frame(maxWidth: .infinity)
-            VStack(spacing: 18) {
+        let right = VStack(spacing: 18) {
                 SettingsGroup("Sessions") {
                     SettingRow("Put idle tabs to sleep", "Stops an idle session's agent after this long. It resumes with its full context when you send the next message.") {
                         Segmented(options: [(5, "5 min"), (10, "10 min"), (30, "30 min"), (240, "4 h")], selection: $p.sleepMinutes)
@@ -86,6 +85,9 @@ struct SettingsPane: View {
                     SettingRow("App memory", "How much memory CPilot uses right now.") { Text(AppMemory.footprint).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 }
             }.frame(maxWidth: .infinity)
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 18) { left; right }
+            VStack(spacing: 18) { left; right }
         }
     }
 
@@ -128,7 +130,7 @@ struct MemoryEngineRow: View {
         VStack(spacing: 0) {
             SettingRow("Engine address", up == nil ? "Checking…" : up == true ? "Reachable. Each project gets its own memory bank." : "Not reachable. Start the engine, then check again.") {
                 HStack(spacing: 6) {
-                    TextField("http://localhost:8888", text: $p.memoryEngineURL).textFieldStyle(.roundedBorder).frame(width: 190)
+                    TextField("http://localhost:8888", text: $p.memoryEngineURL).textFieldStyle(CPField()).frame(width: 190)
                     Button("Check") { Task { up = await MemoryEngine.isReachable(base: Prefs.shared.memoryEngineURL) } }.buttonStyle(Pill(kind: .plain))
                 }
             }
@@ -157,15 +159,24 @@ struct SettingRow<Control: View>: View {
     var error: String?
     @ViewBuilder var control: Control
     init(_ title: String, _ detail: String?, error: String? = nil, @ViewBuilder _ control: () -> Control) { self.title = title; self.detail = detail; self.error = error; self.control = control() }
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 13))
+            if let d = detail { Text(d).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            if let e = error { Text(e).font(.system(size: 11.5)).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+
+    /// Label and control side by side when there is room; the control drops under the label when there is not,
+    /// so text never gets squeezed into a sliver.
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13))
-                if let d = detail { Text(d).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-                if let e = error { Text(e).font(.system(size: 11.5)).foregroundStyle(Theme.danger) }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                label.frame(minWidth: 190, idealWidth: 300, maxWidth: .infinity, alignment: .leading)
+                control.fixedSize()
             }
-            Spacer(minLength: 8)
-            control
-        }.padding(.vertical, 10).overlay(alignment: .top) { Divider().opacity(0.6) }
+            VStack(alignment: .leading, spacing: 8) { label.frame(maxWidth: .infinity, alignment: .leading); control }
+        }
+        .padding(.vertical, 10).overlay(alignment: .top) { Divider().opacity(0.6) }
     }
 }

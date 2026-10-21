@@ -69,7 +69,7 @@ struct PopoverView: View {
 
     private var quickStart: some View {
         HStack(spacing: 8) {
-            TextField("New session in \(URL(fileURLWithPath: lastFolder).lastPathComponent)…", text: $quick).textFieldStyle(.roundedBorder).onSubmit(start)
+            TextField("New session in \(URL(fileURLWithPath: lastFolder).lastPathComponent)…", text: $quick).textFieldStyle(CPField()).onSubmit(start)
             Button("Start", action: start).buttonStyle(Pill(kind: .primary)).disabled(quick.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }

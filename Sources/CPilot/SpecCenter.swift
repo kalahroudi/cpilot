@@ -64,7 +64,7 @@ final class SpecCenter {
 
     // MARK: Loading
 
-    func open(_ r: PRCenter.Repo) async { repo = r; selected = nil; await refresh() }
+    func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; selected = nil; await refresh() }
 
     func refresh() async {
         guard let r = repo else { return }

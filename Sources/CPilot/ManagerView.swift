@@ -75,37 +75,68 @@ struct ManagerView: View {
     }
 }
 
+/// The side menu. Icons only when collapsed, icons with names when expanded. It is wide enough that the window's red, yellow and
+/// green buttons sit fully inside it, and the toggle sits right below them.
 struct Rail: View {
     let nav = Nav.shared
     let ws = Workspace.shared
+    let prefs = Prefs.shared
+    private var expanded: Bool { !prefs.sidebarCollapsed }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
+            Color.clear.frame(height: 36)                                   // room for the window buttons
+            toggle
+            Spacer().frame(height: 6)
             ForEach([Pane.sessions, .specs, .stacks, .pulls, .memory, .skills, .repo, .remote]) { item($0) }
             Spacer()
             ForEach([Pane.settings, .help]) { item($0) }
-            Text(AppMemory.footprint.replacingOccurrences(of: " MB", with: "")).font(.system(size: 9)).foregroundStyle(.secondary).help("CPilot memory use, in MB")
+            HStack(spacing: 4) {
+                Image(systemName: "memorychip").font(.system(size: 10))
+                Text(expanded ? "Memory \(AppMemory.footprint)" : AppMemory.footprint.replacingOccurrences(of: " MB", with: ""))
+            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, 6).help("CPilot memory use")
         }
-        .padding(.top, 38).padding(.bottom, 10).padding(.horizontal, 8)
-        .frame(width: 56)
+        .padding(.bottom, 12).padding(.horizontal, 10)
+        .frame(width: expanded ? 212 : 76)
         .background(Theme.sidebar)
+        .animation(.easeInOut(duration: 0.16), value: prefs.sidebarCollapsed)
+    }
+
+    private var toggle: some View {
+        Button { prefs.sidebarCollapsed.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sidebar.left").font(.system(size: 14)).frame(width: 22)
+                if expanded { Text("Menu").font(.system(size: 12.5)); Spacer() }
+            }
+            .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center).padding(.horizontal, 8).padding(.vertical, 6)
+            .foregroundStyle(.secondary).contentShape(Rectangle())
+        }.buttonStyle(.plain).help(expanded ? "Collapse the menu" : "Expand the menu").accessibilityLabel(expanded ? "Collapse the menu" : "Expand the menu")
+        .keyboardShortcut("\\", modifiers: .command)
     }
 
     private func item(_ p: Pane) -> some View {
         let on = nav.pane == p
         return Button { nav.pane = p } label: {
-            Image(systemName: p.symbol).font(.system(size: 15))
-                .frame(width: 38, height: 34)
-                .foregroundStyle(on ? Theme.accent : Color.primary.opacity(0.75))
-                .background(on ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(alignment: .topTrailing) { badge(p) }
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+            HStack(spacing: 10) {
+                Image(systemName: p.symbol).font(.system(size: 15)).frame(width: 22)
+                if expanded {
+                    Text(p.title).font(.system(size: 13, weight: on ? .semibold : .regular)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    badge(p)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
+            .foregroundStyle(on ? Theme.accent : Color.primary.opacity(0.78))
+            .background(on ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .topTrailing) { if !expanded { badge(p).offset(x: -4, y: 4) } }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).help(p.title).accessibilityLabel(p.title)
     }
 
     @ViewBuilder private func badge(_ p: Pane) -> some View {
-        if p == .sessions, ws.attention > 0 { Circle().fill(Theme.warn).frame(width: 8, height: 8).offset(x: -2, y: 3) }
-        if p == .settings, Updater.shared.available != nil { Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: -2, y: 3) }
+        if p == .sessions, ws.attention > 0 { Circle().fill(Theme.warn).frame(width: 8, height: 8) }
+        if p == .settings, Updater.shared.available != nil { Circle().fill(Theme.accent).frame(width: 7, height: 7) }
     }
 }
 

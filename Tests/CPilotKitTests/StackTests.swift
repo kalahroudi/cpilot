@@ -197,3 +197,22 @@ final class SplitTests: XCTestCase {
         let first = try await t.sh(["ls-tree", "-r", "--name-only", "part-x"]); XCTAssertTrue(first.contains("x.txt") && !first.contains("y.txt"))
     }
 }
+
+final class SuggestTests: XCTestCase {
+    func tmp(_ files: [String: String]) throws -> String {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("sug-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        for (n, t) in files { try t.write(to: d.appendingPathComponent(n), atomically: true, encoding: .utf8) }
+        return d.path
+    }
+
+    func testDescriptionAndTopicsFromProjectFiles() throws {
+        let d = try tmp(["README.md": "# Hush\n\n[![CI](x)](y)\n\nA **quiet** menu bar app that reads [Telegram](https://t.me) for you.\n\n## Install\nrun it", "Package.swift": "platforms: [.macOS(.v14)]", "Dockerfile": ""])
+        let s = RepoSetup.suggest(folder: d)
+        XCTAssertEqual(s.description, "A quiet menu bar app that reads Telegram for you.")
+        XCTAssertEqual(s.topics, ["swift", "macos", "docker"])
+        let js = RepoSetup.suggest(folder: try tmp(["package.json": #"{"name":"x","description":"Tiny CLI"}"#, "tsconfig.json": "{}"]))
+        XCTAssertEqual(js.description, "Tiny CLI"); XCTAssertEqual(js.topics, ["javascript", "nodejs", "typescript"])
+        XCTAssertEqual(RepoSetup.suggest(folder: try tmp([:])).description, "")
+    }
+}

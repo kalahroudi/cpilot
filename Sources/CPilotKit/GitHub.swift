@@ -200,4 +200,32 @@ public enum GitHub {
               let list = try? JSONDecoder().decode([InboxItem].self, from: Data(out.utf8)) else { return [] }
         return list
     }
+
+    // MARK: Repository details
+
+    public struct RepoDetails: Equatable, Sendable {
+        public var description: String
+        public var topics: [String]
+        public var isPrivate: Bool
+        public var license: String?          // "apache-2.0", "mit"
+        public var hasPages: Bool
+        public var protectedMain: Bool       // a "Protect main" ruleset exists
+        public init(description: String = "", topics: [String] = [], isPrivate: Bool = false, license: String? = nil, hasPages: Bool = false, protectedMain: Bool = false) {
+            self.description = description; self.topics = topics; self.isPrivate = isPrivate; self.license = license; self.hasPages = hasPages; self.protectedMain = protectedMain
+        }
+    }
+
+    /// What GitHub already has for a repository, so setup can show real values instead of blanks.
+    public static func repoDetails(_ slug: String) async -> RepoDetails? {
+        guard let out = try? await Shell.check("gh", ["api", "repos/\(slug)"], timeout: 30),
+              let o = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any] else { return nil }
+        var d = RepoDetails()
+        d.description = (o["description"] as? String) ?? ""
+        d.topics = (o["topics"] as? [String]) ?? []
+        d.isPrivate = (o["private"] as? Bool) ?? false
+        d.license = ((o["license"] as? [String: Any])?["key"] as? String)
+        d.hasPages = (o["has_pages"] as? Bool) ?? false
+        if let r = try? await Shell.check("gh", ["api", "repos/\(slug)/rulesets"], timeout: 30) { d.protectedMain = r.contains("Protect main") }
+        return d
+    }
 }

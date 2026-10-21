@@ -94,7 +94,7 @@ struct GitHubSettings: View {
             SettingsGroup("Pull requests") {
                 SettingRow("Scan every PR for security problems", "Runs before CPilot will merge. Proven issues block the merge; unconfirmed leads never do.") { toggle($p.securityScanOnPR) }
                 SettingRow("Local model for the deep scan", "Where your local model server answers (mlxplayer uses \(SecurityCage.defaultModelURL)). No API key is needed. With it and Docker or Colima running, findings are proven in a sandbox.") {
-                    TextField(SecurityCage.defaultModelURL, text: $p.localModelURL).textFieldStyle(.roundedBorder).frame(width: 220)
+                    TextField(SecurityCage.defaultModelURL, text: $p.localModelURL).textFieldStyle(CPField()).frame(width: 220)
                 }
                 SettingRow("SecurityCage folder", SecurityCage.locate(configured: Prefs.shared.securityCagePath).map { "Found: " + $0.replacingOccurrences(of: "/packages/cli/src/cli.ts", with: "") } ?? SecurityCage.setupHint) {
                     Button("Choose…") {
@@ -218,9 +218,9 @@ struct CustomAgentSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add an agent by command").font(.system(size: 15, weight: .semibold))
-            TextField("Name", text: $name).textFieldStyle(.roundedBorder)
-            TextField("Command, for example npx", text: $command).textFieldStyle(.roundedBorder)
-            TextField("Arguments, for example -y some-agent --acp", text: $args).textFieldStyle(.roundedBorder)
+            TextField("Name", text: $name).textFieldStyle(CPField())
+            TextField("Command, for example npx", text: $command).textFieldStyle(CPField())
+            TextField("Arguments, for example -y some-agent --acp", text: $args).textFieldStyle(CPField())
             Text("The command must speak ACP over standard input and output.").font(.system(size: 11.5)).foregroundStyle(.secondary)
             HStack {
                 Spacer()

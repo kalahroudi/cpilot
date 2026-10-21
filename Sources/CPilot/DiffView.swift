@@ -82,7 +82,7 @@ struct CreatePRSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Create pull request").font(.system(size: 17, weight: .semibold))
             Text("\(branch) → \(base)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-            TextField("Title", text: $title).textFieldStyle(.roundedBorder)
+            TextField("Title", text: $title).textFieldStyle(CPField())
             TextEditor(text: $prBody).font(.system(size: 12.5)).frame(height: 140).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             HStack {
                 Toggle("Draft", isOn: $draft)

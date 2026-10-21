@@ -27,6 +27,42 @@ public struct RepoSetupPlan: Equatable, Sendable {
 }
 
 public enum RepoSetup {
+    /// An About line and topics worked out from the project's own files, for a repository that has neither yet.
+    public static func suggest(folder: String) -> (description: String, topics: [String]) {
+        let fm = FileManager.default
+        func read(_ n: String) -> String? { try? String(contentsOfFile: folder + "/" + n, encoding: .utf8) }
+        var description = ""
+        // package.json "description", then the first plain paragraph of the README.
+        if let pkg = read("package.json"), let d = (try? JSONSerialization.jsonObject(with: Data(pkg.utf8)) as? [String: Any])?["description"] as? String, !d.isEmpty { description = d }
+        if description.isEmpty, let readme = read("README.md") ?? read("readme.md") {
+            var para: [String] = []
+            for raw in readme.components(separatedBy: "\n") {
+                let l = raw.trimmingCharacters(in: .whitespaces)
+                if l.isEmpty { if !para.isEmpty { break }; continue }
+                if l.hasPrefix("#") || l.hasPrefix("![") || l.hasPrefix("[![") || l.hasPrefix("<") || l.hasPrefix("```") || l.hasPrefix("|") || l.hasPrefix(">") || l.hasPrefix("- ") || l.hasPrefix("* ") { if !para.isEmpty { break }; continue }
+                para.append(l)
+            }
+            description = para.joined(separator: " ")
+        }
+        description = description.replacingOccurrences(of: #"\[([^\]]+)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: "`", with: "").replacingOccurrences(of: "**", with: "")
+        if description.count > 160 { description = String(description.prefix(157)).trimmingCharacters(in: .whitespaces) + "..." }
+
+        var topics: [String] = []
+        func add(_ t: String) { if !topics.contains(t) { topics.append(t) } }
+        let exists = { (n: String) in fm.fileExists(atPath: folder + "/" + n) }
+        if exists("Package.swift") { add("swift"); if let p = read("Package.swift"), p.contains(".macOS") { add("macos") } }
+        if exists("package.json") { add("javascript"); add("nodejs") }
+        if exists("tsconfig.json") { add("typescript") }
+        if exists("pyproject.toml") || exists("requirements.txt") { add("python") }
+        if exists("Cargo.toml") { add("rust") }
+        if exists("go.mod") { add("go") }
+        if exists("Gemfile") { add("ruby") }
+        if exists("Dockerfile") { add("docker") }
+        if exists("Package.swift"), exists("Sources") { add("swiftui") }
+        return (description, topics)
+    }
+
     // MARK: Pure pieces (tested)
 
     /// The "Protect main" ruleset: changes go through a pull request, history stays linear, main cannot be force pushed or deleted.
@@ -131,7 +167,12 @@ public enum RepoSetup {
         _ = try? await Shell.run("git", ["add", "-A"], cwd: dir)
         _ = try? await Shell.run("git", ["commit", "-m", "Initial commit"], cwd: dir)
 
-        let hasRemote = (try? await Shell.check("git", ["remote", "get-url", "origin"], cwd: dir)) != nil
+        var hasRemote = (try? await Shell.check("git", ["remote", "get-url", "origin"], cwd: dir)) != nil
+        if !hasRemote, (try? await Shell.check("gh", ["repo", "view", plan.slug, "--json", "name"], timeout: 30)) != nil {
+            // The repository already exists on GitHub: link this folder to it instead of trying to create it again.
+            try await Shell.check("git", ["remote", "add", "origin", "https://github.com/\(plan.slug).git"], cwd: dir)
+            hasRemote = true
+        }
         if !hasRemote {
             try await Shell.check("gh", ["repo", "create", plan.slug, plan.isPublic ? "--public" : "--private", "--source", ".", "--remote", "origin", "--push"],
                                   cwd: dir, timeout: 120)
@@ -143,22 +184,34 @@ public enum RepoSetup {
 
         var edit = ["repo", "edit", plan.slug, "--delete-branch-on-merge", "--enable-auto-merge", "--enable-squash-merge"]
         if !plan.description.isEmpty { edit += ["--description", plan.description] }
-        for t in plan.topics { edit += ["--add-topic", t] }
         if plan.pages { edit += ["--homepage", "https://\(plan.owner.lowercased()).github.io/\(plan.name)/"] }
         _ = try? await Shell.run("gh", edit, cwd: dir)
+        // Topics are replaced as a whole, so removing one here removes it on GitHub too.
+        var topicArgs = ["api", "-X", "PUT", "repos/\(plan.slug)/topics"]
+        for t in plan.topics { topicArgs += ["-f", "names[]=\(t)"] }
+        if plan.topics.isEmpty { topicArgs += ["-f", "names[]="] }
+        _ = try? await Shell.run("gh", plan.topics.isEmpty ? ["api", "-X", "PUT", "repos/\(plan.slug)/topics", "--input", "-"] : topicArgs, cwd: dir, input: plan.topics.isEmpty ? Data("{\"names\":[]}".utf8) : nil)
         log("Set description, topics and merge settings")
 
         if plan.pages {
-            let r = try? await Shell.run("gh", ["api", "-X", "POST", "repos/\(plan.slug)/pages", "-f", "source[branch]=main", "-f", "source[path]=/docs"], cwd: dir)
-            log(r?.ok == true ? "GitHub Pages enabled from /docs" : "GitHub Pages could not be enabled (a private repo may need a paid plan)")
+            if (try? await Shell.check("gh", ["api", "repos/\(plan.slug)/pages"], timeout: 30)) != nil { log("GitHub Pages was already enabled") }
+            else {
+                let r = try? await Shell.run("gh", ["api", "-X", "POST", "repos/\(plan.slug)/pages", "-f", "source[branch]=main", "-f", "source[path]=/docs"], cwd: dir)
+                log(r?.ok == true ? "GitHub Pages enabled from /docs" : "GitHub Pages could not be enabled (a private repo may need a paid plan)")
+            }
         }
 
         if plan.protectMain {
             let file = fm.temporaryDirectory.appendingPathComponent("cpilot-ruleset-\(UUID().uuidString).json")
             try rulesetJSON(requiredChecks: plan.requiredChecks, ownerMayPushDirectly: plan.ownerMayPushDirectly).write(to: file, atomically: true, encoding: .utf8)
             defer { try? fm.removeItem(at: file) }
-            let r = try? await Shell.run("gh", ["api", "-X", "POST", "repos/\(plan.slug)/rulesets", "--input", file.path], cwd: dir)
-            if r?.ok == true { log("Ruleset \"Protect main\" applied") }
+            // Update the ruleset if it is already there, so running setup twice never stacks duplicates.
+            var method = "POST", path = "repos/\(plan.slug)/rulesets"
+            if let list = try? await Shell.check("gh", ["api", "repos/\(plan.slug)/rulesets"], timeout: 30),
+               let arr = try? JSONSerialization.jsonObject(with: Data(list.utf8)) as? [[String: Any]],
+               let id = arr.first(where: { ($0["name"] as? String) == "Protect main" })?["id"] as? Int { method = "PUT"; path += "/\(id)" }
+            let r = try? await Shell.run("gh", ["api", "-X", method, path, "--input", file.path], cwd: dir)
+            if r?.ok == true { log(method == "PUT" ? "Ruleset \"Protect main\" updated" : "Ruleset \"Protect main\" applied") }
             else { log("Could not apply the ruleset: " + ((r?.stderr ?? "").isEmpty ? "private repos need a paid GitHub plan" : r!.stderr.trimmingCharacters(in: .whitespacesAndNewlines))) }
         }
 

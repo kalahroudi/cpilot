@@ -13,9 +13,15 @@ enum SnapshotMode {
         guard let dir else { return }
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         NSApp.setActivationPolicy(.accessory)
+        // Screenshots use made-up data. Nothing they touch may survive in the user's real settings, notes or index.
+        let keys = ["lastFolder", "lastEnv", "tabsOnSide", "openTabs", "selectedTab", "armedMerges", "armedStacks", "specAutonomy", "memoryBackfilled", "knownRepos", "sidebarExpanded", "sidebarCollapsed"]
+        let saved = Dictionary(uniqueKeysWithValues: keys.map { ($0, UserDefaults.standard.object(forKey: $0)) })
         Demo.install()
+        Project.shared.current = PRCenter.Repo(dir: "/Users/demo/code/shop", environment: nil)
         Task { @MainActor in
             for shot in shots { await render(shot, to: dir) }
+            for (k, v) in saved { if let v { UserDefaults.standard.set(v, forKey: k) } else { UserDefaults.standard.removeObject(forKey: k) } }
+            Workspace.shared.memory.delete(scope: MemoryStore.globalScope, name: "writing-style")
             NSApp.terminate(nil)
         }
     }
@@ -38,10 +44,13 @@ enum SnapshotMode {
         func addServer() -> Shot {
             Shot(name: "add-environment", dark: false, size: CGSize(width: 620, height: 640)) { AnyView(AddEnvironmentSheet().background(Theme.pane)) }
         }
+        func wide(_ p: Pane, name: String, collapsed: Bool = false, size: CGSize = CGSize(width: 1500, height: 900)) -> Shot {
+            Shot(name: name, dark: false, size: size) { Nav.shared.pane = p; Prefs.shared.sidebarCollapsed = collapsed; return AnyView(ManagerView()) }
+        }
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), addServer(), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), addServer(), wide(.settings, name: "settings-wide"), wide(.settings, name: "settings-collapsed", collapsed: true, size: CGSize(width: 900, height: 800)), wide(.repo, name: "repo-setup-wide"), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 
@@ -90,7 +99,6 @@ struct PopoverShot: View {
         m.demo = true
         m.setupState = SetupState(items: [])
         m.loadedOnce = true; m.updatedAt = .now
-        UserDefaults.standard.set("/Users/demo/code/shop", forKey: "lastFolder")
         m.github = GitHub.Account(login: "octo", scopes: "repo, read:org")
 
         let ws = Workspace.shared

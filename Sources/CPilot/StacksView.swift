@@ -66,7 +66,7 @@ final class StackCenter {
         if armed.isEmpty { watcher?.cancel(); watcher = nil }
     }
 
-    func open(_ r: PRCenter.Repo) async { repo = r; conflict = nil; error = nil; notice = nil; await refresh() }
+    func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; conflict = nil; error = nil; notice = nil; await refresh() }
 
     func refresh() async {
         guard let r = repo else { return }
@@ -152,9 +152,7 @@ struct StacksView: View {
         VStack(spacing: 0) {
             PaneHeader(title: "Stacks", subtitle: center.repo?.name ?? "Small pull requests that build on each other") {
                 HStack(spacing: 8) {
-                    Menu {
-                        ForEach(pr.repos(), id: \.self) { r in Button(r.name) { Task { await center.open(r) } } }
-                    } label: { Label("Repository", systemImage: "folder") }.menuStyle(.borderlessButton).fixedSize()
+                    RepoMenu()
                     Button { Task { await center.sync() } } label: { Image(systemName: "arrow.triangle.2.circlepath") }.buttonStyle(.plain).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
                     Button { Task { await center.refresh() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
                 }
@@ -177,7 +175,8 @@ struct StacksView: View {
             }
         }
         .background(Theme.pane)
-        .onAppear { if center.repo == nil, let r = pr.repos().first { Task { await center.open(r) } } }
+        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.repo { Task { await center.open(r) } } }
+        .onChange(of: Project.shared.current) { _, r in if let r, r != center.repo { Task { await center.open(r) } } }
         .sheet(isPresented: $splitting) { SplitSheet() }
     }
 
@@ -201,7 +200,7 @@ struct StacksView: View {
         VStack(spacing: 0) {
             SettingRow("Stack a new branch", "Creates a branch on top of the one checked out in this repository.") {
                 HStack(spacing: 6) {
-                    TextField("branch name", text: $newName).textFieldStyle(.roundedBorder).frame(width: 170)
+                    TextField("branch name", text: $newName).textFieldStyle(CPField()).frame(width: 170)
                     Button("Create") { let n = newName; newName = ""; Task { await center.create(n) } }.buttonStyle(Pill(kind: .plain)).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -288,7 +287,7 @@ struct SplitSheet: View {
             Text("Split a big change into a stack").font(.system(size: 16, weight: .semibold))
             Text("Pick the branch that holds the whole change. Pieces split by file: the top of the stack ends up identical to it.").font(.system(size: 12)).foregroundStyle(.secondary)
             HStack {
-                Picker("Branch", selection: $source) { ForEach(branches, id: \.self) { Text($0).tag($0) } }.labelsHidden().frame(width: 220)
+                Dropdown(options: branches.map { ($0, $0) }, selection: $source, placeholder: "Choose a branch").frame(width: 260)
                 Button { Task { await propose() } } label: { if working { ProgressView().controlSize(.small) } else { Label("Propose a split", systemImage: "sparkles") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(source.isEmpty || working)
             }
@@ -298,10 +297,10 @@ struct SplitSheet: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("\(i + 1)").font(.system(size: 11)).frame(width: 20, height: 20).background(Theme.fill, in: Circle())
-                                TextField("branch", text: $pieces[i].branch).textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                                TextField("branch", text: $pieces[i].branch).textFieldStyle(CPField()).font(.system(size: 12, design: .monospaced))
                                 Button { pieces.remove(at: i) } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary)
                             }
-                            TextField("commit message", text: $pieces[i].message).textFieldStyle(.roundedBorder)
+                            TextField("commit message", text: $pieces[i].message).textFieldStyle(CPField())
                             Text(pieces[i].files.joined(separator: ", ")).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(3)
                         }.padding(10).background(Theme.card, in: RoundedRectangle(cornerRadius: 9)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline))
                     }

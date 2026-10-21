@@ -75,7 +75,7 @@ struct NewSessionSheet: View {
                     SectionLabel("Branch")
                     HStack {
                         Segmented(options: [(true, "New branch"), (false, "Stay on \(info?.branch ?? "current")")], selection: $newBranch)
-                        if newBranch { TextField("fix/something", text: $branch).textFieldStyle(.roundedBorder).font(.system(size: 12.5, design: .monospaced)) }
+                        if newBranch { TextField("fix/something", text: $branch).textFieldStyle(CPField()).font(.system(size: 12.5, design: .monospaced)) }
                     }
                     if newBranch {
                         Toggle(isOn: $worktree) {
@@ -101,7 +101,7 @@ struct NewSessionSheet: View {
                 Text(access.detail).font(.system(size: 11.5)).foregroundStyle(access == .fullAccess ? Theme.danger : .secondary)
             }
 
-            TextField("First message (optional)", text: $first, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...4)
+            TextField("First message (optional)", text: $first, axis: .vertical).textFieldStyle(CPField()).lineLimit(1...4)
             if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
             HStack {
                 Spacer()

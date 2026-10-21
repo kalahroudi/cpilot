@@ -59,7 +59,7 @@ struct SummarizeSheet: View {
             Text("Save what this session learned").font(.system(size: 16, weight: .semibold))
             Text("A draft from the conversation. Keep only durable facts: how to run things, decisions and why, mistakes to avoid.").font(.system(size: 12)).foregroundStyle(.secondary)
             if working { HStack { ProgressView().controlSize(.small); Text("Drafting…").font(.system(size: 12)).foregroundStyle(.secondary) } }
-            TextField("Title", text: $title).textFieldStyle(.roundedBorder)
+            TextField("Title", text: $title).textFieldStyle(CPField())
             TextEditor(text: $text).font(.system(size: 12.5, design: .monospaced)).frame(height: 190).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Toggle("Only for \(session.meta.project)", isOn: $forProject).toggleStyle(.switch).tint(Theme.accent)
             if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }

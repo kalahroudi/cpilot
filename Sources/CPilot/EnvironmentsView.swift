@@ -130,7 +130,7 @@ struct RoutesSheet: View {
                     Button { if env.routes.count > 1 { env.routes.remove(at: i) } } label: { Image(systemName: "trash") }.buttonStyle(.plain).disabled(env.routes.count < 2)
                 }
             }
-            HStack { TextField("user@host or Tailscale name", text: $newRoute).textFieldStyle(.roundedBorder); Button("Add") { if !newRoute.isEmpty { env.routes.append(newRoute); newRoute = "" } }.buttonStyle(Pill(kind: .plain)) }
+            HStack { TextField("user@host or Tailscale name", text: $newRoute).textFieldStyle(CPField()); Button("Add") { if !newRoute.isEmpty { env.routes.append(newRoute); newRoute = "" } }.buttonStyle(Pill(kind: .plain)) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
@@ -194,7 +194,7 @@ struct AddEnvironmentSheet: View {
                 GridRow {
                     label("Host")
                     VStack(alignment: .leading, spacing: 6) {
-                        TextField("node-1, node-1.local, an address or a Tailscale name", text: $host).textFieldStyle(.roundedBorder)
+                        TextField("node-1, node-1.local, an address or a Tailscale name", text: $host).textFieldStyle(CPField())
                             .onChange(of: host) { _, v in
                                 report = nil
                                 if v.contains("@") { let p = v.split(separator: "@", maxSplits: 1).map(String.init); if p.count == 2 { user = p[0]; host = p[1] } }
@@ -212,17 +212,17 @@ struct AddEnvironmentSheet: View {
                 GridRow {
                     label("User")
                     VStack(alignment: .leading, spacing: 2) {
-                        TextField("The account on the server, for example moram", text: $user).textFieldStyle(.roundedBorder).onChange(of: user) { _, _ in report = nil }
+                        TextField("The account on the server, for example moram", text: $user).textFieldStyle(CPField()).onChange(of: user) { _, _ in report = nil }
                         Text("Leave empty to use your ssh config, or your Mac username.").font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
                 GridRow {
                     label("Name")
-                    TextField(host.isEmpty ? "How it appears in CPilot" : host, text: $name).textFieldStyle(.roundedBorder)
+                    TextField(host.isEmpty ? "How it appears in CPilot" : host, text: $name).textFieldStyle(CPField())
                 }
                 GridRow {
                     label("Port")
-                    TextField("22", text: $port).textFieldStyle(.roundedBorder).frame(width: 90)
+                    TextField("22", text: $port).textFieldStyle(CPField()).frame(width: 90)
                 }
                 GridRow {
                     label("Sign in with")
@@ -231,11 +231,11 @@ struct AddEnvironmentSheet: View {
                         switch auth {
                         case .key:
                             HStack {
-                                TextField("Path to a private key", text: $key).textFieldStyle(.roundedBorder)
+                                TextField("Path to a private key", text: $key).textFieldStyle(CPField())
                                 Button("Choose…") { let p = NSOpenPanel(); p.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh"); p.showsHiddenFiles = true; if p.runModal() == .OK { key = p.url?.path ?? "" } }.buttonStyle(Pill(kind: .plain))
                             }
                         case .password:
-                            SecureField(existing?.usesPassword == true && SSHPassword.has(draftId) ? "Saved in your Keychain. Type to replace it." : "Password", text: $password).textFieldStyle(.roundedBorder).onChange(of: password) { _, _ in report = nil }
+                            SecureField(existing?.usesPassword == true && SSHPassword.has(draftId) ? "Saved in your Keychain. Type to replace it." : "Password", text: $password).textFieldStyle(CPField()).onChange(of: password) { _, _ in report = nil }
                             Text("Kept in your macOS Keychain and given to SSH only when the server asks. Never written to a file.").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         case .automatic:
                             Text("Uses your SSH agent, your ssh config and Tailscale SSH. No key file and no password prompt.").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -253,7 +253,7 @@ struct AddEnvironmentSheet: View {
             if let r = report, r.connected {
                 VStack(alignment: .leading, spacing: 6) {
                     SectionLabel("Folders on this server")
-                    TextField("~/projects, ~/work  (comma separated)", text: $folders).textFieldStyle(.roundedBorder)
+                    TextField("~/projects, ~/work  (comma separated)", text: $folders).textFieldStyle(CPField())
                     Toggle(isOn: $persistent) { Text("Keep sessions running while I am away").font(.system(size: 12.5)) }.toggleStyle(.switch).tint(Theme.accent)
                     Text(r.has("node") ? "Copies a small helper (one Node.js file, no network port) so agents survive a dropped connection."
                          : "Needs Node.js on the server. Install it there to turn this on.").font(.system(size: 11.5)).foregroundStyle(.secondary)

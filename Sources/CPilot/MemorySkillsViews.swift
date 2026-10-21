@@ -39,8 +39,8 @@ struct MemoryView: View {
                 }.frame(minWidth: 220, maxWidth: 300)
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        TextField("Title", text: $title).textFieldStyle(.roundedBorder)
-                        Picker("", selection: $scope) { ForEach(projects, id: \.0) { Text($0.1).tag($0.0) } }.labelsHidden().frame(width: 150)
+                        TextField("Title", text: $title).textFieldStyle(CPField())
+                        Dropdown(options: projects.map { ($0.0, $0.1) }, selection: $scope).frame(width: 170)
                     }
                     TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
                     HStack {

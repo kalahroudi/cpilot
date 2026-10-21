@@ -15,9 +15,7 @@ struct SpecsView: View {
         VStack(spacing: 0) {
             PaneHeader(title: "Specs", subtitle: center.repo?.name ?? "From an idea to a stack of pull requests") {
                 HStack(spacing: 8) {
-                    Menu {
-                        ForEach(pr.repos(), id: \.self) { r in Button(r.name) { Task { await center.open(r) } } }
-                    } label: { Label("Repository", systemImage: "folder") }.menuStyle(.borderlessButton).fixedSize()
+                    RepoMenu()
                     Button { Task { await center.refresh() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
                     Button("New work") { center.preset = nil; center.newWork = true }.buttonStyle(Pill(kind: .primary)).disabled(center.repo == nil)
                 }
@@ -44,8 +42,10 @@ struct SpecsView: View {
         .background(Theme.pane)
         .onAppear {
             if AppModel.shared.demo { return }
-            if center.repo == nil, let r = pr.repos().first { Task { await center.open(r) } } else { Task { await center.refresh() } }
+            Project.shared.ensureDefault()
+            if let r = Project.shared.current, r != center.repo { Task { await center.open(r) } } else { Task { await center.refresh() } }
         }
+        .onChange(of: Project.shared.current) { _, r in if !AppModel.shared.demo, let r, r != center.repo { Task { await center.open(r) } } }
         .sheet(isPresented: $c.newWork) { NewWorkSheet() }
     }
 }
@@ -377,14 +377,14 @@ struct NewWorkSheet: View {
     @ViewBuilder private var entryBody: some View {
         switch entry {
         case .issue:
-            Picker("Issue", selection: $issue) { Text("Choose an issue").tag(Int?.none); ForEach(center.issues) { Text("#\($0.number) \($0.title)").tag(Int?.some($0.number)) } }.labelsHidden()
+            Dropdown(options: center.issues.map { (Int?.some($0.number), "#\($0.number) \($0.title)") }, selection: $issue, placeholder: "Choose an issue")
         case .text:
             TextEditor(text: $text).font(.system(size: 13)).frame(height: 110).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Text("Rough is fine. The agent asks about anything unclear.").font(.system(size: 11.5)).foregroundStyle(.secondary)
         case .chat:
-            Picker("Session", selection: $sessionId) { Text("Choose a session").tag(String?.none); ForEach(ws.sessions.prefix(20)) { Text($0.title).tag(String?.some($0.id)) } }.labelsHidden()
+            Dropdown(options: ws.sessions.prefix(20).map { (String?.some($0.id), $0.title) }, selection: $sessionId, placeholder: "Choose a session")
         case .code:
-            Picker("Branch", selection: $branch) { ForEach(branches, id: \.self) { Text($0).tag($0) } }.labelsHidden()
+            Dropdown(options: branches.map { ($0, $0) }, selection: $branch, placeholder: "Choose a branch")
         case .capture:
             HStack { Button("Capture the screen…") { Task { if let a = await Capture.screenshot(window: false, to: AppPaths().capturesDir) { shots.append(a.value) } } }.buttonStyle(Pill(kind: .plain)); Text(shots.isEmpty ? "No captures yet" : "\(shots.count) captured").font(.system(size: 12)).foregroundStyle(.secondary) }
             TextEditor(text: $text).font(.system(size: 13)).frame(height: 80).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))

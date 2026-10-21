@@ -99,7 +99,7 @@ struct ChatHeader: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Stack a new branch").font(.system(size: 16, weight: .semibold))
                 Text("Creates a branch on top of \(session.meta.branch ?? "this one") with its own session and copy of the files.").font(.system(size: 12)).foregroundStyle(.secondary)
-                TextField("branch name", text: $stackName).textFieldStyle(.roundedBorder)
+                TextField("branch name", text: $stackName).textFieldStyle(CPField())
                 HStack { Spacer(); Button("Cancel") { stacking = false }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
                     Button("Create") { let n = stackName; stacking = false; Task { do { try await ws.stackOn(session, name: n) } catch { AppModel.shared.show(UserError.message(for: error, action: "Stack a branch"), error: true) } } }
                         .buttonStyle(Pill(kind: .primary)).disabled(stackName.trimmingCharacters(in: .whitespaces).isEmpty).keyboardShortcut(.defaultAction) }
