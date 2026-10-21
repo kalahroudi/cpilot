@@ -110,17 +110,45 @@ final class RepoContextTests: XCTestCase {
         XCTAssertTrue(ref("/code/app/").contains("/code/app/web"))
     }
 
-    // MARK: Work waiting for a repository
+    // MARK: Hands-off builds
 
-    func testWorkWaitsForItsOwnRepositoryAndIsHandedOverOnce() {
-        var q = ResumeQueue()
-        q.hold("001", in: "a"); q.hold("001", in: "a"); q.hold("002", in: "a"); q.hold("001", in: "b")
-        XCTAssertTrue(q.holds("a"))
-        XCTAssertEqual(q.take(for: "a"), ["001", "002"], "once each, in the order they arrived")
-        XCTAssertEqual(q.take(for: "a"), [])
-        XCTAssertFalse(q.holds("a"))
-        XCTAssertEqual(q.take(for: "b"), ["001"])
-        XCTAssertEqual(q.take(for: "never"), [])
+    func testHandsOffSpecsArePerRepositoryAndListedOnce() {
+        var st = SpecRunState()
+        st.arm("001", in: "a"); st.arm("001", in: "a"); st.arm("002", in: "a"); st.arm("001", in: "b")
+        XCTAssertEqual(st.pending(in: "a"), ["001", "002"])
+        XCTAssertEqual(st.pending(in: "b"), ["001"])
+        XCTAssertTrue(st.hasWork(in: "a"))
+        XCTAssertFalse(st.hasWork(in: "never"))
+    }
+
+    func testAFinishedSpecIsForgottenAndTheRepositoryWithNoWorkLeft() {
+        var st = SpecRunState()
+        st.arm("001", in: "a"); st.arm("002", in: "a")
+        st.finish("001", in: "a"); st.finish("nope", in: "a"); st.finish("x", in: "other")
+        XCTAssertEqual(st.pending(in: "a"), ["002"])
+        st.finish("002", in: "a")
+        XCTAssertFalse(st.hasWork(in: "a"))
+        XCTAssertEqual(st, SpecRunState(), "nothing left behind for a repository with no work")
+    }
+
+    func testHandsOffStateSurvivesARestart() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("runs-\(UUID().uuidString)/spec-runs.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var st = SpecRunState()
+        st.arm("001-login", in: "/code/app|"); st.arm("003-export", in: "/code/api|srv")
+        st.save(to: url)
+        let back = SpecRunState.load(from: url)
+        XCTAssertEqual(back, st)
+        XCTAssertEqual(back.pending(in: "/code/api|srv"), ["003-export"])
+    }
+
+    func testAMissingOrDamagedFileStartsEmpty() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("runs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(SpecRunState.load(from: dir.appendingPathComponent("none.json")), SpecRunState())
+        let bad = dir.appendingPathComponent("bad.json"); try "{ not json".write(to: bad, atomically: true, encoding: .utf8)
+        XCTAssertEqual(SpecRunState.load(from: bad), SpecRunState())
     }
 
     // MARK: Polling load

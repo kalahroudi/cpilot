@@ -62,7 +62,11 @@ final class SpecCenter {
     /// Jobs belong to the repository they started in: two repositories can have a spec with the same id, and a stage that finishes
     /// after you switched repository must not write into the new one.
     private var store = ScopedStore<Job>()
-    private var resume = ResumeQueue()
+    /// Specs built hands-off, kept on disk so a restart or a switch of repository carries on by itself.
+    private static let runsURL = AppPaths().root.appendingPathComponent("spec-runs.json")
+    private var runs = SpecRunState.load(from: SpecCenter.runsURL)
+    private var resuming: Set<String> = []
+    private func persistRuns() { runs.save(to: Self.runsURL) }
     private var scope: String { repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key } ?? "" }
     var jobs: [String: Job] { store.all(in: scope) }
     private func change(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modifyExisting(scope, id, f) }
@@ -92,7 +96,56 @@ final class SpecCenter {
 
     func open(_ r: PRCenter.Repo) async {
         repo = r; Project.shared.current = r; selected = nil; await refresh()
-        for id in resume.take(for: scope) { await continueBuilding(id) }
+        await resumeRuns()
+    }
+
+    /// At launch: if the repository you were in has a build running hands-off, open it so the build goes on without you opening Specs.
+    func resumeOnLaunch() async {
+        guard !AppModel.shared.demo, repo == nil else { return }
+        Project.shared.ensureDefault()
+        guard let r = Project.shared.current, runs.hasWork(in: RepoRef(dir: r.dir, environment: r.environment).key) else { return }
+        await open(r)
+    }
+
+    /// Carries on every hands-off build of this repository from what git and `tasks.md` say: missing stages are written, started tasks are
+    /// picked up again, ready tasks start, and a finished stack is submitted.
+    private func resumeRuns() async {
+        let s = scope
+        for id in runs.pending(in: s) where resuming.insert(s + "\u{1}" + id).inserted {
+            defer { resuming.remove(s + "\u{1}" + id) }
+            await resume(id, in: s)
+        }
+    }
+
+    private func resume(_ id: String, in s: String) async {
+        guard s == scope, let d = doc(id), d.spec != nil else { runs.finish(id, in: s); persistRuns(); return }   // never approved, or removed
+        create(s, id) { $0.autonomy = .hands }
+        guard jobs[id]?.running != true else { return }
+        if d.plan == nil { await run(id, .plan); return }
+        if d.tasks.isEmpty { await run(id, .tasks); return }
+        reattachTasks(id, d)
+        await continueBuilding(id)
+    }
+
+    /// Task sessions started before a restart: listen for their turns again, and nudge the ones that stopped before writing any code.
+    private func reattachTasks(_ id: String, _ d: SpecDoc) {
+        guard let r = repo else { return }
+        for t in d.tasks where !t.done {
+            guard let branch = t.branch, !merged.contains(branch),
+                  let meta = Workspace.shared.session(forBranch: branch, repo: r.dir, environment: r.environment),
+                  let c = Workspace.shared.controller(meta.id) else { continue }
+            taskSessions["\(id)/\(t.id)"] = c.id
+            c.onTurnEnd = turnHandler(id, t.id, scope: scope)
+            if !coded.contains(branch), !c.isBusy {
+                c.loadIfNeeded()
+                c.draft = "CPilot was restarted while you worked on \(t.id) \(t.title). Carry on from where you stopped and finish the task."
+                c.send()
+            }
+        }
+    }
+
+    private func turnHandler(_ id: String, _ taskId: String, scope s: String) -> (SessionController) -> Void {
+        { [weak self] session in Task { @MainActor in await self?.taskTurnEnded(id, taskId, session, scope: s) } }
     }
 
     /// True when the last refresh is recent enough that another would only spend rate limit.
@@ -159,6 +212,7 @@ final class SpecCenter {
         await refresh()
         selected = id
         store[s, id] = Job(autonomy: autonomy)
+        if autonomy == .hands { runs.arm(id, in: s); persistRuns() }
         await run(id, .specify, requirement: source.requirement, label: source.label, images: source.images)
     }
 
@@ -260,9 +314,7 @@ final class SpecCenter {
         let prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
         do {
             let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
-                                                         title: "\(task.id) \(task.title)", prompt: prompt, focus: focus) { [weak self] session in
-                Task { @MainActor in await self?.taskTurnEnded(id, task.id, session, scope: s) }
-            }
+                                                         title: "\(task.id) \(task.title)", prompt: prompt, focus: focus, onTurnEnd: turnHandler(id, task.id, scope: s))
             taskSessions["\(id)/\(task.id)"] = c.id
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
@@ -270,9 +322,9 @@ final class SpecCenter {
         } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(s, id) { $0.error = message } }
     }
 
-    /// A task's turn ended. In another repository than the one showing, the follow-up waits here and runs when you open that repository again.
+    /// A task's turn ended. In another repository than the one showing, the follow-up is left to `resumeRuns`, which runs when you open it again.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController, scope s: String) async {
-        guard s == scope else { resume.hold(id, in: s); return }
+        guard s == scope else { return }
         await continueBuilding(id)
     }
 
@@ -283,6 +335,7 @@ final class SpecCenter {
         let d = doc(id)
         let all = d?.tasks ?? []
         let outstanding = all.filter { !$0.done && !($0.branch.map(merged.contains) ?? false) }
+        if outstanding.isEmpty, !all.isEmpty { runs.finish(id, in: scope); persistRuns(); return }   // everything merged: nothing left to carry on
         let allCoded = outstanding.allSatisfy { $0.branch.map(coded.contains) ?? false }
         if allCoded, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
     }
@@ -302,6 +355,7 @@ final class SpecCenter {
                 return count
             }
             StackCenter.shared.arm(repo: r)
+            runs.finish(id, in: s); persistRuns()
             create(s, id) { $0.submitFailed = false; $0.submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass." }
             AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
             await refresh()

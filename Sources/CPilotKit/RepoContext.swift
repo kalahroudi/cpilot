@@ -83,19 +83,33 @@ extension RepoRef {
     }
 }
 
-/// Work that could not continue because you were in another repository, kept until you are back in the one it belongs to.
-public struct ResumeQueue {
-    private var waiting: [String: [String]] = [:]
+/// The specs CPilot is building without asking, per repository, so a restart or a switch to another repository picks them up again.
+/// Everything else (which tasks are started, coded or merged) is read back from git and `tasks.md`.
+public struct SpecRunState: Codable, Equatable {
+    public private(set) var handsOff: [String: [String]] = [:]
     public init() {}
 
-    /// Remembers `id` for `scope` once, in the order it was first remembered.
-    public mutating func hold(_ id: String, in scope: String) {
-        if waiting[scope]?.contains(id) != true { waiting[scope, default: []].append(id) }
+    public mutating func arm(_ id: String, in scope: String) {
+        if handsOff[scope]?.contains(id) != true { handsOff[scope, default: []].append(id) }
     }
 
-    /// What was waiting for `scope`. It is handed over once.
-    public mutating func take(for scope: String) -> [String] { waiting.removeValue(forKey: scope) ?? [] }
-    public func holds(_ scope: String) -> Bool { waiting[scope]?.isEmpty == false }
+    /// The spec is handed on (pull requests open and auto-merge on), finished, or gone.
+    public mutating func finish(_ id: String, in scope: String) {
+        handsOff[scope]?.removeAll { $0 == id }
+        if handsOff[scope]?.isEmpty == true { handsOff[scope] = nil }
+    }
+
+    public func pending(in scope: String) -> [String] { handsOff[scope] ?? [] }
+    public func hasWork(in scope: String) -> Bool { !(handsOff[scope] ?? []).isEmpty }
+
+    public static func load(from url: URL) -> SpecRunState {
+        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(SpecRunState.self, from: $0) } ?? SpecRunState()
+    }
+
+    public func save(to url: URL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(self) { try? data.write(to: url, options: .atomic) }
+    }
 }
 
 /// When each repository is next worth asking GitHub about. A repository with checks still running is asked every `pending`
