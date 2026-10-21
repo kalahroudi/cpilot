@@ -150,7 +150,7 @@ public enum SecurityCage {
         guard Exec.environment == nil else { throw ShellError.failed(command: "securitycage", status: 1, stderr: "Security scans run on this Mac. Open the repository here to scan it.") }
         guard Shell.find("node") != nil else { throw ShellError.toolNotFound("node") }
         guard let cli = locate(configured: configured) else { throw ShellError.failed(command: "securitycage", status: 1, stderr: setupHint) }
-        let args = deep ? [cli, "scan", ".", "--prove"] : [cli, "plan", "."]
+        let args = deep ? [cli, "scan", ".", "--prove", "--max-cost", "2"] : [cli, "plan", "."]   // local models cost $0; the CLI still wants a cap
         let status = try await Shell.stream("node", args, cwd: URL(fileURLWithPath: folder), env: environment, onLine: onLine)
         let deepReport = (try? String(contentsOfFile: folder + "/.securitycage/scan-report.md", encoding: .utf8)) ?? ""
         let planReport = (try? String(contentsOfFile: folder + "/.securitycage/plan.md", encoding: .utf8)) ?? ""
