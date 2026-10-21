@@ -234,6 +234,8 @@ public final class ClaudeRunner: @unchecked Sendable {
         /// A path to an MCP config file, or the JSON itself; the command line accepts either.
         public var mcpConfigPath: String?
         public var transport: Transport = .local
+        /// Tools the agent may not use at all (for example Bash and the file editors, for read-only document stages).
+        public var disallowedTools: [String] = []
         public init(cwd: String) { self.cwd = cwd }
     }
 
@@ -262,6 +264,7 @@ public final class ClaudeRunner: @unchecked Sendable {
         if let s = c.appendSystemPrompt, !s.isEmpty { a += ["--append-system-prompt", s] }
         for d in c.addDirs { a += ["--add-dir", d] }
         if let m = c.mcpConfigPath { a += ["--mcp-config", m] }
+        if !c.disallowedTools.isEmpty { a += ["--disallowedTools"] + c.disallowedTools }
         return a
     }
 

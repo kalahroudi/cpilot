@@ -144,3 +144,33 @@ final class LiveRemoteTests: XCTestCase {
         _ = (c, seen2)
     }
 }
+
+/// A requirement typed by hand becomes a spec, a plan and a task list, with the real Claude command line, read only.
+final class LiveSpecTests: XCTestCase {
+    func testLiveRequirementToSpecPlanTasks() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CPILOT_LIVE"] == "1", "live test")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("spec-live-\(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
+        try "export function listOrders(offset: number, limit: number) { return db.query('select * from orders offset ? limit ?', [offset, limit]) }\n".write(toFile: dir + "/src/orders.ts", atomically: true, encoding: .utf8)
+        try "# Shop API\nA small orders API.\n".write(toFile: dir + "/README.md", atomically: true, encoding: .utf8)
+        let before = try FileManager.default.contentsOfDirectory(atPath: dir).sorted()
+
+        let requirement = "Large accounts time out when listing orders. Switch the orders list to cursor pagination, and keep old offset clients working for two releases."
+        let reply = try await SpecStageRunner.run(prompt: SpecPrompts.specify(requirement: requirement, source: "Described by you", constitution: Specs.defaultConstitution, assume: true), cwd: dir, model: "haiku")
+        let spec = SpecPrompts.extractDocument(reply)
+        XCTAssertTrue(spec.hasPrefix("# "), "spec did not start with a title: \(spec.prefix(80))")
+        XCTAssertTrue(spec.contains("R1"), "no requirements")
+        XCTAssertTrue(Specs.openQuestions(spec).isEmpty, "assume mode should not leave questions")
+
+        let planReply = try await SpecStageRunner.run(prompt: SpecPrompts.plan(spec: spec, constitution: nil), cwd: dir, model: "haiku")
+        let plan = SpecPrompts.extractDocument(planReply)
+        XCTAssertTrue(plan.contains("orders.ts"), "the plan did not look at the real code")
+
+        let tasksReply = try await SpecStageRunner.run(prompt: SpecPrompts.tasks(spec: spec, plan: plan, constitution: nil), cwd: dir, model: "haiku")
+        let tasks = Specs.parseTasks(SpecPrompts.extractDocument(tasksReply))
+        XCTAssertGreaterThanOrEqual(tasks.count, 2, "expected several tasks")
+        XCTAssertTrue(tasks.allSatisfy { $0.id.hasPrefix("T") && !$0.title.isEmpty })
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir).sorted(), before, "a read-only stage changed the repository")
+    }
+}

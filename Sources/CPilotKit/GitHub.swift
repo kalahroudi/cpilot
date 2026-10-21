@@ -131,4 +131,42 @@ public enum GitHub {
         guard let out = try? await Shell.check("gh", ["issue", "view", ref, "--json", "title,body,number", "--jq", "\"#\\(.number) \\(.title)\\n\\n\\(.body)\""], cwd: url(dir)) else { return nil }
         return out
     }
+
+    // MARK: Issues
+
+    public struct Issue: Codable, Identifiable, Equatable, Sendable {
+        public struct Label: Codable, Equatable, Sendable { public var name: String }
+        public struct User: Codable, Equatable, Sendable { public var login: String }
+        public struct Comment: Codable, Equatable, Sendable { public var body: String; public var author: User? }
+        public var number: Int
+        public var title: String
+        public var state: String?
+        public var body: String?
+        public var labels: [Label]?
+        public var author: User?
+        public var assignees: [User]?
+        public var comments: [Comment]?
+        public var updatedAt: String?
+        public var id: Int { number }
+        public static let listFields = "number,title,state,labels,author,assignees,updatedAt"
+
+        /// The issue as text an agent can work from: title, description, and the discussion.
+        public func requirementText(limit: Int = 8000) -> String {
+            var s = "Issue #\(number): \(title)\n\n\(body ?? "")"
+            for c in comments ?? [] { s += "\n\n— \(c.author?.login ?? "someone") commented:\n\(c.body)" }
+            return s.count > limit ? String(s.prefix(limit)) + "\n…" : s
+        }
+    }
+
+    public static func issues(in dir: String, state: String = "open", search: String = "") async throws -> [Issue] {
+        var a = ["issue", "list", "--state", state, "--limit", "50", "--json", Issue.listFields]
+        if !search.isEmpty { a += ["--search", search] }
+        let out = try await Shell.check("gh", a, cwd: url(dir), timeout: 60)
+        return try JSONDecoder().decode([Issue].self, from: Data(out.utf8))
+    }
+
+    public static func issue(_ n: Int, in dir: String) async throws -> Issue {
+        let out = try await Shell.check("gh", ["issue", "view", String(n), "--json", "number,title,state,body,labels,author,comments"], cwd: url(dir), timeout: 60)
+        return try JSONDecoder().decode(Issue.self, from: Data(out.utf8))
+    }
 }
