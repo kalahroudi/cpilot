@@ -125,6 +125,18 @@ public enum Shell {
         return r.stdout
     }
 
+    /// Start a process that keeps running while you talk to it: read what it prints, write to its input, stop it.
+    public static func spawn(_ tool: String, _ args: [String], onOutput: @escaping @Sendable (String) -> Void) throws -> LiveProcess {
+        let process = try makeProcess(tool, args)
+        let inPipe = Pipe(), outPipe = Pipe()
+        process.standardInput = inPipe; process.standardOutput = outPipe; process.standardError = outPipe
+        outPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; if !d.isEmpty { onOutput(String(decoding: d, as: UTF8.self)) } }
+        let live = LiveProcess(process: process, input: inPipe.fileHandleForWriting)
+        process.terminationHandler = { _ in outPipe.fileHandleForReading.readabilityHandler = nil; live.finished() }
+        try process.run()
+        return live
+    }
+
     /// Run a long task and report each output line (stdout and stderr) as it arrives.
     public static func stream(_ tool: String, _ args: [String], cwd: URL? = nil, env: [String: String] = [:], onLine: @escaping @Sendable (String) -> Void) async throws -> Int32 {
         let process = try makeProcess(tool, args, cwd: cwd, env: env)
@@ -153,6 +165,34 @@ public enum Shell {
                 cont.resume(returning: proc.terminationStatus)
             }
             do { try process.run() } catch { cont.resume(throwing: error) }
+        }
+    }
+}
+
+
+/// A running process you can write to. See `Shell.spawn`.
+public final class LiveProcess: @unchecked Sendable {
+    private let process: Process
+    private let input: FileHandle
+    private let lock = NSLock()
+    private var waiters: [CheckedContinuation<Int32, Never>] = []
+    private var done = false
+
+    init(process: Process, input: FileHandle) { self.process = process; self.input = input }
+
+    public func send(_ text: String) { try? input.write(contentsOf: Data(text.utf8)) }
+    public func terminate() { if process.isRunning { process.terminate() } }
+
+    fileprivate func finished() {
+        lock.lock(); done = true; let w = waiters; waiters = []; lock.unlock()
+        for c in w { c.resume(returning: process.terminationStatus) }
+    }
+
+    /// Waits for the process to end and returns its exit status.
+    public func wait() async -> Int32 {
+        await withCheckedContinuation { c in
+            lock.lock()
+            if done { lock.unlock(); c.resume(returning: process.terminationStatus) } else { waiters.append(c); lock.unlock() }
         }
     }
 }

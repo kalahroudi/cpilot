@@ -75,13 +75,13 @@ public enum AcpRegistry {
     }
 
     /// Fetches the registry, falling back to the last copy saved on disk when offline.
-    public static func load() async -> [RegistryAgent] {
+    public static func load(platform: String = AcpRegistry.platform) async -> [RegistryAgent] {
         let cache = AppPaths().root.appendingPathComponent("registry.json")
         if let (data, resp) = try? await URLSession.shared.data(from: url), (resp as? HTTPURLResponse)?.statusCode == 200 {
-            let parsed = parse(data)
-            if !parsed.isEmpty { try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true); try? data.write(to: cache) }
+            let parsed = parse(data, platform: platform)
+            if !parsed.isEmpty, platform == AcpRegistry.platform { try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true); try? data.write(to: cache) }
             return withExtras(parsed)
         }
-        return withExtras((try? Data(contentsOf: cache)).map { parse($0) } ?? [])
+        return withExtras((try? Data(contentsOf: cache)).map { parse($0, platform: platform) } ?? [])
     }
 }

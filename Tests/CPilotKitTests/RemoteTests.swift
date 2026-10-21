@@ -31,6 +31,42 @@ final class RemoteTests: XCTestCase {
         XCTAssertTrue(c.contains("cd") && c.contains("my project") && c.contains("exec"))
     }
 
+    func testPlanInstallsClaudeOnlyWhenMissing() async {
+        let env = EnvironmentConfig(name: "t", routes: ["good"])
+        let missing = await Provisioner.plan(env, EnvironmentReport(connected: true))
+        XCTAssertEqual(missing.map(\.id), ["claude"])
+        let ready = await Provisioner.plan(env, EnvironmentReport(connected: true, tools: ["claude": "/x/claude"]))
+        XCTAssertTrue(ready.isEmpty)
+    }
+
+    func testServerPlatformAndAgentPath() {
+        XCTAssertEqual(Provisioner.platform("Linux aarch64"), "linux-aarch64")   // Raspberry Pi 5
+        XCTAssertEqual(Provisioner.platform("Linux x86_64"), "linux-x86_64")
+        XCTAssertNil(Provisioner.platform("Linux armv7l"))
+        let local = AgentInstaller.folder(id: "goose", version: "1.2", root: AgentInstaller.root).appendingPathComponent("goose").path
+        let c = AgentInstaller.onServer(AcpAgentConfig(id: "goose", name: "Goose", command: local), home: "/home/pi")
+        XCTAssertEqual(c.command, "/home/pi/.cpilot/agents/goose/1.2/goose")
+        XCTAssertEqual(AgentInstaller.onServer(AcpAgentConfig(id: "x", name: "X", command: "npx"), home: "/home/pi").command, "npx")
+    }
+
+    func testClaudeSignInLinkAndKeyFile() {
+        let out = "Opening browser to sign in…\nIf the browser didn't open, visit: \u{1B}]8;;https://claude.com/cai/oauth/authorize?code=true&state=abc\u{07}https://claude.com/cai/oauth/authorize?code=true&state=abc\u{1B}]8;;\u{07}\nPaste code here if prompted > "
+        XCTAssertEqual(ClaudeAuth.loginURL(in: out)?.absoluteString, "https://claude.com/cai/oauth/authorize?code=true&state=abc")
+        XCTAssertTrue(SSH.remoteCommand("claude", [], cwd: nil).contains("claude.env"))
+        XCTAssertFalse(SSH.remoteCommand("git", [], cwd: nil).contains("claude.env"))
+    }
+
+    func testAgentSignInLinkGivesTheCallbackPort() {
+        let log = "I1021 credential_manager.py:561] Launching browser login flow...\nOpen the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A59036%2F&scope=a+b&state=x\n"
+        let link = OAuthLink.find(in: log)
+        XCTAssertEqual(link?.callbackPort, 59036)
+        XCTAssertEqual(link?.url.host, "accounts.google.com")
+        XCTAssertNil(OAuthLink.find(in: "no link here"))
+        XCTAssertNil(OAuthLink.find(in: "see https://example.com/docs")?.callbackPort)
+        let osc = OAuthLink.find(in: "\u{1B}]8;;https://x.test/a?redirect_uri=http%3A%2F%2Flocalhost%3A8123%2Fcb\u{07}text\u{1B}]8;;\u{07}")
+        XCTAssertEqual(osc?.callbackPort, 8123)
+    }
+
     func testCommandsRunOnTheEnvironmentWithSpacesAndQuotes() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("my dir \(UUID().uuidString.prefix(6))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

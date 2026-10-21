@@ -4,6 +4,15 @@ import SwiftUI
 import AppKit
 import CPilotKit
 
+/// What the page last read for each repository, kept while the app runs so coming back to the page is instant.
+/// Your unsaved edits are kept with it. Refresh reads again from GitHub and the folder.
+@MainActor final class RepoSetupCache {
+    static let shared = RepoSetupCache()
+    struct Entry { var plan: RepoSetupPlan; var topics: [String]; var existsOnGitHub: Bool; var fromGitHub: Bool; var readAt: Date }
+    var entries: [String: Entry] = [:]
+    var account: GitHub.Account?
+}
+
 /// Set a repository up, or bring an existing one in line: README, license, Pages, a protected main branch and a security scan.
 /// It starts from what is really there: values from GitHub for a repository that exists, and suggestions from your own
 /// files (README, package.json, project type) for one that does not. Nothing happens until you press the button.
@@ -20,10 +29,17 @@ struct RepoSetupView: View {
     @State private var running = false
     @State private var error: String?
     @State private var account: GitHub.Account?
+    @State private var readAt: Date?
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Repo setup", subtitle: "README, GitHub Pages, a protected main branch and a security scan, in one go") {}
+            PaneHeader(title: "Repo setup", subtitle: "README, GitHub Pages, a protected main branch and a security scan, in one go") {
+                HStack(spacing: 10) {
+                    if let readAt, !loading { Text("Read \(readAt, style: .relative) ago").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                    Button { Task { await refresh() } } label: { if loading { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") } }
+                        .buttonStyle(Pill(kind: .plain)).disabled(loading || running || folder.isEmpty).help("Read the repository and GitHub again. Unsaved edits on this page are discarded.")
+                }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if account == nil {
@@ -56,8 +72,13 @@ struct RepoSetupView: View {
             }
         }
         .background(Theme.pane)
-        .task { account = AppModel.shared.demo ? AppModel.shared.github : await GitHub.account() }
+        .task {
+            if AppModel.shared.demo { account = AppModel.shared.github; return }
+            if RepoSetupCache.shared.account == nil { RepoSetupCache.shared.account = await GitHub.account() }
+            account = RepoSetupCache.shared.account
+        }
         .task(id: project.current) { await load() }
+        .onDisappear { remember() }
     }
 
     // MARK: Cards
@@ -154,9 +175,27 @@ struct RepoSetupView: View {
 
     // MARK: Loading and running
 
-    private func load() async {
+    /// Keeps what is on the page for its repository, edits included.
+    private func remember() {
+        guard !folder.isEmpty, !loading, let at = readAt else { return }
+        var p = plan; p.topics = topics
+        RepoSetupCache.shared.entries[folder] = .init(plan: p, topics: topics, existsOnGitHub: existsOnGitHub, fromGitHub: fromGitHub, readAt: at)
+    }
+
+    private func refresh() async {
+        RepoSetupCache.shared.account = nil
+        RepoSetupCache.shared.account = await GitHub.account(); account = RepoSetupCache.shared.account
+        await load(force: true)
+    }
+
+    private func load(force: Bool = false) async {
+        remember()   // the repository being left keeps its edits
         guard let r = project.current, r.environment == nil else { folder = ""; return }
-        if AppModel.shared.demo { folder = r.dir; plan = RepoSetupPlan(owner: "octo", name: "shop"); plan.description = "A small shop API with orders and invoices."; topics = ["typescript", "nodejs", "api"]; return }
+        if !force, let e = RepoSetupCache.shared.entries[r.dir] {
+            folder = r.dir; plan = e.plan; topics = e.topics; existsOnGitHub = e.existsOnGitHub; fromGitHub = e.fromGitHub; readAt = e.readAt; log = []; error = nil
+            return
+        }
+        if AppModel.shared.demo { folder = r.dir; readAt = Date(); plan = RepoSetupPlan(owner: "octo", name: "shop"); plan.description = "A small shop API with orders and invoices."; topics = ["typescript", "nodejs", "api"]; return }
         loading = true; defer { loading = false }
         folder = r.dir; log = []; error = nil; fromGitHub = false
         let info = await Git.info(r.dir)
@@ -175,7 +214,8 @@ struct RepoSetupView: View {
         } else {
             p.description = suggestion.description; topics = suggestion.topics; existsOnGitHub = false
         }
-        plan = p
+        plan = p; readAt = Date()
+        remember()
     }
 
     private func run() {

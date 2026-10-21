@@ -22,6 +22,8 @@ public struct EnvironmentConfig: Codable, Identifiable, Equatable, Sendable {
     public var home: String?
     /// Which route last worked.
     public var active: Int?
+    /// How each agent runs on this server, where that differs from this Mac (a native download has its own arguments per platform). Set when CPilot installs it there.
+    public var remoteAgents: [String: AcpAgentConfig]?
 
     public init(id: String = UUID().uuidString, name: String, routes: [String], port: Int? = nil, identityFile: String? = nil,
                 folders: [String] = [], persistent: Bool = false, home: String? = nil, usesPassword: Bool? = nil) {
@@ -86,10 +88,10 @@ public enum SSH {
     public static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     /// Options every connection uses. One master connection is shared, so repeated commands are fast.
-    public static func baseArgs(_ e: EnvironmentConfig, acceptNewHostKeys: Bool = false, connectTimeout: Int = 10) -> [String] {
+    public static func baseArgs(_ e: EnvironmentConfig, acceptNewHostKeys: Bool = false, connectTimeout: Int = 10, shareConnection: Bool = true) -> [String] {
         // With a password SSH must be allowed to ask (through the askpass helper below); otherwise it never prompts.
         var a = ["-T", "-o", e.usesPassword == true ? "BatchMode=no" : "BatchMode=yes", "-o", "ConnectTimeout=\(connectTimeout)", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-                 "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/cpilot-%C", "-o", "ControlPersist=600"]
+                 ] + (shareConnection ? ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/cpilot-%C", "-o", "ControlPersist=600"] : ["-o", "ControlMaster=no", "-o", "ControlPath=none"])
         if e.usesPassword == true { a += ["-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "NumberOfPasswordPrompts=1"] }
         if acceptNewHostKeys { a += ["-o", "StrictHostKeyChecking=accept-new"] }
         if let p = e.port { a += ["-p", String(p)] }
@@ -99,7 +101,10 @@ public enum SSH {
 
     /// The command line the server runs: a login shell, so PATH matches what you get when you sign in there.
     public static func remoteCommand(_ tool: String, _ args: [String], cwd: String?, env: [String: String] = [:]) -> String {
-        var inner = cwd.map { "cd \(quote($0)) && " } ?? ""
+        // Tools CPilot installs for the user (Claude, Node.js) live in the home folder, which a login shell may not have on PATH.
+        var inner = tool == "claude" ? ClaudeAuth.sourceKey : ""
+        inner += "PATH=\"$HOME/.local/bin:$HOME/.cpilot/claude/bin:$HOME/.cpilot/node/bin:$PATH\"; export PATH; "
+        inner += cwd.map { "cd \(quote($0)) && " } ?? ""
         inner += "exec "
         if !env.isEmpty { inner += "env " + env.sorted { $0.key < $1.key }.map { "\($0.key)=\(quote($0.value))" }.joined(separator: " ") + " " }
         inner += ([tool] + args).map(quote).joined(separator: " ")
@@ -125,8 +130,10 @@ public struct EnvironmentReport: Equatable, Sendable {
     public var home: String?
     public var tools: [String: String] = [:]
     public var gitHubSignedIn = false
-    public init(connected: Bool = false, error: String? = nil, home: String? = nil, tools: [String: String] = [:], gitHubSignedIn: Bool = false) {
-        self.connected = connected; self.error = error; self.home = home; self.tools = tools; self.gitHubSignedIn = gitHubSignedIn
+    /// Whether Claude on the server is signed in (an account or an API key). Only looked at when Claude is installed.
+    public var claudeSignedIn = false
+    public init(connected: Bool = false, error: String? = nil, home: String? = nil, tools: [String: String] = [:], gitHubSignedIn: Bool = false, claudeSignedIn: Bool = false) {
+        self.connected = connected; self.error = error; self.home = home; self.tools = tools; self.gitHubSignedIn = gitHubSignedIn; self.claudeSignedIn = claudeSignedIn
     }
     public func has(_ t: String) -> Bool { tools[t] != nil }
 }
@@ -171,6 +178,7 @@ public enum EnvironmentProbe {
             else if l.hasPrefix("home=") { report.home = String(l.dropFirst(5)) }
             else if l == "gh_auth=1" { report.gitHubSignedIn = true }
         }
+        if report.has("claude") { report.claudeSignedIn = await ClaudeAuth.isSignedIn(env) }
         return report
     }
 

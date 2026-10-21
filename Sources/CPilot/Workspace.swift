@@ -811,7 +811,7 @@ final class Workspace {
         savePolicy()
     }
 
-    func saveAgents() { AcpAgentConfig.save(acpAgents) }
+    func saveAgents() { AcpAgentConfig.save(acpAgents); if !environments.isEmpty { EnvironmentCenter.shared.checkAll(retry: true) } }
 
     func environment(_ id: String?) -> EnvironmentConfig? { id.flatMap { id in environments.first { $0.id == id } } }
     func saveEnvironments() { EnvironmentConfig.save(environments) }

@@ -61,6 +61,22 @@ public enum AgentInstaller {
         return parts.count >= 3 && String(parts[0]) == safeName(config.id) ? String(parts[1]) : nil
     }
 
+    /// Where a Mac-installed agent lives on a server: the same folder layout, under that server's ~/.cpilot.
+    public static func serverFolder(id: String, version: String, home: String) -> String {
+        "\(home)/.cpilot/agents/\(safeName(id))/\(safeName(version.isEmpty ? "current" : version))"
+    }
+
+    /// The config to run on `env`: an agent CPilot downloaded for this Mac points into this Mac's folders, so it is pointed at the server's copy instead.
+    public static func onServer(_ config: AcpAgentConfig, home: String) -> AcpAgentConfig {
+        let base = root.standardizedFileURL.path + "/"
+        let path = URL(fileURLWithPath: config.command).standardizedFileURL.path
+        guard path.hasPrefix(base), let v = installedVersion(of: config) else { return config }
+        let rest = path.dropFirst(base.count).split(separator: "/").dropFirst(2).joined(separator: "/")
+        var c = config
+        c.command = serverFolder(id: config.id, version: v, home: home) + "/" + rest
+        return c
+    }
+
     public static func sha256(of file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }

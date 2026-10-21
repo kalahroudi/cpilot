@@ -180,18 +180,68 @@ struct AgentSettings: View {
     @State private var custom = false
     @State private var installing: String?
     @State private var installNotes: [String: String] = [:]
+    /// Test results by agent ("claude" for Claude), then by place ("" for this Mac, else the server's id). A nil result is still running.
+    @State private var tests: [String: [String: AgentCheck.Result?]] = [:]
+
+    /// Starts the agent on this Mac and on every server, for real, and records what happened. Never starts a sign-in.
+    private func test(_ agent: AcpAgentConfig?) {
+        let key = agent?.id ?? "claude"
+        guard tests[key]?.values.contains(where: { $0 == nil }) != true else { return }
+        let places: [EnvironmentConfig?] = [nil] + ws.environments.map { Optional($0) }
+        tests[key] = Dictionary(uniqueKeysWithValues: places.map { ($0?.id ?? "", nil as AgentCheck.Result?) })
+        for place in places {
+            Task {
+                let r = await AgentCheck.run(agent, on: place)
+                tests[key]?[place?.id ?? ""] = .some(r)
+            }
+        }
+    }
+
+    private func testButton(_ agent: AcpAgentConfig?) -> some View {
+        let running = tests[agent?.id ?? "claude"]?.values.contains(where: { $0 == nil }) == true
+        return Button { test(agent) } label: { if running { ProgressView().controlSize(.small) } else { Text("Test") } }
+            .buttonStyle(Pill(kind: .plain)).disabled(running).help("Start it here and on every server, and check it is signed in")
+    }
+
+    /// One line per place the agent was tested.
+    @ViewBuilder private func testResults(_ agent: AcpAgentConfig?) -> some View {
+        if let results = tests[agent?.id ?? "claude"] {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(results.keys.sorted { $0.isEmpty ? true : ($1.isEmpty ? false : $0 < $1) }, id: \.self) { place in
+                    let r = results[place] ?? nil
+                    HStack(alignment: .top, spacing: 8) {
+                        switch r?.state {
+                        case nil: ProgressView().controlSize(.mini).frame(width: 14)
+                        case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.ok).frame(width: 14)
+                        default: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn).frame(width: 14)
+                        }
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(place.isEmpty ? "This Mac" : (ws.environment(place)?.name ?? place)).font(.system(size: 12, weight: .medium))
+                            Text(r?.detail ?? "Starting…").font(.system(size: 11.5)).foregroundStyle(r == nil || r?.state == .ok ? .secondary : Theme.warn).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }.padding(.horizontal, 14).padding(.bottom, 10)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Agents CPilot can run") {
                 SettingRow("Claude", Shell.find("claude").map { "Command line found at \($0). Sessions resume by id with full context." } ?? "Not found. Install the Claude command line first.") {
-                    Badge(text: Shell.find("claude") == nil ? "Missing" : "Ready", kind: Shell.find("claude") == nil ? .warn : .ok)
+                    HStack(spacing: 8) {
+                        Badge(text: Shell.find("claude") == nil ? "Missing" : "Ready", kind: Shell.find("claude") == nil ? .warn : .ok)
+                        testButton(nil)
+                    }
                 }
+                testResults(nil)
                 ForEach(ws.acpAgents) { a in
                     SettingRow(a.name, ([a.command] + a.args).joined(separator: " ")) {
+                        testButton(a)
                         Button { AgentInstaller.remove(a); ws.acpAgents.removeAll { $0.id == a.id }; ws.saveAgents() } label: { Image(systemName: "trash") }
                             .buttonStyle(.soft).foregroundStyle(.secondary).help("Remove \(a.name)").accessibilityLabel("Remove \(a.name)")
                     }
+                    testResults(a)
                 }
                 SettingRow("Add an agent", "Any agent that speaks the Agent Client Protocol. Pick one from the official list, or enter a command.") {
                     HStack(spacing: 6) {

@@ -120,6 +120,18 @@ final class AcpAuthTests: XCTestCase {
         XCTAssertEqual(methodsTried(record), [])
     }
 
+    func testAgentCheckReportsWorkingNeedsSignInAndBroken() async throws {
+        let (ready, _) = try fakeAgent(requireAuth: false)
+        let ok = await AgentCheck.run(ready, on: nil)
+        XCTAssertEqual(ok.state, .ok)
+        let (locked, record) = try fakeAgent(requireAuth: true)
+        let needs = await AgentCheck.run(locked, on: nil)
+        XCTAssertEqual(needs.state, .needsSignIn)
+        XCTAssertEqual(methodsTried(record), [], "a test never starts a sign-in")
+        let broken = await AgentCheck.run(AcpAgentConfig(id: "x", name: "X", command: "/usr/bin/false"), on: nil)
+        XCTAssertEqual(broken.state, .failed)
+    }
+
     func testAFailedSignInSaysWhichMethodFailedAndWhy() async throws {
         let (cfg, _) = try fakeAgent(requireAuth: true, authFails: true)
         let client = AcpClient(config: cfg, cwd: FileManager.default.temporaryDirectory) { _ in }

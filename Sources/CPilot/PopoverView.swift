@@ -75,7 +75,7 @@ struct PopoverView: View {
         }
     }
 
-    private var lastFolder: String { UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory() }
+    private var lastFolder: String { Project.shared.current.flatMap { $0.environment == nil ? $0.dir : nil } ?? UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory() }
 
     private func start() {
         let text = quick.trimmingCharacters(in: .whitespaces)

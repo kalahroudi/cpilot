@@ -285,7 +285,7 @@ public final class ClaudeRunner: @unchecked Sendable {
             exe = SSH.executable
             args = SSH.baseArgs(e) + [e.target, SSH.remoteCommand("claude", Self.arguments(config), cwd: config.cwd)]
         case .daemon(let e, let key, let attachOnly, let from):
-            if !attachOnly { try await Exec.with(e) { try await RemoteHost.start(id: key, cwd: config.cwd, command: "claude", args: Self.arguments(config)) } }
+            if !attachOnly { try await Exec.with(e) { try await RemoteHost.start(id: key, cwd: config.cwd, command: "sh", args: ["-c", ClaudeAuth.sourceKey + " exec claude \"$@\"", "claude"] + Self.arguments(config)) } }
             env = SSH.environment(for: e)
             let c = RemoteHost.command(["attach", key, "--from", String(from)])
             exe = SSH.executable

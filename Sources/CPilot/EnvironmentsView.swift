@@ -10,22 +10,56 @@ final class EnvironmentCenter {
     static let shared = EnvironmentCenter()
     enum Status: Equatable { case checking, ok(EnvironmentReport), failed(String) }
     var status: [String: Status] = [:]
+    /// What setting up each server is doing (or did), shown under its row.
+    var setup: [String: [ProvisionStep]] = [:]
+    /// The server whose Claude sign-in sheet should be open (set when setup has just installed Claude there).
+    var signIn: EnvironmentConfig?
+    private var settingUp: Set<String> = []
+    /// Servers already set up once since the app opened, so a failure is shown instead of retried in a loop.
+    private var attempted: Set<String> = []
 
-    func check(_ env: EnvironmentConfig) {
+    func isSettingUp(_ id: String) -> Bool { settingUp.contains(id) }
+
+    func check(_ env: EnvironmentConfig, retry: Bool = false) {
+        guard !settingUp.contains(env.id) else { return }
+        if retry { attempted.remove(env.id) }
         status[env.id] = .checking
         Task {
             let (updated, report) = await EnvironmentProbe.connect(env)
-            if report.connected {
-                if let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
-                    Workspace.shared.environments[i].active = updated.active; Workspace.shared.environments[i].home = updated.home
-                    Workspace.shared.saveEnvironments()
-                }
-                status[env.id] = .ok(report)
-            } else { status[env.id] = .failed(report.error ?? "Could not connect.") }
+            guard report.connected else { status[env.id] = .failed(report.error ?? "Could not connect."); return }
+            var current = env; current.active = updated.active; current.home = updated.home
+            if let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
+                Workspace.shared.environments[i].active = updated.active; Workspace.shared.environments[i].home = updated.home
+                Workspace.shared.saveEnvironments()
+                current = Workspace.shared.environments[i]
+            }
+            status[env.id] = .ok(report)
+            if !AppModel.shared.demo, !attempted.contains(env.id) { attempted.insert(env.id); await prepare(current, report) }
         }
     }
 
-    func checkAll() { for e in Workspace.shared.environments { check(e) } }
+    /// Installs whatever the server is missing, as soon as it is added, and shows each step.
+    private func prepare(_ env: EnvironmentConfig, _ report: EnvironmentReport) async {
+        let agents = Workspace.shared.acpAgents
+        let steps = await Provisioner.plan(env, report, agents: agents)
+        guard !steps.isEmpty else { setup[env.id] = nil; return }
+        settingUp.insert(env.id); defer { settingUp.remove(env.id) }
+        setup[env.id] = steps
+        let (fresh, done, remote) = await Provisioner.run(env, report: report, agents: agents) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
+        setup[env.id] = done
+        if !remote.isEmpty, let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
+            Workspace.shared.environments[i].remoteAgents = (Workspace.shared.environments[i].remoteAgents ?? [:]).merging(remote) { _, n in n }
+            Workspace.shared.saveEnvironments()
+        }
+        if fresh.connected { status[env.id] = .ok(fresh) }
+        if fresh.connected, fresh.has("claude"), !fresh.claudeSignedIn, done.allSatisfy({ $0.state != .failed }) { signIn = env }
+        if done.allSatisfy({ $0.state == .done }) {
+            AppModel.shared.show("\(env.name) is ready")
+            if !done.contains(where: { $0.id == "claude" }) { Task { try? await Task.sleep(for: .seconds(6)); if !isSettingUp(env.id) { setup[env.id] = nil } } }
+        }
+    }
+
+    func checkAll(retry: Bool = false) { for e in Workspace.shared.environments { check(e, retry: retry) } }
 }
 
 struct EnvironmentsView: View {
@@ -34,6 +68,7 @@ struct EnvironmentsView: View {
     @State private var adding = false
     @State private var editing: EnvironmentConfig?
     @State private var editingServer: EnvironmentConfig?
+    @State private var signingIn: EnvironmentConfig?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,6 +95,8 @@ struct EnvironmentsView: View {
         .sheet(isPresented: $adding) { AddEnvironmentSheet() }
         .sheet(item: $editing) { e in RoutesSheet(env: e) }
         .sheet(item: $editingServer) { e in AddEnvironmentSheet(existing: e) }
+        .sheet(item: $signingIn) { e in ClaudeSignInSheet(env: e) }
+        .onChange(of: center.signIn) { _, e in if let e { signingIn = e; center.signIn = nil } }
     }
 
     private func count(_ n: Int) -> String { "\(n) session\(n == 1 ? "" : "s")" }
@@ -89,7 +126,7 @@ struct EnvironmentsView: View {
                     Button("Routes…") { editing = e }.buttonStyle(Pill(kind: .plain))
                     Menu {
                         Button("Edit…") { editingServer = e }
-                        Button("Check again") { center.check(e) }
+                        Button("Check again") { center.check(e, retry: true) }
                         Button(e.persistent ? "Stop keeping sessions running" : "Keep sessions running while I am away") { toggle(e) }
                         Divider()
                         Button("Remove", role: .destructive) { SSHPassword.delete(e.id); ws.environments.removeAll { $0.id == e.id }; ws.saveEnvironments() }
@@ -97,8 +134,37 @@ struct EnvironmentsView: View {
                 }
             }
             if case .failed(let msg) = st { Text(msg).font(.system(size: 12)).foregroundStyle(Theme.warn).padding(.horizontal, 60).padding(.bottom, 10) }
-            if case .ok(let r) = st, !r.has("claude") { Text("Claude is not installed on this server, so Claude sessions cannot start there.").font(.system(size: 12)).foregroundStyle(Theme.warn).padding(.horizontal, 60).padding(.bottom, 10) }
+            if case .ok(let r) = st, r.has("claude"), !r.claudeSignedIn, !center.isSettingUp(e.id) {
+                HStack(spacing: 10) {
+                    Text("Claude is not signed in on this server.").font(.system(size: 12)).foregroundStyle(Theme.warn)
+                    Button("Sign in…") { signingIn = e }.buttonStyle(Pill(kind: .primary))
+                }.padding(.horizontal, 60).padding(.bottom, 10)
+            }
+            if let steps = center.setup[e.id], !steps.isEmpty { setupView(e, steps) }
+            else if case .ok(let r) = st, !r.has("claude") { Text("Claude is not installed on this server, so Claude sessions cannot start there.").font(.system(size: 12)).foregroundStyle(Theme.warn).padding(.horizontal, 60).padding(.bottom, 10) }
         }
+    }
+
+    /// Progress of the automatic setup: one line per step, with the latest output while it runs.
+    private func setupView(_ e: EnvironmentConfig, _ steps: [ProvisionStep]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(center.isSettingUp(e.id) ? "Setting up \(e.name)" : "Setup").font(.system(size: 12, weight: .semibold))
+            ForEach(steps) { s in
+                HStack(alignment: .top, spacing: 8) {
+                    switch s.state {
+                    case .running: ProgressView().controlSize(.mini).frame(width: 14)
+                    case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.ok).frame(width: 14)
+                    case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn).frame(width: 14)
+                    default: Image(systemName: "circle").foregroundStyle(.secondary).frame(width: 14)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(s.title).font(.system(size: 12))
+                        if !s.detail.isEmpty { Text(s.detail).font(.system(size: 11)).foregroundStyle(s.state == .failed ? Theme.warn : .secondary).lineLimit(s.state == .failed ? 4 : 1).truncationMode(.middle).fixedSize(horizontal: false, vertical: true) }
+                    }
+                }
+            }
+            if !center.isSettingUp(e.id), steps.contains(where: { $0.state == .failed }) { Button("Try again") { center.check(e, retry: true) }.buttonStyle(Pill(kind: .plain)) }
+        }.padding(.horizontal, 60).padding(.bottom, 12)
     }
 
     private func toggle(_ e: EnvironmentConfig) {
@@ -108,6 +174,76 @@ struct EnvironmentsView: View {
             do { try await Exec.with(e) { try await RemoteHost.install() }; ws.environments[i].persistent = true; ws.saveEnvironments(); AppModel.shared.show("Sessions on \(e.name) now keep running while you are away") }
             catch { AppModel.shared.failQuietly(error, action: "Install the helper") }
         }
+    }
+}
+
+/// Signs Claude in on a server without a terminal: the account (a link to open here, then a code to paste back) or an API key.
+struct ClaudeSignInSheet: View {
+    let env: EnvironmentConfig
+    @Environment(\.dismiss) private var dismiss
+    enum Mode: Hashable { case account, key }
+    @State private var mode: Mode = .account
+    @State private var login: ClaudeAuth.Login?
+    @State private var url: URL?
+    @State private var code = ""
+    @State private var key = ""
+    @State private var starting = false
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sign in to Claude on \(env.name)").font(.system(size: 16, weight: .semibold))
+            Segmented(options: [(Mode.account, "Claude account"), (.key, "API key")], selection: $mode)
+            switch mode {
+            case .account:
+                if starting { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Asking the server for a sign-in link…").font(.system(size: 12)).foregroundStyle(.secondary) } }
+                else if let url {
+                    Text("A browser tab opened. Sign in there, copy the code the page shows and paste it here.").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Open the link again") { NSWorkspace.shared.open(url) }.buttonStyle(.soft).font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                    TextField("Code from the page", text: $code).textFieldStyle(CPField()).onSubmit { Task { await submitCode() } }
+                } else { Text("Uses your Claude subscription. CPilot asks the server for a link, opens it here, and passes the code back.").font(.system(size: 12)).foregroundStyle(.secondary) }
+            case .key:
+                SecureField("sk-ant-…", text: $key).textFieldStyle(CPField())
+                Text("Saved in a file only your account on the server can read, and used only when Claude runs there. Usage is billed to the API key.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error { ErrorLine(text: error) }
+            HStack {
+                Spacer()
+                Button("Cancel") { login?.cancel(); dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                if mode == .key {
+                    AsyncButton { await saveKey() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Save key") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || key.isEmpty)
+                } else if url != nil {
+                    AsyncButton { await submitCode() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Finish") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || code.isEmpty)
+                }
+            }
+        }.padding(20).frame(width: 460)
+        .task { await begin() }
+        .onDisappear { login?.cancel() }
+    }
+
+    private func begin() async {
+        starting = true; defer { starting = false }
+        let l = ClaudeAuth.Login(env); login = l
+        do { let u = try await l.begin(); url = u; NSWorkspace.shared.open(u) }
+        catch { self.error = error.localizedDescription; mode = .key }
+    }
+
+    private func submitCode() async {
+        guard let login, !busy else { return }
+        busy = true; error = nil; defer { busy = false }
+        if await login.finish(code: code) { done() } else { error = "That code did not work. Start again, or use an API key."; url = nil; code = ""; await begin() }
+    }
+
+    private func saveKey() async {
+        busy = true; error = nil; defer { busy = false }
+        do { try await ClaudeAuth.saveAPIKey(key, on: env); done() } catch { self.error = error.localizedDescription }
+    }
+
+    private func done() {
+        AppModel.shared.show("Claude is signed in on \(env.name)")
+        EnvironmentCenter.shared.check(env, retry: true)
+        dismiss()
     }
 }
 
@@ -333,11 +469,8 @@ struct AddEnvironmentSheet: View {
         if auth == .password, !password.isEmpty { SSHPassword.set(password, for: draftId) }
         if auth != .password { SSHPassword.delete(draftId) }
         var e = config(); e.home = report?.home ?? existing?.home
-        e.persistent = existing?.persistent ?? false
-        if persistent, !e.persistent {
-            do { try await Exec.with(e) { try await RemoteHost.install() }; e.persistent = true }
-            catch { self.error = AppModel.shared.capture(error, action: "Install the helper"); return }
-        } else if !persistent { e.persistent = false }
+        // The helper (and Claude) are installed right after this, with progress shown on the server's row.
+        e.persistent = persistent
         if let i = Workspace.shared.environments.firstIndex(where: { $0.id == e.id }) { Workspace.shared.environments[i] = e } else { Workspace.shared.environments.append(e) }
         Workspace.shared.saveEnvironments()
         EnvironmentCenter.shared.check(e)
