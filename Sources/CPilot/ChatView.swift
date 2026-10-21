@@ -205,21 +205,48 @@ struct AssistantText: View {
     let streaming: Bool
     var project: String?
     @State private var hover = false
+    @State private var copied = false
+    private var finished: Bool { !streaming && !text.isEmpty }
+
     var body: some View {
-        StructuredText(markdown: text)
-            .textual.structuredTextStyle(.gitHub)
-            .textual.textSelection(.enabled)
-            .font(.system(size: 13.5))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(streaming && text.isEmpty ? 0.4 : 1)
-            .overlay(alignment: .topTrailing) {
-                if hover, !streaming, !text.isEmpty {
-                    Button { Workspace.shared.remember(text, project: project) } label: { Label("Remember", systemImage: "brain") }
-                        .buttonStyle(Pill(kind: .plain)).help("Save this reply as a note for future sessions")
+        VStack(alignment: .leading, spacing: 4) {
+            StructuredText(markdown: text)
+                .textual.structuredTextStyle(.gitHub)
+                .textual.textSelection(.enabled)
+                .font(.system(size: 13.5))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(streaming && text.isEmpty ? 0.4 : 1)
+                .overlay(alignment: .topTrailing) {
+                    if hover, finished {
+                        Button { Workspace.shared.remember(text, project: project) } label: { Label("Remember", systemImage: "brain") }
+                            .buttonStyle(Pill(kind: .plain)).help("Save this reply as a note for future sessions")
+                            .transition(.opacity)
+                    }
                 }
+            // Always takes its space, so the text does not jump when the icon appears; only its opacity changes.
+            if finished {
+                Button(action: copy) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12))
+                        .foregroundStyle(copied ? Theme.ok : .secondary).frame(width: 24, height: 20)
+                        .contentTransition(.symbolEffect(.replace))
+                }.buttonStyle(.soft).help(copied ? "Copied" : "Copy this reply").accessibilityLabel("Copy reply")
+                .opacity(hover || copied ? 1 : 0)
             }
-            .onHover { hover = $0 }
-            .contextMenu { Button("Remember this") { Workspace.shared.remember(text, project: project) } }
+        }
+        .animation(.easeInOut(duration: 0.15), value: hover)
+        .animation(.easeInOut(duration: 0.15), value: copied)
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("Copy") { copy() }
+            Button("Remember this") { Workspace.shared.remember(text, project: project) }
+        }
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
+        Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
     }
 }
 

@@ -171,7 +171,8 @@ struct SessionPRBar: View {
             Text(current?.branch ?? session.meta.branch ?? "").font(.system(size: 12, design: .monospaced)).lineLimit(1)
             if let stackPos { Badge(text: stackPos, kind: .accent) }
             if let pr {
-                Badge(text: "#\(pr.number)", kind: .accent)
+                Button { open(pr.number) } label: { Badge(text: "#\(pr.number)", kind: .accent) }
+                    .buttonStyle(.soft).help("Open pull request #\(pr.number)")
                 if pr.state == "MERGED" { Badge(text: "Merged", kind: .ok) }
                 else if pr.state == "CLOSED" { Badge(text: "Closed", kind: .neutral) }
                 else if pr.autoMerge { Badge(text: "Auto-merge", kind: .ok) }

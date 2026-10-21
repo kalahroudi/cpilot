@@ -158,6 +158,7 @@ struct AddEnvironmentSheet: View {
     @State private var folders = ""
     @State private var persistent = false
     @State private var checking = false
+    @State private var approvalURL: URL?
     @State private var report: EnvironmentReport?
     @State private var checked: EnvironmentConfig?
     @State private var busy = false
@@ -249,6 +250,16 @@ struct AddEnvironmentSheet: View {
                     .buttonStyle(Pill(kind: .primary)).disabled(host.trimmingCharacters(in: .whitespaces).isEmpty || checking)
                 Text(target.isEmpty ? "" : "ssh \(target)").font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
             }
+            if let url = approvalURL {
+                HStack(alignment: .top, spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Waiting for you to approve this in Tailscale").font(.system(size: 12.5, weight: .semibold))
+                        Text("A browser tab opened. Approve the connection there and this continues by itself.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Button("Open the link again") { NSWorkspace.shared.open(url) }.buttonStyle(.soft).font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                    }
+                }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 9))
+            }
             if let r = report { reportView(r) }
             if let r = report, r.connected {
                 VStack(alignment: .leading, spacing: 6) {
@@ -308,7 +319,11 @@ struct AddEnvironmentSheet: View {
         checking = true; error = nil; defer { checking = false }
         if auth == .password, !password.isEmpty { SSHPassword.set(password, for: draftId) }
         if auth == .password, !SSHPassword.has(draftId) { report = EnvironmentReport(connected: false, error: "Enter the password first."); return }
-        let (e, r) = await EnvironmentProbe.connect(config(), acceptNewHostKeys: true)
+        approvalURL = nil; defer { approvalURL = nil }
+        // Tailscale SSH may want a browser approval first: open the link it printed and keep waiting for it.
+        let (e, r) = await EnvironmentProbe.connect(config(), acceptNewHostKeys: true, onAuthURL: { url in
+            Task { @MainActor in approvalURL = url; NSWorkspace.shared.open(url) }
+        })
         checked = e; report = r
         if r.connected, folders.isEmpty, let h = r.home { folders = h + "/projects" }
     }

@@ -48,6 +48,8 @@ public enum Exec {
     @TaskLocal public static var environment: EnvironmentConfig?
     /// Trust a host key the first time it is seen (never one that changed). Only set while adding an environment.
     @TaskLocal public static var acceptNewHostKeys = false
+    /// Called once when ssh prints a Tailscale sign-in link ("requires an additional check"). The command keeps waiting for the approval.
+    @TaskLocal public static var onAuthURL: (@Sendable (URL) -> Void)?
 
     public static func with<T>(_ env: EnvironmentConfig?, _ body: () async throws -> T) async rethrows -> T {
         try await $environment.withValue(env) { try await body() }
@@ -129,12 +131,36 @@ public struct EnvironmentReport: Equatable, Sendable {
     public func has(_ t: String) -> Bool { tools[t] != nil }
 }
 
+/// Holds the first Tailscale approval link a connection printed.
+final class URLBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: URL?
+    var url: URL? { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ u: URL) { lock.lock(); value = u; lock.unlock() }
+}
+
 public enum EnvironmentProbe {
     /// Connects and looks for what sessions need, so anything missing can be explained before the first session.
-    public static func check(_ env: EnvironmentConfig, acceptNewHostKeys: Bool = false) async -> EnvironmentReport {
+    public static func check(_ env: EnvironmentConfig, acceptNewHostKeys: Bool = false, onAuthURL: (@Sendable (URL) -> Void)? = nil) async -> EnvironmentReport {
         var report = EnvironmentReport()
         let script = "for t in claude git gh node docker; do p=$(command -v $t 2>/dev/null) && echo \"tool:$t=$p\"; done; echo \"home=$HOME\"; gh auth status >/dev/null 2>&1 && echo gh_auth=1; true"
-        guard let r = try? await Exec.$acceptNewHostKeys.withValue(acceptNewHostKeys, operation: { try await Exec.with(env, { try await Shell.run("sh", ["-c", script], timeout: 25) }) }) else { report.error = "Could not start ssh."; return report }
+        // Tailscale SSH can ask for a browser approval before it lets the command run. Remember the link so a timeout can say so,
+        // and when someone is there to click it (a handler was given) wait long enough for them to.
+        let seen = URLBox()
+        let forward: @Sendable (URL) -> Void = { seen.set($0); onAuthURL?($0) }
+        let wait: TimeInterval = onAuthURL == nil ? 25 : 150
+        let result: ShellResult
+        do {
+            result = try await Exec.$onAuthURL.withValue(forward, operation: {
+                try await Exec.$acceptNewHostKeys.withValue(acceptNewHostKeys, operation: { try await Exec.with(env, { try await Shell.run("sh", ["-c", script], timeout: wait) }) })
+            })
+        } catch {
+            if let url = seen.url { report.error = "Tailscale needs you to approve this connection. Open \(url.absoluteString), approve it, then check again." }
+            else if case ShellError.timedOut = error { report.error = "The server did not answer in time. Check the address and that it is online." }
+            else { report.error = "Could not start ssh." }
+            return report
+        }
+        let r = result
         guard r.ok, r.stdout.contains("home=") else {
             report.error = describe(r.stderr.isEmpty ? r.stdout : r.stderr)
             return report
@@ -155,7 +181,7 @@ public enum EnvironmentProbe {
             let user = stderr.range(of: #"as user \"([^\"]+)\""#, options: .regularExpression).map { String(stderr[$0]).replacingOccurrences(of: "as user ", with: "").replacingOccurrences(of: "\"", with: "") } ?? "that user"
             return "Tailscale does not allow SSH to this server as \(user). Enter the account your tailnet allows in the User field (for example moram), and leave Sign in with on Automatic."
         }
-        if s.contains("tailscale") && (s.contains("check") || s.contains("authenticate") || s.contains("login.tailscale")) { return "Tailscale wants you to sign in again for this server. Run ssh to it once in Terminal, finish the sign-in, then check again." }
+        if s.contains("tailscale") && (s.contains("check") || s.contains("authenticate") || s.contains("login.tailscale")) { return "Tailscale needs you to approve this connection in your browser. Open the link ssh printed, approve it, then check again." }
         if s.contains("host key verification failed") || s.contains("remote host identification has changed") { return "The server's host key is not trusted, or it changed. Connect once in Terminal to check it: ssh \(stderr.isEmpty ? "host" : "…")" }
         if s.contains("permission denied") && s.contains("password") && !s.contains("publickey") { return "The server did not accept that password. Check the user and the password." }
         if s.contains("permission denied") { return "The server did not accept your key. Add your public key to ~/.ssh/authorized_keys on the server, or pick the right key in the environment's settings." }
@@ -165,12 +191,12 @@ public enum EnvironmentProbe {
     }
 
     /// Tries each route in order and remembers the first that works.
-    public static func connect(_ env: EnvironmentConfig, acceptNewHostKeys: Bool = false) async -> (EnvironmentConfig, EnvironmentReport) {
+    public static func connect(_ env: EnvironmentConfig, acceptNewHostKeys: Bool = false, onAuthURL: (@Sendable (URL) -> Void)? = nil) async -> (EnvironmentConfig, EnvironmentReport) {
         var e = env
         var last = EnvironmentReport(); last.error = "No address to connect to."
         for (i, _) in e.routes.enumerated() {
             e.active = i
-            let r = await check(e, acceptNewHostKeys: acceptNewHostKeys)
+            let r = await check(e, acceptNewHostKeys: acceptNewHostKeys, onAuthURL: onAuthURL)
             if r.connected { e.home = r.home; return (e, r) }
             last = r
         }

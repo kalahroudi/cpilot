@@ -233,3 +233,14 @@ final class StackNextStepTests: XCTestCase {
         XCTAssertEqual(stack(prState: "MERGED").nextStep, .restack)   // a merged branch is cleared out by restacking
     }
 }
+
+final class TailscaleLinkTests: XCTestCase {
+    func testFindsTheApprovalLinkInSshOutput() {
+        let out = "# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tailscale.com/a/lf3e68092d0bf3\n"
+        XCTAssertEqual(Shell.tailscaleLink(in: out)?.absoluteString, "https://login.tailscale.com/a/lf3e68092d0bf3")
+        XCTAssertNil(Shell.tailscaleLink(in: "Permission denied (publickey)."))
+    }
+    func testTimeoutWithoutBrowserApprovalIsExplained() {
+        XCTAssertTrue(EnvironmentProbe.describe("# Tailscale SSH requires an additional check.").contains("approve"))
+    }
+}

@@ -72,18 +72,29 @@ public enum Shell {
         return p
     }
 
+    /// The Tailscale approval link in ssh's output, if there is one.
+    static func tailscaleLink(in text: String) -> URL? {
+        guard let r = text.range(of: #"https://login\.tailscale\.com/[^\s]+"#, options: .regularExpression) else { return nil }
+        return URL(string: String(text[r]))
+    }
+
     /// Run to completion and collect output. Does not throw on non-zero exit; check `ok`.
     @discardableResult
     public static func run(_ tool: String, _ args: [String], cwd: URL? = nil, input: Data? = nil, timeout: TimeInterval? = 60) async throws -> ShellResult {
         let process = try makeProcess(tool, args, cwd: cwd)
         let out = Buffer(), err = Buffer()
         let outPipe = Pipe(), errPipe = Pipe()
+        let onAuthURL = Exec.onAuthURL, notified = Buffer()
         process.standardOutput = outPipe
         process.standardError = errPipe
         let inPipe = Pipe()
         process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
         outPipe.fileHandleForReading.readabilityHandler = { out.append($0.availableData) }
-        errPipe.fileHandleForReading.readabilityHandler = { err.append($0.availableData) }
+        errPipe.fileHandleForReading.readabilityHandler = {
+            err.append($0.availableData)
+            // Tailscale SSH prints "To authenticate, visit: <link>" and then waits; pass the link on once, while ssh is still running.
+            if let onAuthURL, notified.string.isEmpty, let url = Shell.tailscaleLink(in: err.string) { notified.append(Data("1".utf8)); onAuthURL(url) }
+        }
         let command = ([tool] + args).joined(separator: " ")
 
         return try await withCheckedThrowingContinuation { cont in
