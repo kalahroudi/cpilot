@@ -46,6 +46,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var remoteId: String?
     public var planMode = false
     public var archived = false
+    /// Unsent text in the composer, kept so a crash or restart does not lose it.
+    public var draft: String?
     public var createdAt: Date
     public var updatedAt: Date
 

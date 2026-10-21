@@ -9,7 +9,7 @@ import CPilotKit
 struct SettingsPane: View {
     let prefs = Prefs.shared
     @State private var tab: Tab
-    enum Tab: Hashable { case general, updates, agents, about }
+    enum Tab: Hashable { case general, access, github, agents, updates, about }
     init(initialTab: Tab = .general) { _tab = State(initialValue: initialTab) }
 
     var body: some View {
@@ -17,14 +17,16 @@ struct SettingsPane: View {
             PaneHeader(title: "Settings") {
                 EmptyView()
             } tabs: {
-                TabBar(tabs: [(Tab.general, "General"), (Tab.updates, "Updates"), (Tab.agents, "Agents (MCP)"), (Tab.about, "About")], selection: $tab)
+                TabBar(tabs: [(Tab.general, "General"), (Tab.access, "Access"), (Tab.github, "GitHub"), (Tab.agents, "Agents"), (Tab.updates, "Updates"), (Tab.about, "About")], selection: $tab)
             }
             ScrollView {
                 Group {
                     switch tab {
                     case .general: general
+                    case .access: AccessSettings()
+                    case .github: GitHubSettings()
+                    case .agents: AgentSettings()
                     case .updates: UpdatesView()
-                    case .agents: AgentsView()
                     case .about: about
                     }
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
@@ -34,25 +36,37 @@ struct SettingsPane: View {
         }
     }
 
+    private func toggle(_ b: Binding<Bool>) -> some View { Toggle("", isOn: b).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
+
     private var general: some View {
         @Bindable var p = prefs
         return HStack(alignment: .top, spacing: 18) {
             VStack(spacing: 18) {
                 SettingsGroup("Startup") {
-                    SettingRow("Launch at login", "Adds the app to Login Items. Turn it off any time.", error: prefs.launchAtLoginError) { Toggle("", isOn: Binding(get: { prefs.launchAtLogin }, set: { prefs.setLaunchAtLogin($0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
+                    SettingRow("Launch at login", "Starts in the menu bar and uses no CPU until you open it.", error: prefs.launchAtLoginError) { toggle(Binding(get: { prefs.launchAtLogin }, set: { prefs.setLaunchAtLogin($0) })) }
                 }
                 SettingsGroup("Appearance") {
-                    SettingRow("Theme", "Applies to the Manager window and the menu bar popover.") { Segmented(options: ThemeChoice.allCases.map { ($0, $0.label) }, selection: $p.theme) }
-                    SettingRow("Dock icon", "Keep the app in the Dock as well as the menu bar.") { Toggle("", isOn: $p.showDockIcon).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
+                    SettingRow("Theme", "Applies to the window and the menu bar popover.") { Segmented(options: ThemeChoice.allCases.map { ($0, $0.label) }, selection: $p.theme) }
+                    SettingRow("Dock icon", "Keep CPilot in the Dock as well as the menu bar.") { toggle($p.showDockIcon) }
+                    SettingRow("Sessions as", "Tabs across the top, or a list down the left grouped by project.") { Segmented(options: [(false, "Tabs"), (true, "Side list")], selection: $p.tabsOnSide) }
+                }
+                SettingsGroup("Capture") {
+                    SettingRow("Capture shortcut", "Control-Option-Command-C drags out a region of the screen and attaches it to the active session.") { toggle($p.captureHotkey) }
                 }
             }.frame(maxWidth: .infinity)
             VStack(spacing: 18) {
-                SettingsGroup("Performance") {
-                    SettingRow("Refresh only when visible", "Nothing is polled while the popover and window are closed. An idle app uses almost no CPU.") { Badge(text: "always on", kind: .ok) }
-                    SettingRow("Refresh interval", nil) { Segmented(options: [(2, "2 s"), (5, "5 s"), (15, "15 s")], selection: $p.refreshSeconds) }
+                SettingsGroup("Sessions") {
+                    SettingRow("Put idle tabs to sleep", "Stops an idle session's agent after this long. It resumes with its full context when you send the next message.") {
+                        Segmented(options: [(5, "5 min"), (10, "10 min"), (30, "30 min"), (240, "4 h")], selection: $p.sleepMinutes)
+                    }
+                    SettingRow("Isolate new sessions in a worktree", "Each session on a new branch gets its own copy of the files, so parallel sessions never collide.") { toggle($p.useWorktrees) }
                 }
                 SettingsGroup("Notifications") {
-                    SettingRow("Notify when long tasks finish", "Long tasks run in the background.") { Toggle("", isOn: $p.notify).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
+                    SettingRow("Notify me", "When a session needs approval or finishes while CPilot is in the background.") { toggle($p.notify) }
+                }
+                SettingsGroup("Performance") {
+                    SettingRow("Nothing runs while hidden", "No polling or timers while the popover and window are closed. Sleeping tabs hold no memory.") { Badge(text: "always on", kind: .ok) }
+                    SettingRow("App memory", "How much memory CPilot uses right now.") { Text(AppMemory.footprint).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 }
             }.frame(maxWidth: .infinity)
         }
@@ -65,13 +79,15 @@ struct SettingsPane: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("CPilot").font(.system(size: 18, weight: .semibold))
                     Text("Version \(BuildInfo.current.version) · \(BuildInfo.current.shortCommit)").foregroundStyle(.secondary)
-                    Text("One sentence about the app.").font(.system(size: 12.5))
+                    Text("A superlight menu bar app for running AI coding sessions.").font(.system(size: 12.5))
                 }
             }
             HStack(spacing: 10) {
                 Link("Source on GitHub", destination: URL(string: "https://github.com/kalahroudi/cpilot")!)
                 Link("Report an issue", destination: URL(string: "https://github.com/kalahroudi/cpilot/issues")!)
+                Link("Website", destination: URL(string: "https://kalahroudi.github.io/cpilot/")!)
             }.font(.system(size: 13))
+            Text("Licensed under the Apache License 2.0.").font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
 }

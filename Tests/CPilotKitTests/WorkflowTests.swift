@@ -98,3 +98,39 @@ final class WorkflowTests: XCTestCase {
         XCTAssertNotEqual(after.first?.id, grown.first?.id)   // text after a tool call is a new row
     }
 }
+
+final class MergeGateTests: XCTestCase {
+    func pr(draft: Bool = false, review: String? = nil, mergeable: String? = "MERGEABLE") -> PullRequest {
+        PullRequest(number: 1, title: "t", state: "OPEN", isDraft: draft, headRefName: "h", baseRefName: "main", author: nil, url: "u",
+                    reviewDecision: review, mergeable: mergeable)
+    }
+    func testGate() {
+        let ok = PullRequest.Check(name: "build", state: "SUCCESS")
+        let bad = PullRequest.Check(name: "test", state: "FAILURE")
+        let wait = PullRequest.Check(name: "lint", state: "PENDING")
+        let clean = SecurityResult(findings: [], report: "")
+        let issue = SecurityResult(findings: [SecurityFinding(title: "x", confirmed: true, detail: "")], report: "")
+        XCTAssertTrue(MergeGate.evaluate(pr: pr(), checks: [ok], scan: clean, requireScan: true).ready)
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(), checks: [ok, bad], scan: clean, requireScan: true).ready)
+        XCTAssertEqual(MergeGate.evaluate(pr: pr(), checks: [ok, wait], scan: clean, requireScan: true).reasons, ["Checks are still running."])
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(), checks: [ok], scan: issue, requireScan: true).ready)
+        XCTAssertTrue(MergeGate.evaluate(pr: pr(), checks: [ok], scan: issue, requireScan: false).ready)
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(), checks: [ok], scan: nil, requireScan: true).ready)
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(draft: true), checks: [], scan: nil, requireScan: false).ready)
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(review: "CHANGES_REQUESTED"), checks: [], scan: nil, requireScan: false).ready)
+        XCTAssertFalse(MergeGate.evaluate(pr: pr(mergeable: "CONFLICTING"), checks: [], scan: nil, requireScan: false).ready)
+    }
+}
+
+final class RegistryTests: XCTestCase {
+    func testRegistryParsing() {
+        let json = #"{"agents":[{"id":"a","name":"Alpha","description":"d","distribution":{"npx":{"package":"alpha@1.0","args":["--acp"],"env":{"K":"V"}}}},{"id":"b","name":"Beta","distribution":{"uvx":{"package":"beta==2"}}},{"id":"c","name":"Gamma","distribution":{"binary":{}}}]}"#
+        let list = AcpRegistry.parse(Data(json.utf8))
+        XCTAssertEqual(list.map(\.name), ["Alpha", "Beta", "Gamma"])
+        XCTAssertEqual(list[0].config?.command, "npx")
+        XCTAssertEqual(list[0].config?.args, ["-y", "alpha@1.0", "--acp"])
+        XCTAssertEqual(list[0].config?.env, ["K": "V"])
+        XCTAssertEqual(list[1].config?.args, ["beta==2"])
+        XCTAssertNil(list[2].config)
+    }
+}

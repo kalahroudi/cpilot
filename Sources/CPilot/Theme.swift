@@ -11,9 +11,9 @@ enum Theme {
         NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: a)
     }
 
-    static let accent = dynamic(light: rgb(0x0B7A75), dark: rgb(0x2DD4BF))
-    static let onAccent = dynamic(light: .white, dark: rgb(0x06302D))
-    static let accentSoft = dynamic(light: rgb(0x0B7A75, 0.12), dark: rgb(0x2DD4BF, 0.16))
+    static let accent = dynamic(light: rgb(0x2563EB), dark: rgb(0x60A5FA))
+    static let onAccent = dynamic(light: .white, dark: rgb(0x0B1B3F))
+    static let accentSoft = dynamic(light: rgb(0x2563EB, 0.12), dark: rgb(0x60A5FA, 0.16))
     static let ok = dynamic(light: rgb(0x1B7F43), dark: rgb(0x4ADE80))
     static let warn = dynamic(light: rgb(0xA35A00), dark: rgb(0xFBBF24))
     static let warnSoft = dynamic(light: rgb(0xFFF4E0), dark: rgb(0xFBBF24, 0.14))

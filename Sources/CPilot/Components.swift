@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import CPilotKit
+
+/// Textual also defines `Attachment`; this makes the session attachment the one the app means.
+typealias Attachment = CPilotKit.Attachment
 import AppKit
 
 // MARK: Copy

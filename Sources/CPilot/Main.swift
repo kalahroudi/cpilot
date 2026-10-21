@@ -65,9 +65,24 @@ enum CPilotMain {
             item("Cut", #selector(NSText.cut(_:)), "x"), item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Paste", #selector(NSText.paste(_:)), "v"), item("Select All", #selector(NSText.selectAll(_:)), "a"),
         ])
+        let capture: [NSMenuItem] = [
+            item("Capture Region", #selector(AppDelegate.captureRegion), "c", [.control, .option, .command], target: delegate),
+            item("Capture Window", #selector(AppDelegate.captureWindow), "", target: delegate),
+            item("Add Selected Text", #selector(AppDelegate.captureSelection), "", target: delegate),
+            item("Add Front Browser Page", #selector(AppDelegate.captureBrowser), "", target: delegate),
+            item("Add Clipboard", #selector(AppDelegate.captureClipboard), "", target: delegate),
+        ]
+        add("Session", [
+            item("New Session…", #selector(AppDelegate.newSession), "n", target: delegate),
+            item("Close Tab", #selector(AppDelegate.closeTab), "w", target: delegate),
+            item("Next Tab", #selector(AppDelegate.nextTab), "]", [.command, .shift], target: delegate),
+            item("Previous Tab", #selector(AppDelegate.previousTab), "[", [.command, .shift], target: delegate),
+            .separator(),
+        ] + (1...9).map { n in
+            let i = item("Tab \(n)", #selector(AppDelegate.gotoTab(_:)), String(n), target: delegate); i.tag = n - 1; return i
+        } + [.separator()] + capture)
         add("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
         ])
         return main
     }

@@ -3,7 +3,6 @@
 import AppKit
 
 /// The app icon, drawn in code so the build needs no image tools and stays crisp at every size.
-/// REPLACE the gradient and glyph with the app's own mark (keep the structure: squircle tile, padded Dock variant).
 enum AppIcon {
     /// - padded: leave the transparent margin macOS expects around Dock icons (824 of 1024).
     static func image(size: CGFloat, padded: Bool = false) -> NSImage {
@@ -12,11 +11,15 @@ enum AppIcon {
             let inset: CGFloat = padded ? 100 : 0
             let tile = NSRect(x: inset * s, y: inset * s, width: (1024 - 2 * inset) * s, height: (1024 - 2 * inset) * s)
             let shape = NSBezierPath(roundedRect: tile, xRadius: tile.width * 0.2246, yRadius: tile.width * 0.2246)
-            NSGradient(starting: NSColor(srgbRed: 0.078, green: 0.439, blue: 0.486, alpha: 1), ending: NSColor(srgbRed: 0.027, green: 0.165, blue: 0.216, alpha: 1))?
+            NSGradient(starting: NSColor(srgbRed: 0.31, green: 0.45, blue: 0.98, alpha: 1), ending: NSColor(srgbRed: 0.10, green: 0.20, blue: 0.62, alpha: 1))?
                 .draw(in: shape, angle: -55)
-            let d = tile.width * 0.42
-            let dot = NSBezierPath(ovalIn: NSRect(x: tile.midX - d / 2, y: tile.midY - d / 2, width: d, height: d))
-            NSColor.white.setFill(); dot.fill()
+            // A "C" ring with a dot at its centre, the same mark as the menu bar glyph.
+            let ring = NSBezierPath()
+            ring.appendArc(withCenter: NSPoint(x: tile.midX, y: tile.midY), radius: tile.width * 0.26, startAngle: 40, endAngle: 320, clockwise: false)
+            ring.lineWidth = tile.width * 0.085; ring.lineCapStyle = .round
+            NSColor.white.setStroke(); ring.stroke()
+            let d = tile.width * 0.13
+            NSColor.white.setFill(); NSBezierPath(ovalIn: NSRect(x: tile.midX - d / 2, y: tile.midY - d / 2, width: d, height: d)).fill()
             return true
         }
     }

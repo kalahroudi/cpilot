@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         model.onStatusChange = { [weak self] state in self?.statusItem.button?.image = StatusIcon.image(state) }
 
         Task { await model.refresh() }
+        applyHotkey()
+        PRCenter.shared.startWatcher()
         Updater.shared.confirmLaunch()                                   // tells a pending swap script "the new version started"
         Task { Updater.shared.autoCheckIfDue(enabled: Prefs.shared.autoCheckUpdates) }
         if model.needsSetup { showManager() }                            // first run: show the guided setup, not an empty window
@@ -46,10 +48,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     @objc func openSettings() { showManager(pane: .settings) }
 
+    /// Control-Option-Command-C captures a region of the screen into the active session.
+    func applyHotkey() {
+        Hotkey.shared.register(Prefs.shared.captureHotkey) { CaptureCoordinator.shared.capture(window: false) }
+    }
+
+    @objc func newSession() { Nav.shared.showNewSession = true; showManager(pane: .sessions) }
+    @objc func closeTab() {
+        if Nav.shared.pane == .sessions, let id = Workspace.shared.selected, managerWindow?.isKeyWindow == true { Workspace.shared.closeTab(id) }
+        else { NSApp.keyWindow?.performClose(nil) }
+    }
+    @objc func nextTab() { moveTab(1) }
+    @objc func previousTab() { moveTab(-1) }
+    @objc func captureRegion() { CaptureCoordinator.shared.capture(window: false) }
+    @objc func captureWindow() { CaptureCoordinator.shared.capture(window: true) }
+    @objc func captureSelection() { CaptureCoordinator.shared.addSelection(to: nil) }
+    @objc func captureBrowser() { CaptureCoordinator.shared.addBrowserPage(to: nil) }
+    @objc func captureClipboard() { CaptureCoordinator.shared.addClipboard(to: nil) }
+    @objc func gotoTab(_ sender: NSMenuItem) {
+        let ws = Workspace.shared
+        if sender.tag < ws.tabs.count { ws.select(ws.tabs[sender.tag]) }
+    }
+    private func moveTab(_ d: Int) {
+        let ws = Workspace.shared
+        guard let cur = ws.selected, let i = ws.tabs.firstIndex(of: cur), !ws.tabs.isEmpty else { return }
+        ws.select(ws.tabs[(i + d + ws.tabs.count) % ws.tabs.count])
+    }
+
     @objc private func statusClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let m = NSMenu()
             m.addItem(withTitle: "Open CPilot", action: #selector(openManager), keyEquivalent: "").target = self
+            let cap = NSMenuItem(title: "Capture", action: nil, keyEquivalent: ""); let sub = NSMenu()
+            for (t, a) in [("Region", #selector(captureRegion)), ("Window", #selector(captureWindow)), ("Selected text", #selector(captureSelection)),
+                           ("Front browser page", #selector(captureBrowser)), ("Clipboard", #selector(captureClipboard))] { sub.addItem(withTitle: t, action: a, keyEquivalent: "").target = self }
+            cap.submenu = sub; m.addItem(cap)
             m.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
             m.addItem(.separator())
             m.addItem(withTitle: "Quit CPilot", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -87,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             w.setFrameAutosaveName("CPilotManager")
             w.delegate = self
             w.contentView = NSHostingView(rootView: ManagerView())
+            w.title = "CPilot"
             if !w.setFrameUsingName("CPilotManager") { w.center() }
             managerWindow = w
         }
@@ -106,6 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showManager(); return true
     }
+
+    func applicationWillTerminate(_ notification: Notification) { Workspace.shared.flushAll() }
 
     // The app lives in the menu bar: closing the last window must not quit it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

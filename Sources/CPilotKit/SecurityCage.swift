@@ -8,11 +8,13 @@ public struct SecurityFinding: Equatable, Identifiable, Sendable {
     /// Proven by reproducing the attack in a sandbox. Unconfirmed leads never block a merge.
     public var confirmed: Bool
     public var detail: String
+    public init(title: String, confirmed: Bool, detail: String) { self.title = title; self.confirmed = confirmed; self.detail = detail }
 }
 
 public struct SecurityResult: Equatable, Sendable {
     public var findings: [SecurityFinding]
     public var report: String
+    public init(findings: [SecurityFinding], report: String) { self.findings = findings; self.report = report }
     public var confirmed: [SecurityFinding] { findings.filter(\.confirmed) }
     public var leads: [SecurityFinding] { findings.filter { !$0.confirmed } }
     public var blocksMerge: Bool { !confirmed.isEmpty }

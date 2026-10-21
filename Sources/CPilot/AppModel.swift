@@ -23,8 +23,13 @@ struct Toast: Identifiable, Equatable {
 final class AppModel {
     static let shared = AppModel()
 
-    // Data: replace with the app's own.
-    var status = "Ready"
+    var status: String {
+        let ws = Workspace.shared
+        if ws.attention > 0 { return "\(ws.attention) need\(ws.attention == 1 ? "s" : "") your approval" }
+        if ws.runningCount > 0 { return "\(ws.runningCount) running" }
+        return "Ready"
+    }
+    var github: GitHub.Account?
     var updatedAt: Date?
     var loadedOnce = false
 
@@ -71,9 +76,14 @@ final class AppModel {
     func refresh() async {
         if demo { loadedOnce = true; return }
         setupState = SetupState.detect()
-        // Do the real reads here, off the main actor (Shell.run is async). Then publish results.
-        onStatusChange?(busy ? .busy : .idle)
+        if github == nil || setupState.items.contains(where: { $0.id == "gh" && !$0.isMet }) { github = await GitHub.account() }
+        updateStatusIcon()
         loadedOnce = true; updatedAt = .now
+    }
+
+    func updateStatusIcon() {
+        let ws = Workspace.shared
+        onStatusChange?(ws.attention > 0 ? .attention : busy ? .busy : ws.runningCount > 0 ? .active : .idle)
     }
 
     // MARK: Background tasks
@@ -135,7 +145,6 @@ final class AppModel {
                 log("Installing \(state.brewFormulae.joined(separator: ", ")) with Homebrew…")
                 try await SetupState.installMissing(state.brewFormulae, onLine: log)
             }
-            // Create first-run resources here (a default profile, a data folder, a config file).
             try AppPaths().ensureDirectories()
         }
     }

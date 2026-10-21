@@ -3,12 +3,13 @@
 import Foundation
 
 public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
-    public struct Author: Codable, Equatable, Sendable { public var login: String }
+    public struct Author: Codable, Equatable, Sendable { public var login: String; public init(login: String) { self.login = login } }
     public struct Check: Codable, Equatable, Sendable, Identifiable {
         public var name: String
         public var state: String          // SUCCESS, FAILURE, PENDING, ...
         public var link: String?
         public var id: String { name }
+        public init(name: String, state: String, link: String? = nil) { self.name = name; self.state = state; self.link = link }
         public var passed: Bool { ["SUCCESS", "NEUTRAL", "SKIPPED"].contains(state.uppercased()) }
         public var failed: Bool { ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].contains(state.uppercased()) }
     }
@@ -26,7 +27,14 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public var reviewDecision: String?
     public var mergeable: String?
     public var autoMergeRequest: AutoMerge?
-    public struct AutoMerge: Codable, Equatable, Sendable { public var mergeMethod: String? }
+    public struct AutoMerge: Codable, Equatable, Sendable { public var mergeMethod: String?; public init(mergeMethod: String?) { self.mergeMethod = mergeMethod } }
+    public init(number: Int, title: String, state: String, isDraft: Bool, headRefName: String, baseRefName: String, author: Author?, url: String,
+                body: String? = nil, additions: Int? = nil, deletions: Int? = nil, reviewDecision: String? = nil, mergeable: String? = nil,
+                autoMergeRequest: AutoMerge? = nil) {
+        self.number = number; self.title = title; self.state = state; self.isDraft = isDraft; self.headRefName = headRefName
+        self.baseRefName = baseRefName; self.author = author; self.url = url; self.body = body; self.additions = additions
+        self.deletions = deletions; self.reviewDecision = reviewDecision; self.mergeable = mergeable; self.autoMergeRequest = autoMergeRequest
+    }
     public var id: Int { number }
     public var isOpen: Bool { state == "OPEN" }
     public var autoMerge: Bool { autoMergeRequest != nil }
@@ -42,7 +50,7 @@ public enum ReviewAction: String, Sendable { case approve, requestChanges = "req
 public enum GitHub {
     static func url(_ p: String) -> URL { URL(fileURLWithPath: p) }
 
-    public struct Account: Equatable, Sendable { public var login: String; public var scopes: String }
+    public struct Account: Equatable, Sendable { public var login: String; public var scopes: String; public init(login: String, scopes: String) { self.login = login; self.scopes = scopes } }
 
     public static func account() async -> Account? {
         guard let r = try? await Shell.run("gh", ["auth", "status", "--active"]), r.ok || r.stdout.contains("Logged in") else { return nil }
