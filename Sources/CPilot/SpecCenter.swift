@@ -56,6 +56,9 @@ final class SpecCenter {
     var newWork = false
     var preset: SpecSource?
     var loading = false
+    var lastRefresh: Date?
+    /// GitHub is queried on every refresh, so repeated refreshes inside this window are skipped.
+    static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
     private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
 
@@ -66,9 +69,22 @@ final class SpecCenter {
 
     func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; selected = nil; await refresh() }
 
+    /// True when the last refresh is recent enough that another would only spend rate limit.
+    var fresh: Bool { lastRefresh.map { Date().timeIntervalSince($0) < Self.cooldown } ?? false }
+
+    /// Refresh on request. Inside the cooldown it tells the user instead of calling GitHub again.
+    func refreshIfStale(manual: Bool) async {
+        if loading { return }
+        if fresh {
+            if manual, let t = lastRefresh { AppModel.shared.show("Already refreshed \(Int(Date().timeIntervalSince(t)))s ago. Try again in \(Int(Self.cooldown - Date().timeIntervalSince(t)) + 1)s.", error: false) }
+            return
+        }
+        await refresh()
+    }
+
     func refresh() async {
         guard let r = repo else { return }
-        loading = true; defer { loading = false }
+        loading = true; defer { loading = false; lastRefresh = Date() }
         let e = env
         let (list, const) = await Exec.with(e) { await Specs.list(in: r.dir) }
         docs = list; constitution = const

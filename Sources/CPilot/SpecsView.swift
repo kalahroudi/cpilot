@@ -16,7 +16,15 @@ struct SpecsView: View {
             PaneHeader(title: "Specs", subtitle: center.repo?.name ?? "From an idea to a stack of pull requests") {
                 HStack(spacing: 8) {
                     RepoMenu()
-                    Button { Task { await center.refresh() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
+                    if center.repo != nil {
+                        TimelineView(.periodic(from: .now, by: 5)) { _ in
+                            Text(center.loading ? "Refreshing…" : center.lastRefresh.map { "Updated \($0.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)))" } ?? "")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Button { Task { await center.refreshIfStale(manual: true) } } label: {
+                        if center.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+                    }.buttonStyle(.plain).disabled(center.loading).help(center.fresh ? "Refreshed recently; wait a minute to avoid GitHub rate limits" : "Refresh").accessibilityLabel("Refresh")
                     Button("New work") { center.preset = nil; center.newWork = true }.buttonStyle(Pill(kind: .primary)).disabled(center.repo == nil)
                 }
             }
@@ -43,7 +51,7 @@ struct SpecsView: View {
         .onAppear {
             if AppModel.shared.demo { return }
             Project.shared.ensureDefault()
-            if let r = Project.shared.current, r != center.repo { Task { await center.open(r) } } else { Task { await center.refresh() } }
+            if let r = Project.shared.current, r != center.repo { Task { await center.open(r) } } else { Task { await center.refreshIfStale(manual: false) } }
         }
         .onChange(of: Project.shared.current) { _, r in if !AppModel.shared.demo, let r, r != center.repo { Task { await center.open(r) } } }
         .sheet(isPresented: $c.newWork) { NewWorkSheet() }
