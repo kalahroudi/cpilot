@@ -637,7 +637,9 @@ final class Workspace {
         meta.parentId = n.parentId; meta.handoff = n.handoff; meta.environment = n.environment
         let remote = environment(n.environment)
         let isRepo = await Exec.with(remote) { await Git.isRepo(n.folder) }
-        if let branch = n.branch, !branch.isEmpty, isRepo {
+        if let wanted = n.branch, !wanted.isEmpty, isRepo {
+            let branch = await Exec.with(remote) { await Git.uniqueBranch(wanted, in: n.folder) }
+            let current = await Exec.with(remote) { await Git.info(n.folder)?.branch }
             if n.useWorktree {
                 let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
                 try await Exec.with(remote) {
@@ -646,7 +648,6 @@ final class Workspace {
                 }
                 meta.worktree = path
             } else {
-                let current = await Exec.with(remote) { await Git.info(n.folder)?.branch }
                 // A new branch starts from the default branch, not from whatever happens to be checked out. Uncommitted work comes along when it can; otherwise the branch starts here.
                 if current != branch {
                     _ = try? await Exec.with(remote) {

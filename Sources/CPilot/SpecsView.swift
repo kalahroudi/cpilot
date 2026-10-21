@@ -2,6 +2,7 @@
 
 import SwiftUI
 import AppKit
+import Textual
 import CPilotKit
 
 struct SpecsView: View {
@@ -79,8 +80,23 @@ struct SpecList: View {
                                 .background(center.selected == d.id ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7))
                                 .foregroundStyle(center.selected == d.id ? Theme.accent : Color.primary).contentShape(Rectangle())
                             }.buttonStyle(.soft)
+                            .contextMenu {
+                                if center.status(d) == .done { Button("Archive") { Task { await center.archive(d.id) } } }
+                                if center.status(d) == .draft { Button("Delete draft", role: .destructive) { Task { await center.delete(d.id) } } }
+                            }
                         }
                     }
+                }
+                if !center.archived.isEmpty {
+                    DisclosureGroup {
+                        ForEach(center.archived.reversed(), id: \.self) { id in
+                            HStack {
+                                Text(id).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                                Spacer(minLength: 4)
+                                AsyncButton("Restore") { await center.unarchive(id) }.buttonStyle(Pill(kind: .plain))
+                            }.padding(.horizontal, 10).padding(.vertical, 3)
+                        }
+                    } label: { SectionLabel("Archived (\(center.archived.count))") }.padding(.horizontal, 12).padding(.top, 10)
                 }
             }.padding(.horizontal, 6).padding(.bottom, 10)
         }
@@ -133,6 +149,7 @@ struct SpecDetail: View {
     var center: SpecCenter { SpecCenter.shared }
     @State private var editing: (file: String, text: String)?
     @State private var answers = ""
+    @State private var confirmDelete = false
 
     private var job: SpecCenter.Job { center.jobs[doc.id] ?? SpecCenter.Job() }
 
@@ -148,6 +165,9 @@ struct SpecDetail: View {
                 if !doc.tasks.isEmpty { tasks }
             }.padding(20).frame(maxWidth: 900, alignment: .leading)
         }
+        .confirmationDialog("Delete \"\(doc.title)\"?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete draft", role: .destructive) { Task { await center.delete(doc.id) } }
+        } message: { Text("Its source, spec and plan files are removed from the repository's specs folder. This cannot be undone.") }
         .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             if let e = editing { DocEditor(title: e.file, text: e.text) { t in Task { await center.save(doc.id, file: e.file, text: t) } } }
         }
@@ -162,6 +182,12 @@ struct SpecDetail: View {
             Toggle("Track in git", isOn: Binding(get: { center.tracked }, set: { on in Task { await center.setTracked(on) } }))
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12)).foregroundStyle(.secondary)
                 .help(center.tracked ? "The specs folder (.cpilot/specs) shows up in git so you can commit and share it." : "The specs folder (.cpilot/specs) stays out of git. Turn on to commit and share it.")
+            if center.status(doc) == .done {
+                AsyncButton("Archive") { await center.archive(doc.id) }.buttonStyle(Pill(kind: .plain)).help("Moves this finished spec into the archive folder. It is no longer read when specs refresh.")
+            }
+            if center.status(doc) == .draft {
+                Button("Delete") { confirmDelete = true }.buttonStyle(Pill(kind: .danger)).disabled(job.running)
+            }
             Button("Open folder") { if let r = center.repo, center.env == nil { NSWorkspace.shared.open(URL(fileURLWithPath: r.dir + "/" + Specs.folder + "/" + doc.id)) } }.buttonStyle(Pill(kind: .plain)).disabled(center.env != nil)
         }
     }
@@ -297,12 +323,22 @@ struct DraftCard: View {
     let draft: SpecCenter.Draft
     var center: SpecCenter { SpecCenter.shared }
     @State private var text = ""
+    @State private var editing = false
 
     var body: some View {
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
         VStack(alignment: .leading, spacing: 8) {
-            HStack { Image(systemName: "doc.badge.clock").foregroundStyle(Theme.accent); Text("Review \(file)").font(.system(size: 13, weight: .semibold)); Spacer(); Badge(text: "Needs your approval", kind: .warn) }
-            TextEditor(text: $text).font(.system(size: 12, design: .monospaced)).frame(height: 280).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            HStack { Image(systemName: "doc.badge.clock").foregroundStyle(Theme.accent); Text("Review \(file)").font(.system(size: 13, weight: .semibold)); Spacer()
+                Picker("", selection: $editing) { Text("Preview").tag(false); Text("Edit").tag(true) }.pickerStyle(.segmented).labelsHidden().frame(width: 130)
+                Badge(text: "Needs your approval", kind: .warn) }
+            if editing {
+                TextEditor(text: $text).font(.system(size: 12, design: .monospaced)).frame(height: 280).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            } else {
+                ScrollView {
+                    StructuredText(markdown: text).textual.structuredTextStyle(.gitHub).textual.textSelection(.enabled).font(.system(size: 13))
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                }.frame(height: 280).background(Theme.card, in: RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            }
             HStack {
                 AsyncButton("Approve and save") { await center.approve(doc.id, text: text) }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.return, modifiers: .command)
                 AsyncButton("Write it again") { await center.run(doc.id, draft.stage) }.buttonStyle(Pill(kind: .plain))
@@ -318,12 +354,21 @@ struct DraftCard: View {
 struct DocEditor: View {
     let title: String
     @State var text: String
+    @State private var editing = false
     var onSave: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 14, weight: .semibold, design: .monospaced))
-            TextEditor(text: $text).font(.system(size: 12.5, design: .monospaced)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            HStack {
+                Text(title).font(.system(size: 14, weight: .semibold, design: .monospaced)); Spacer()
+                Picker("", selection: $editing) { Text("Read").tag(false); Text("Edit").tag(true) }.pickerStyle(.segmented).labelsHidden().frame(width: 130)
+            }
+            if editing {
+                TextEditor(text: $text).font(.system(size: 12.5, design: .monospaced)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            } else {
+                ScrollView { StructuredText(markdown: text).textual.structuredTextStyle(.gitHub).textual.textSelection(.enabled).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }
+                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            }
             HStack { Spacer(); Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction); Button("Save") { onSave(text); dismiss() }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.defaultAction) }
         }.padding(18).frame(width: 640, height: 520)
     }
