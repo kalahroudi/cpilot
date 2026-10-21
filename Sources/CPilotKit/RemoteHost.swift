@@ -18,7 +18,7 @@ public enum RemoteHost {
 
     /// The command that runs the helper with `args`.
     public static func command(_ args: [String]) -> (tool: String, args: [String]) {
-        ("sh", ["-c", "exec node \"\(scriptLocation)\" \"$@\"", "cpilotd"] + args)
+        ("sh", ["-c", "PATH=\"$HOME/.cpilot/node/bin:$PATH\"; export PATH; exec node \"\(scriptLocation)\" \"$@\"", "cpilotd"] + args)
     }
 
     public static func isInstalled() async -> Bool {
@@ -27,11 +27,28 @@ public enum RemoteHost {
         return r.stdout.contains("cpilotd \(Cpilotd.version)")
     }
 
-    /// Copies the helper to the server. It needs Node.js there; if it is missing the error says how to get it.
+    /// Installs Node.js for this user under ~/.cpilot/node (no root needed) when the server has none.
+    static let nodeInstallScript = """
+    export PATH="$HOME/.cpilot/node/bin:$PATH"
+    command -v node >/dev/null 2>&1 && exit 0
+    V=v20.18.1
+    case "$(uname -s)" in Linux) OS=linux;; Darwin) OS=darwin;; *) echo "Unsupported system $(uname -s)" >&2; exit 1;; esac
+    case "$(uname -m)" in x86_64|amd64) A=x64;; aarch64|arm64) A=arm64;; armv7l) A=armv7l;; *) echo "Unsupported CPU $(uname -m)" >&2; exit 1;; esac
+    URL="https://nodejs.org/dist/$V/node-$V-$OS-$A.tar.gz"
+    DIR="$HOME/.cpilot/node"
+    mkdir -p "$DIR" || exit 1
+    if command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" | tar -xz -C "$DIR" --strip-components=1
+    elif command -v wget >/dev/null 2>&1; then wget -qO- "$URL" | tar -xz -C "$DIR" --strip-components=1
+    else echo "Neither curl nor wget is on the server, so Node.js could not be downloaded." >&2; exit 1; fi
+    command -v node >/dev/null 2>&1 || { echo "Node.js did not install from $URL" >&2; exit 1; }
+    """
+
+    /// Copies the helper to the server, installing Node.js there first if it is missing.
     public static func install() async throws {
-        let node = try await Shell.run("sh", ["-c", "command -v node >/dev/null 2>&1 && echo yes || echo no"], timeout: 20)
-        guard node.stdout.contains("yes") else {
-            throw ShellError.failed(command: "install", status: 1, stderr: "The server needs Node.js to keep sessions running. Install it there (for example: sudo apt install nodejs, or brew install node), then try again.")
+        let node = try await Shell.run("sh", ["-c", nodeInstallScript], timeout: 300)
+        guard node.ok else {
+            let why = node.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ShellError.failed(command: "install", status: node.status, stderr: "Node.js is missing on the server and could not be installed automatically. " + why)
         }
         let dest = scriptLocation
         let dirScript = "mkdir -p \"$(dirname \"\(dest)\")\" && cat > \"\(dest)\" && chmod 700 \"\(dest)\""

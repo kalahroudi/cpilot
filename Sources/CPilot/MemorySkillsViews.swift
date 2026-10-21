@@ -90,17 +90,19 @@ struct SkillsView: View {
                 VStack(spacing: 10) {
                     if skills.isEmpty { Text("No skills found yet.").foregroundStyle(.secondary).padding(30) }
                     ForEach(skills.filter { query.isEmpty || ($0.name + $0.detail).localizedCaseInsensitiveContains(query) }) { s in
-                        HStack(alignment: .top, spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) { Text(s.name).font(.system(size: 13, weight: .semibold)); Badge(text: s.scope) }
-                                Text(s.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                Text(s.name).font(.system(size: 14, weight: .semibold))
+                                Badge(text: s.scope)
+                                Spacer()
+                                Button("Add to skill") { extending = s }.buttonStyle(Pill(kind: .plain))
+                                Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: s.path)]) }.buttonStyle(Pill(kind: .plain))
                             }
-                            Spacer()
-                            Button("Add to skill") { extending = s }.buttonStyle(Pill(kind: .plain))
-                            Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: s.path)]) }.buttonStyle(Pill(kind: .plain))
+                            Text(s.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }.card()
                     }
-                }.padding(22).frame(maxWidth: 820)
+                }.padding(22).frame(maxWidth: .infinity)
             }
         }
         .background(Theme.pane)
