@@ -63,7 +63,7 @@ struct RuleRow: View {
                     ForEach(AccessLevel.allCases.filter { $0 != .fullAccess }) { l in Button(l.label) { set { $0.level = l } } }
                 }.menuStyle(.borderlessButton).fixedSize()
                 Button { if let i { ws.policy.rules.remove(at: i); ws.savePolicy() } } label: { Image(systemName: "trash") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Remove rule").accessibilityLabel("Remove rule")
+                    .buttonStyle(.soft).foregroundStyle(.secondary).help("Remove rule").accessibilityLabel("Remove rule")
             }
         }
     }
@@ -88,7 +88,7 @@ struct GitHubSettings: View {
                     SettingRow("Switch or sign out", "Opens Terminal's command to manage accounts.") { CopyButton(text: "gh auth switch", label: "Copy: gh auth switch") }
                 } else {
                     SettingRow("Not connected", "Pull requests, cloning and repo setup need GitHub. Run this once in Terminal.") { CopyButton(text: "gh auth login", label: "Copy: gh auth login") }
-                    SettingRow("Check again", nil) { Button("Check") { Task { await model.refresh() } }.buttonStyle(Pill(kind: .plain)) }
+                    SettingRow("Check again", nil) { AsyncButton("Check") { await model.refresh() }.buttonStyle(Pill(kind: .plain)) }
                 }
             }
             SettingsGroup("Pull requests") {
@@ -164,7 +164,7 @@ struct AgentSettings: View {
                 ForEach(ws.acpAgents) { a in
                     SettingRow(a.name, ([a.command] + a.args).joined(separator: " ")) {
                         Button { ws.acpAgents.removeAll { $0.id == a.id }; ws.saveAgents() } label: { Image(systemName: "trash") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary).help("Remove \(a.name)").accessibilityLabel("Remove \(a.name)")
+                            .buttonStyle(.soft).foregroundStyle(.secondary).help("Remove \(a.name)").accessibilityLabel("Remove \(a.name)")
                     }
                 }
                 SettingRow("Add an agent", "Any agent that speaks the Agent Client Protocol. Pick one from the official list, or enter a command.") {

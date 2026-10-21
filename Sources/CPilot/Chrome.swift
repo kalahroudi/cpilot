@@ -67,7 +67,7 @@ struct TaskBanner: View {
                     Spacer()
                     Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10)).foregroundStyle(.secondary)
                 }.padding(.horizontal, 22).padding(.vertical, 7).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.soft)
             if open {
                 ScrollView { Text(task.lines.suffix(60).joined(separator: "\n")).font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.85)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }
                     .frame(height: 140).background(Theme.terminal)

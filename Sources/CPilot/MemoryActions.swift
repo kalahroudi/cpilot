@@ -19,7 +19,7 @@ struct MemoryChip: View {
                     if !plan.dropped.isEmpty { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Theme.warn) }
                 }.font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 7).padding(.vertical, 2).background(Theme.fill, in: Capsule())
             }
-            .buttonStyle(.plain).help("Notes this session started with")
+            .buttonStyle(.soft).help("Notes this session started with")
             .popover(isPresented: $open, arrowEdge: .bottom) { MemoryPlanView(plan: plan, engine: engine).padding(14).frame(width: 300) }
         }
     }
@@ -104,9 +104,9 @@ struct RecapCard: View {
                 if session.recapBusy { ProgressView().controlSize(.mini) }
                 Spacer()
                 Button { session.refreshRecap(force: true) } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Write the recap again").accessibilityLabel("Refresh recap")
+                    .buttonStyle(.soft).foregroundStyle(.secondary).help("Write the recap again").accessibilityLabel("Refresh recap")
                 Button { session.dismissRecap() } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Dismiss").accessibilityLabel("Dismiss recap")
+                    .buttonStyle(.soft).foregroundStyle(.secondary).help("Dismiss").accessibilityLabel("Dismiss recap")
             }
             if let text = session.meta.recap, let md = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
                 Text(md).font(.system(size: 12.5)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -186,8 +186,8 @@ struct TasksStrip: View {
                         Text(k.title).font(.system(size: 12)).lineLimit(1)
                         if c?.state == .waiting { Badge(text: "Needs approval", kind: .warn) }
                         Spacer()
-                        Button("Open") { ws.select(k.id) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
-                        Button("Bring result back") { ws.bringBack(k, into: parent) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                        Button("Open") { ws.select(k.id) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                        Button("Bring result back") { ws.bringBack(k, into: parent) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
                     }
                 }
             }
@@ -206,7 +206,7 @@ struct ArtifactsButton: View {
             Button { open.toggle() } label: {
                 HStack(spacing: 4) { Image(systemName: "doc.on.doc").font(.system(size: 10)); Text("\(files.count) file\(files.count == 1 ? "" : "s")") }
                     .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 7).padding(.vertical, 2).background(Theme.fill, in: Capsule())
-            }.buttonStyle(.plain).help("Files this session wrote or changed")
+            }.buttonStyle(.soft).help("Files this session wrote or changed")
             .popover(isPresented: $open, arrowEdge: .bottom) { ArtifactsList(session: session, files: files).frame(width: 420) }
         }
     }
@@ -238,11 +238,11 @@ struct ArtifactsList: View {
                                 Badge(text: f.created ? "Created" : "Edited ×\(f.touches)", kind: f.created ? .ok : .neutral)
                             }
                             HStack(spacing: 10) {
-                                Button("Preview") { Task { await load(f) } }.buttonStyle(.plain)
-                                Button("Changes") { Task { await loadDiff(f) } }.buttonStyle(.plain)
-                                if session.env == nil { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) }.buttonStyle(.plain)
-                                    Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: f.path)) }.buttonStyle(.plain) }
-                                Button("Copy path") { Clipboard.copy(f.path) }.buttonStyle(.plain)
+                                AsyncButton("Preview") { await load(f) }.buttonStyle(.soft)
+                                AsyncButton("Changes") { await loadDiff(f) }.buttonStyle(.soft)
+                                if session.env == nil { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) }.buttonStyle(.soft)
+                                    Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: f.path)) }.buttonStyle(.soft) }
+                                Button("Copy path") { Clipboard.copy(f.path) }.buttonStyle(.soft)
                             }.font(.system(size: 11.5)).foregroundStyle(Theme.accent)
                             if preview == f.path {
                                 if f.isImage, session.env == nil, let img = NSImage(contentsOfFile: f.path) { Image(nsImage: img).resizable().scaledToFit().frame(maxHeight: 180) }

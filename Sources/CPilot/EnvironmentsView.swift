@@ -126,8 +126,8 @@ struct RoutesSheet: View {
                     Text("\(i + 1)").font(.system(size: 11)).frame(width: 20, height: 20).background(i == (env.active ?? 0) ? Theme.ok.opacity(0.2) : Theme.fill, in: Circle())
                     Text(r).font(.system(size: 12.5, design: .monospaced))
                     Spacer()
-                    Button { if i > 0 { env.routes.swapAt(i, i - 1) } } label: { Image(systemName: "arrow.up") }.buttonStyle(.plain).disabled(i == 0)
-                    Button { if env.routes.count > 1 { env.routes.remove(at: i) } } label: { Image(systemName: "trash") }.buttonStyle(.plain).disabled(env.routes.count < 2)
+                    Button { if i > 0 { env.routes.swapAt(i, i - 1) } } label: { Image(systemName: "arrow.up") }.buttonStyle(.soft).disabled(i == 0)
+                    Button { if env.routes.count > 1 { env.routes.remove(at: i) } } label: { Image(systemName: "trash") }.buttonStyle(.soft).disabled(env.routes.count < 2)
                 }
             }
             HStack { TextField("user@host or Tailscale name", text: $newRoute).textFieldStyle(CPField()); Button("Add") { if !newRoute.isEmpty { env.routes.append(newRoute); newRoute = "" } }.buttonStyle(Pill(kind: .plain)) }
@@ -202,7 +202,7 @@ struct AddEnvironmentSheet: View {
                         if !hosts.isEmpty {
                             FlowLayout(spacing: 6) {
                                 ForEach(hosts, id: \.self) { h in
-                                    Button { host = h; if name.isEmpty { name = h }; report = nil } label: { Badge(text: h, kind: h == host ? .accent : .neutral) }.buttonStyle(.plain)
+                                    Button { host = h; if name.isEmpty { name = h }; report = nil } label: { Badge(text: h, kind: h == host ? .accent : .neutral) }.buttonStyle(.soft)
                                 }
                             }
                             Text("From your ~/.ssh/config").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -245,7 +245,7 @@ struct AddEnvironmentSheet: View {
             }
 
             HStack(spacing: 10) {
-                Button { Task { await check() } } label: { if checking { ProgressView().controlSize(.small) } else { Text("Check connection") } }
+                AsyncButton { await check() } label: { if checking { ProgressView().controlSize(.small) } else { Text("Check connection") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(host.trimmingCharacters(in: .whitespaces).isEmpty || checking)
                 Text(target.isEmpty ? "" : "ssh \(target)").font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
             }
@@ -263,7 +263,7 @@ struct AddEnvironmentSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { if existing == nil { SSHPassword.delete(draftId) }; dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await add() } } label: { if busy { ProgressView().controlSize(.small) } else { Text(existing == nil ? "Add \(name.isEmpty ? (host.isEmpty ? "server" : host) : name)" : "Save") } }
+                AsyncButton { await add() } label: { if busy { ProgressView().controlSize(.small) } else { Text(existing == nil ? "Add \(name.isEmpty ? (host.isEmpty ? "server" : host) : name)" : "Save") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(busy || host.trimmingCharacters(in: .whitespaces).isEmpty || (existing == nil && report?.connected != true) || (persistent && report?.connected == true && report?.has("node") != true))
                     .keyboardShortcut(.defaultAction)
             }
@@ -349,10 +349,10 @@ struct RemoteFolderPicker: View {
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
             }
-            List(dirs, id: \.self) { d in Button { path = path == "/" ? "/\(d)" : "\(path)/\(d)"; load() } label: { Label(d, systemImage: "folder") }.buttonStyle(.plain) }.frame(height: 240)
+            List(dirs, id: \.self) { d in Button { path = path == "/" ? "/\(d)" : "\(path)/\(d)"; load() } label: { Label(d, systemImage: "folder") }.buttonStyle(.soft) }.frame(height: 240)
             if let error { ErrorLine(text: error) }
             HStack {
-                if !env.folders.isEmpty { FlowLayout(spacing: 6) { ForEach(env.folders, id: \.self) { f in Button { path = f.replacingOccurrences(of: "~", with: env.remoteHome); load() } label: { Badge(text: f, kind: .accent) }.buttonStyle(.plain) } } }
+                if !env.folders.isEmpty { FlowLayout(spacing: 6) { ForEach(env.folders, id: \.self) { f in Button { path = f.replacingOccurrences(of: "~", with: env.remoteHome); load() } label: { Badge(text: f, kind: .accent) }.buttonStyle(.soft) } } }
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
                 Button("Choose this folder") { onPick(path); dismiss() }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.defaultAction)

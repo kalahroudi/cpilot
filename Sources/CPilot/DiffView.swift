@@ -23,7 +23,7 @@ struct DiffFileView: View {
                     Text("+\(file.additions)").foregroundStyle(Theme.ok).font(.system(size: 11.5, design: .monospaced))
                     Text("−\(file.deletions)").foregroundStyle(Theme.danger).font(.system(size: 11.5, design: .monospaced))
                 }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.soft)
             if !collapsed {
                 Divider()
                 if file.isBinary { Text("Binary file").font(.system(size: 12)).foregroundStyle(.secondary).padding(10).frame(maxWidth: .infinity, alignment: .leading) }
@@ -32,7 +32,7 @@ struct DiffFileView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(file.lines.prefix(limit)) { l in line(l) }
                             if file.lines.count > limit {
-                                Button("Show \(min(300, file.lines.count - limit)) more lines") { limit += 300 }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                                Button("Show \(min(300, file.lines.count - limit)) more lines") { limit += 300 }.buttonStyle(.soft).foregroundStyle(Theme.accent)
                                     .font(.system(size: 12)).padding(8)
                             }
                         }.frame(minWidth: 600, alignment: .leading)
@@ -88,7 +88,7 @@ struct CreatePRSheet: View {
             HStack {
                 Toggle("Draft", isOn: $draft)
                 Spacer()
-                Button { Task { await writeWithClaude() } } label: {
+                AsyncButton { await writeWithClaude() } label: {
                     if drafting { ProgressView().controlSize(.small) } else { Label("Write with Claude", systemImage: "sparkles") }
                 }.buttonStyle(Pill(kind: .plain)).disabled(drafting || busy)
             }
@@ -96,7 +96,7 @@ struct CreatePRSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await create() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Create") } }
+                AsyncButton { await create() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Create") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || busy).keyboardShortcut(.defaultAction)
             }
         }
@@ -173,7 +173,7 @@ struct SessionPRBar: View {
             if !commits.isEmpty {
                 Button { showCommits.toggle() } label: {
                     Label("\(commits.count) commit\(commits.count == 1 ? "" : "s")", systemImage: "clock.arrow.circlepath").font(.system(size: 11.5))
-                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }.buttonStyle(.soft).foregroundStyle(.secondary)
                 .popover(isPresented: $showCommits, arrowEdge: .top) { CommitList(commits: commits) }
             }
             Spacer()

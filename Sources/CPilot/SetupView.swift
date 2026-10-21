@@ -41,7 +41,7 @@ struct SetupView: View {
                     }
                 }
             }
-            Button("I did it, check again") { Task { await model.refresh() } }.buttonStyle(Pill())
+            AsyncButton("I did it, check again") { await model.refresh() }.buttonStyle(Pill())
         }.frame(maxWidth: 520, alignment: .leading)
     }
 

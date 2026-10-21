@@ -22,16 +22,16 @@ struct SpecsView: View {
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                     }
-                    Button { Task { await center.refreshIfStale(manual: true) } } label: {
+                    AsyncButton { await center.refreshIfStale(manual: true) } label: {
                         if center.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
-                    }.buttonStyle(.plain).disabled(center.loading).help(center.fresh ? "Refreshed recently; wait a minute to avoid GitHub rate limits" : "Refresh").accessibilityLabel("Refresh")
+                    }.buttonStyle(.soft).disabled(center.loading).help(center.fresh ? "Refreshed recently; wait a minute to avoid GitHub rate limits" : "Refresh").accessibilityLabel("Refresh")
                     Button("New work") { center.preset = nil; center.newWork = true }.buttonStyle(Pill(kind: .primary)).disabled(center.repo == nil)
                 }
             }
             if center.repo == nil {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
-                    if let first = pr.repos().first { Button("Open \(first.name)") { Task { await center.open(first) } }.buttonStyle(Pill(kind: .primary)) }
+                    if let first = pr.repos().first { AsyncButton("Open \(first.name)") { await center.open(first) }.buttonStyle(Pill(kind: .primary)) }
                     else { Text("Start a session in a project first.").font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -79,7 +79,7 @@ struct SpecList: View {
                                 .padding(.horizontal, 10).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(center.selected == d.id ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7))
                                 .foregroundStyle(center.selected == d.id ? Theme.accent : Color.primary).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.soft)
                         }
                     }
                 }
@@ -112,7 +112,7 @@ struct IssueList: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(i.number) \(i.title)").font(.system(size: 12.5, weight: .medium)).lineLimit(2)
                             HStack(spacing: 4) { ForEach((i.labels ?? []).prefix(3), id: \.name) { Badge(text: $0.name) }; Spacer()
-                                Button("Create spec") { Task { await createSpec(i) } }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent) }
+                                AsyncButton("Create spec") { await createSpec(i) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
                         }.padding(.horizontal, 12).padding(.vertical, 8)
                         Divider().opacity(0.5)
                     }
@@ -190,7 +190,7 @@ struct SpecDetail: View {
         if let e = job.error {
             VStack(alignment: .leading, spacing: 8) {
                 Label { ErrorLine(text: e) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
-                Button("Try again") { Task { await center.run(doc.id, SpecPrompts.Stage(rawValue: job.stage) ?? .specify) } }.buttonStyle(Pill(kind: .plain))
+                AsyncButton("Try again") { await center.run(doc.id, SpecPrompts.Stage(rawValue: job.stage) ?? .specify) }.buttonStyle(Pill(kind: .plain))
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 10))
         }
         if let d = job.draft { DraftCard(doc: doc, draft: d) }
@@ -198,7 +198,7 @@ struct SpecDetail: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) { Text("The spec, plan and tasks are written").font(.system(size: 13, weight: .semibold)); Text("Read them below. When you are happy, start building.").font(.system(size: 12)).foregroundStyle(.secondary) }
                 Spacer()
-                Button("Start building") { Task { await center.startBuilding(doc.id) } }.buttonStyle(Pill(kind: .primary))
+                AsyncButton("Start building") { await center.startBuilding(doc.id) }.buttonStyle(Pill(kind: .primary))
             }.padding(12).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
         }
     }
@@ -210,15 +210,15 @@ struct SpecDetail: View {
             TextEditor(text: $answers).font(.system(size: 12.5)).frame(height: 90).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Text("Answer in your own words, in any order.").font(.system(size: 11.5)).foregroundStyle(.secondary)
             HStack { Button("Update the spec with my answers") { let a = answers; answers = ""; Task { await center.answer(doc.id, answers: a) } }.buttonStyle(Pill(kind: .primary)).disabled(answers.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || job.running)
-                Button("Let the agent decide") { Task { await center.answer(doc.id, answers: "Decide sensibly for every open question, and list your decisions under Assumptions.") } }.buttonStyle(Pill(kind: .plain)).disabled(job.running) }
+                AsyncButton("Let the agent decide") { await center.answer(doc.id, answers: "Decide sensibly for every open question, and list your decisions under Assumptions.") }.buttonStyle(Pill(kind: .plain)).disabled(job.running) }
         }.card(padding: 14)
     }
 
     @ViewBuilder private var nextStep: some View {
         if !job.running, job.draft == nil, !job.gate, doc.openQuestions.isEmpty {
-            if doc.spec != nil && doc.plan == nil { HStack { Text("Next: write the plan from the spec.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); Button("Write the plan") { Task { await center.run(doc.id, .plan) } }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
-            else if doc.plan != nil && doc.tasks.isEmpty { HStack { Text("Next: break the plan into tasks.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); Button("Write the tasks") { Task { await center.run(doc.id, .tasks) } }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
-            else if doc.spec == nil { HStack { Text("The spec has not been written yet.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); Button("Write the spec") { Task { await center.run(doc.id, .specify) } }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
+            if doc.spec != nil && doc.plan == nil { HStack { Text("Next: write the plan from the spec.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); AsyncButton("Write the plan") { await center.run(doc.id, .plan) }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
+            else if doc.plan != nil && doc.tasks.isEmpty { HStack { Text("Next: break the plan into tasks.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); AsyncButton("Write the tasks") { await center.run(doc.id, .tasks) }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
+            else if doc.spec == nil { HStack { Text("The spec has not been written yet.").font(.system(size: 12.5)).foregroundStyle(.secondary); Spacer(); AsyncButton("Write the spec") { await center.run(doc.id, .specify) }.buttonStyle(Pill(kind: .primary)) }.card(padding: 12) }
         }
     }
 
@@ -244,11 +244,11 @@ struct SpecDetail: View {
             HStack {
                 Text("Tasks").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button("Run all ready") { Task { await center.implementReady(doc.id, limit: 4) } }.buttonStyle(Pill(kind: .plain)).disabled(ready.isEmpty)
+                AsyncButton("Run all ready") { await center.implementReady(doc.id, limit: 4) }.buttonStyle(Pill(kind: .plain)).disabled(ready.isEmpty)
                 Button { Task { await center.submitAndArm(doc.id) } } label: { BusyLabel(title: "Submit stack", busyTitle: "Submitting…", busy: job.submitting) }.buttonStyle(Pill(kind: .plain))
                     .disabled(job.submitting || !doc.tasks.contains { $0.branch.map(center.unsubmitted.contains) ?? false })
                     .help("Push this spec's finished task branches, open their pull requests, and turn on auto-merge so they land bottom first when the rules pass. Disabled when there is nothing new to push. Hands-off mode does this by itself.")
-                Button("View stack") { if let r = center.repo { Task { await StackCenter.shared.open(r); Nav.shared.pane = .stacks } } }.buttonStyle(Pill(kind: .plain))
+                Button("View stack") { if let r = center.repo { Nav.shared.pane = .stacks; Task { await StackCenter.shared.open(r) } } }.buttonStyle(Pill(kind: .plain))
             }.padding(12)
             if let note = job.submitNote {
                 Label { job.submitFailed ? AnyView(ErrorLine(text: note)) : AnyView(Text(note)) } icon: { Image(systemName: job.submitFailed ? "exclamationmark.triangle" : "checkmark.circle").foregroundStyle(job.submitFailed ? Theme.danger : Theme.ok) }
@@ -282,9 +282,9 @@ struct TaskRow: View {
             else if state == .running || state == .waiting { Badge(text: state == .waiting ? "Needs approval" : "Running", kind: state == .waiting ? .warn : .accent) }
             else if task.pr != nil { Badge(text: "In review", kind: .accent) }
             else if task.branch.map(center.coded.contains) == true { Badge(text: "Coded", kind: .accent) }
-            else if ready { Button("Run") { Task { await center.implement(doc.id, task) } }.buttonStyle(Pill(kind: .primary)) }
+            else if ready { AsyncButton("Run") { await center.implement(doc.id, task) }.buttonStyle(Pill(kind: .primary)) }
             else if task.branch == nil { Badge(text: "Waiting") }
-            if let s = session, !done { Button("Session") { Workspace.shared.select(s.id); Nav.shared.pane = .sessions }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent) }
+            if let s = session, !done { Button("Session") { Workspace.shared.select(s.id); Nav.shared.pane = .sessions }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
         }.padding(.horizontal, 12).padding(.vertical, 8)
     }
 }
@@ -302,8 +302,8 @@ struct DraftCard: View {
             HStack { Image(systemName: "doc.badge.clock").foregroundStyle(Theme.accent); Text("Review \(file)").font(.system(size: 13, weight: .semibold)); Spacer(); Badge(text: "Needs your approval", kind: .warn) }
             TextEditor(text: $text).font(.system(size: 12, design: .monospaced)).frame(height: 280).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             HStack {
-                Button("Approve and save") { Task { await center.approve(doc.id, text: text) } }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.return, modifiers: .command)
-                Button("Write it again") { Task { await center.run(doc.id, draft.stage) } }.buttonStyle(Pill(kind: .plain))
+                AsyncButton("Approve and save") { await center.approve(doc.id, text: text) }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.return, modifiers: .command)
+                AsyncButton("Write it again") { await center.run(doc.id, draft.stage) }.buttonStyle(Pill(kind: .plain))
                 Spacer()
                 Button("Discard") { center.discard(doc.id) }.buttonStyle(Pill(kind: .danger))
             }
@@ -361,7 +361,7 @@ struct NewWorkSheet: View {
                         VStack(alignment: .leading, spacing: 2) { Text(t).font(.system(size: 12.5, weight: .semibold)); Text(d).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                             .background(entry == e ? Theme.accentSoft : Theme.card, in: RoundedRectangle(cornerRadius: 9)).overlay(RoundedRectangle(cornerRadius: 9).stroke(entry == e ? Theme.accent : Theme.hairline))
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.soft)
                 }
             }
             entryBody
@@ -375,7 +375,7 @@ struct NewWorkSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await go() } } label: { if busy { ProgressView().controlSize(.small) } else { Text(entry == .folder ? "Choose folder…" : "Start") } }
+                AsyncButton { await go() } label: { if busy { ProgressView().controlSize(.small) } else { Text(entry == .folder ? "Choose folder…" : "Start") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(busy || !canStart).keyboardShortcut(.defaultAction)
             }
         }

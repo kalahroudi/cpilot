@@ -135,7 +135,7 @@ struct NewSkillSheet: View {
                 if busy { ProgressView().controlSize(.small); Text(stage).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction).disabled(busy)
-                Button { Task { await start() } } label: { Text(busy ? "Starting…" : "Create with Claude") }
+                AsyncButton { await start() } label: { Text(busy ? "Starting…" : "Create with Claude") }
                     .buttonStyle(Pill(kind: .primary)).disabled(idea.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
                     .keyboardShortcut(.defaultAction)
             }
@@ -193,7 +193,7 @@ struct ExtendSkillSheet: View {
                 if busy { ProgressView().controlSize(.small); Text(stage).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction).disabled(busy)
-                Button { Task { await start() } } label: { Text(busy ? "Starting…" : "Update with Claude") }
+                AsyncButton { await start() } label: { Text(busy ? "Starting…" : "Update with Claude") }
                     .buttonStyle(Pill(kind: .primary)).disabled(busy || (note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !(fromSession && current != nil)))
                     .keyboardShortcut(.defaultAction)
             }

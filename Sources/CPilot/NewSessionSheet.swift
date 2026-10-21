@@ -60,7 +60,7 @@ struct NewSessionSheet: View {
                 if !recents.isEmpty {
                     FlowLayout(spacing: 6) {
                         ForEach(recents, id: \.self) { r in
-                            Button { folder = r } label: { Badge(text: URL(fileURLWithPath: r).lastPathComponent, kind: r == folder ? .accent : .neutral) }.buttonStyle(.plain)
+                            Button { folder = r } label: { Badge(text: URL(fileURLWithPath: r).lastPathComponent, kind: r == folder ? .accent : .neutral) }.buttonStyle(.soft)
                         }
                     }
                 }
@@ -125,7 +125,7 @@ struct NewSessionSheet: View {
             Text("Clone from GitHub").font(.system(size: 15, weight: .semibold))
             SearchBox(prompt: "Search your repositories", text: $cloneQuery)
             List(repos.filter { cloneQuery.isEmpty || $0.localizedCaseInsensitiveContains(cloneQuery) }, id: \.self) { r in
-                Button(r) { clone(r) }.buttonStyle(.plain)
+                Button(r) { clone(r) }.buttonStyle(.soft)
             }.frame(height: 240)
             if repos.isEmpty { ProgressView().controlSize(.small) }
             HStack { Text("Into \(Prefs.shared.cloneFolder)").font(.system(size: 11.5)).foregroundStyle(.secondary); Spacer(); Button("Close") { showClone = false }.buttonStyle(Pill(kind: .plain)) }

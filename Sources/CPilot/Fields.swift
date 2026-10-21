@@ -43,7 +43,7 @@ struct Dropdown<T: Hashable>: View {
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+        .menuStyle(.button).buttonStyle(.soft).menuIndicator(.hidden)
     }
 }
 

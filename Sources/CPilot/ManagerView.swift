@@ -115,7 +115,7 @@ struct Rail: View {
             }
             .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center).padding(.horizontal, 8).padding(.vertical, 6)
             .foregroundStyle(.secondary).contentShape(Rectangle())
-        }.buttonStyle(.plain).help(expanded ? "Collapse the menu" : "Expand the menu").accessibilityLabel(expanded ? "Collapse the menu" : "Expand the menu")
+        }.buttonStyle(.soft).help(expanded ? "Collapse the menu" : "Expand the menu").accessibilityLabel(expanded ? "Collapse the menu" : "Expand the menu")
         .keyboardShortcut("\\", modifiers: .command)
     }
 
@@ -136,7 +136,7 @@ struct Rail: View {
             .background(on ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
             .overlay(alignment: .topTrailing) { if !expanded { badge(p).offset(x: -4, y: 4) } }
             .contentShape(RoundedRectangle(cornerRadius: 8))
-        }.buttonStyle(.plain).help(p.title).accessibilityLabel(p.title)
+        }.buttonStyle(.soft).help(p.title).accessibilityLabel(p.title)
     }
 
     @ViewBuilder private func badge(_ p: Pane) -> some View {
@@ -184,7 +184,7 @@ struct SessionSidebar: View {
             HStack {
                 Text("Sessions").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button { nav.showNewSession = true } label: { Image(systemName: "plus") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button { nav.showNewSession = true } label: { Image(systemName: "plus") }.buttonStyle(.soft).foregroundStyle(.secondary)
                     .help("New session (⌘N)").accessibilityLabel("New session")
             }.padding(.horizontal, 12).padding(.top, 36).padding(.bottom, 8)
             SearchBox(prompt: "Search", text: $query).padding(.horizontal, 10).padding(.bottom, 8)
@@ -222,7 +222,7 @@ struct SideRow: View {
             .padding(.horizontal, 8).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
             .background(selected ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7))
             .foregroundStyle(selected ? Theme.accent : Color.primary).contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.soft)
         .contextMenu {
             if ws.tabs.contains(meta.id) { Button("Close") { ws.closeTab(meta.id) } }
             Button("Archive") { var m = meta; m.archived = true; ws.save(m); ws.closeTab(meta.id); ws.sessions.removeAll { $0.id == meta.id } }
@@ -245,7 +245,7 @@ struct TabStrip: View {
                 }
             }
             Button { nav.showNewSession = true } label: { Image(systemName: "plus").font(.system(size: 13)).frame(width: 28, height: 26) }
-                .buttonStyle(.plain).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
+                .buttonStyle(.soft).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
             Menu {
                 ForEach(ws.sessions.prefix(15)) { m in Button(m.title) { ws.select(m.id) } }
                 let archived = ws.archived
@@ -269,7 +269,7 @@ struct TabButton: View {
             dot
             Text((session.meta.parentId != nil ? "↳ " : "") + (session.env.map { "\($0.name) · " } ?? "") + session.meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
             Button { ws.closeTab(session.id) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).frame(width: 14, height: 14) }
-                .buttonStyle(.plain).foregroundStyle(.secondary).opacity(selected || hover ? 1 : 0).accessibilityLabel("Close tab")
+                .buttonStyle(.soft).foregroundStyle(.secondary).opacity(selected || hover ? 1 : 0).accessibilityLabel("Close tab")
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(maxWidth: 200)
@@ -314,7 +314,7 @@ struct Welcome: View {
                     ForEach(ws.sessions.prefix(5)) { m in
                         Button { ws.select(m.id) } label: {
                             HStack { Text(m.title).lineLimit(1); Spacer(); Text(m.project).foregroundStyle(.secondary) }.font(.system(size: 12.5)).padding(.vertical, 6).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.soft)
                         Divider().opacity(0.5)
                     }
                 }.frame(width: 380).padding(.top, 10)

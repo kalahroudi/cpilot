@@ -52,7 +52,7 @@ struct RepoMenu: View {
                 Button { project.choose(r) } label: { if r == project.current { Label(r.name, systemImage: "checkmark") } else { Text(r.name) } }
             }
             Divider()
-            Button("Add a folder…") { Task { await project.addFolder() } }
+            AsyncButton("Add a folder…") { await project.addFolder() }
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(Theme.accent)
@@ -62,7 +62,7 @@ struct RepoMenu: View {
             .padding(.horizontal, 11).padding(.vertical, 6)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.soft).menuIndicator(.hidden).fixedSize()
         .onAppear { project.ensureDefault() }
     }
 }

@@ -22,8 +22,8 @@ struct UpdatesView: View {
                 HStack {
                     statusLine
                     Spacer()
-                    Button(u.phase == .checking ? "Checking…" : "Check for updates") { Task { await u.check() } }.buttonStyle(Pill()).disabled(u.busy)
-                    if let info = u.available { Button(info.release != nil ? "Install \(info.label)" : "Build & install \(info.label)") { Task { await u.install() } }.buttonStyle(Pill(kind: .primary)).disabled(u.busy) }
+                    AsyncButton(u.phase == .checking ? "Checking…" : "Check for updates") { await u.check() }.buttonStyle(Pill()).disabled(u.busy)
+                    if let info = u.available { AsyncButton(info.release != nil ? "Install \(info.label)" : "Build & install \(info.label)") { await u.install() }.buttonStyle(Pill(kind: .primary)).disabled(u.busy) }
                 }
                 if case .working(let step) = u.phase {
                     VStack(alignment: .leading, spacing: 6) {

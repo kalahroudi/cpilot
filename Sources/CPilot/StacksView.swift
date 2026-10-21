@@ -154,18 +154,18 @@ struct StacksView: View {
             PaneHeader(title: "Stacks", subtitle: center.repo?.name ?? "Small pull requests that build on each other") {
                 HStack(spacing: 8) {
                     RepoMenu()
-                    Button { Task { await center.sync() } } label: {
+                    AsyncButton { await center.sync() } label: {
                         if center.busy == "Syncing" { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.triangle.2.circlepath") }
-                    }.buttonStyle(.plain).disabled(center.busy != nil || center.loading).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
-                    Button { Task { await center.refresh(manual: true) } } label: {
+                    }.buttonStyle(.soft).disabled(center.busy != nil || center.loading).help("Fetch, update the trunk and restack").accessibilityLabel("Sync")
+                    AsyncButton { await center.refresh(manual: true) } label: {
                         if center.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
-                    }.buttonStyle(.plain).disabled(center.loading || center.busy != nil).help("Reload the stacks and their pull requests").accessibilityLabel("Refresh")
+                    }.buttonStyle(.soft).disabled(center.loading || center.busy != nil).help("Reload the stacks and their pull requests").accessibilityLabel("Refresh")
                 }
             }
             if center.repo == nil {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
-                    if let first = pr.repos().first { Button("Open \(first.name)") { Task { await center.open(first) } }.buttonStyle(Pill(kind: .primary)) }
+                    if let first = pr.repos().first { AsyncButton("Open \(first.name)") { await center.open(first) }.buttonStyle(Pill(kind: .primary)) }
                     else { Text("Start a session in a project first.").font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -194,8 +194,8 @@ struct StacksView: View {
                 Label("Restacking \(c.branch) hit a conflict", systemImage: "exclamationmark.triangle.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.warn)
                 Text(c.files.joined(separator: ", ")).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 HStack {
-                    Button("Resolve with Claude") { Task { await center.resolveWithAgent() } }.buttonStyle(Pill(kind: .primary))
-                    Button("Abort restack") { Task { await center.abort() } }.buttonStyle(Pill(kind: .plain))
+                    AsyncButton("Resolve with Claude") { await center.resolveWithAgent() }.buttonStyle(Pill(kind: .primary))
+                    AsyncButton("Abort restack") { await center.abort() }.buttonStyle(Pill(kind: .plain))
                 }
             }.padding(12).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.warn))
         }
@@ -287,10 +287,10 @@ struct StackNode: View {
             else if branch.prState == "OPEN" { Badge(text: "Open", kind: .accent) }
             else { Badge(text: "No PR yet") }
             if let n = branch.pr, !branch.isMerged {
-                Button("Pull request") { Task { await PRCenter.shared.open(repo: center.repo?.dir ?? "", environment: center.repo?.environment); await PRCenter.shared.select(n); Nav.shared.pane = .pulls } }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                AsyncButton("Pull request") { await PRCenter.shared.open(repo: center.repo?.dir ?? "", environment: center.repo?.environment); await PRCenter.shared.select(n); Nav.shared.pane = .pulls }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
             }
             if !branch.isMerged {
-                Button("Session") { Task { _ = try? await Workspace.shared.startSession(onBranch: branch.name, repo: center.repo?.dir ?? "", environment: center.repo?.environment); Nav.shared.pane = .sessions } }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                AsyncButton("Session") { _ = try? await Workspace.shared.startSession(onBranch: branch.name, repo: center.repo?.dir ?? "", environment: center.repo?.environment); Nav.shared.pane = .sessions }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -314,7 +314,7 @@ struct SplitSheet: View {
             Text("Pick the branch that holds the whole change. Pieces split by file: the top of the stack ends up identical to it.").font(.system(size: 12)).foregroundStyle(.secondary)
             HStack {
                 Dropdown(options: branches.map { ($0, $0) }, selection: $source, placeholder: "Choose a branch").frame(width: 260)
-                Button { Task { await propose() } } label: { if working { ProgressView().controlSize(.small) } else { Label("Propose a split", systemImage: "sparkles") } }
+                AsyncButton { await propose() } label: { if working { ProgressView().controlSize(.small) } else { Label("Propose a split", systemImage: "sparkles") } }
                     .buttonStyle(Pill(kind: .primary)).disabled(source.isEmpty || working)
             }
             ScrollView {
@@ -324,7 +324,7 @@ struct SplitSheet: View {
                             HStack {
                                 Text("\(i + 1)").font(.system(size: 11)).frame(width: 20, height: 20).background(Theme.fill, in: Circle())
                                 TextField("branch", text: $pieces[i].branch).textFieldStyle(CPField()).font(.system(size: 12, design: .monospaced))
-                                Button { pieces.remove(at: i) } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                                Button { pieces.remove(at: i) } label: { Image(systemName: "trash") }.buttonStyle(.soft).foregroundStyle(.secondary)
                             }
                             TextField("commit message", text: $pieces[i].message).textFieldStyle(CPField())
                             Text(pieces[i].files.joined(separator: ", ")).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(3)

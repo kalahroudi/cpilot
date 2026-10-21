@@ -132,7 +132,7 @@ struct MemoryEngineRow: View {
             SettingRow("Engine address", up == nil ? "Checking…" : up == true ? "Reachable. Each project gets its own memory bank." : "Not reachable. Start the engine, then check again.") {
                 HStack(spacing: 6) {
                     TextField("http://localhost:8888", text: $p.memoryEngineURL).textFieldStyle(CPField()).frame(width: 190)
-                    Button("Check") { Task { up = await MemoryEngine.isReachable(base: Prefs.shared.memoryEngineURL) } }.buttonStyle(Pill(kind: .plain))
+                    AsyncButton("Check") { up = await MemoryEngine.isReachable(base: Prefs.shared.memoryEngineURL) }.buttonStyle(Pill(kind: .plain))
                 }
             }
             if up == false {

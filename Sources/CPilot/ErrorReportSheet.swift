@@ -44,7 +44,7 @@ struct ErrorReportSheet: View {
                 HStack {
                     Spacer()
                     Button("Not now") { confirm = false }.buttonStyle(Pill(kind: .plain))
-                    Button { Task { await send() } } label: { if sending { ProgressView().controlSize(.small) } else { Text("Send report") } }
+                    AsyncButton { await send() } label: { if sending { ProgressView().controlSize(.small) } else { Text("Send report") } }
                         .buttonStyle(Pill(kind: .primary)).disabled(sending)
                 }
             } else {

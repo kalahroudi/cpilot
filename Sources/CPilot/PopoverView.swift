@@ -89,8 +89,8 @@ struct PopoverView: View {
             Button("Open CPilot") { openManager(.sessions) }.buttonStyle(Pill(kind: .primary))
             Button("New session…") { Nav.shared.showNewSession = true; openManager(.sessions) }.buttonStyle(Pill(kind: .plain))
             Spacer()
-            Button { openManager(.settings) } label: { Image(systemName: "gearshape") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Settings").accessibilityLabel("Settings")
-            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Quit CPilot").accessibilityLabel("Quit")
+            Button { openManager(.settings) } label: { Image(systemName: "gearshape") }.buttonStyle(.soft).foregroundStyle(.secondary).help("Settings").accessibilityLabel("Settings")
+            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.buttonStyle(.soft).foregroundStyle(.secondary).help("Quit CPilot").accessibilityLabel("Quit")
         }
     }
 }
@@ -113,7 +113,7 @@ struct SessionRow: View {
                 if let c, !c.pending.isEmpty { Badge(text: "Review", kind: .warn) }
                 else if c?.state == .asleep || c == nil { Text("Resume").font(.system(size: 11.5)).foregroundStyle(Theme.accent) }
             }.padding(.horizontal, 12).padding(.vertical, 8).contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.soft)
     }
 
     private func subtitle(_ c: SessionController?) -> String {

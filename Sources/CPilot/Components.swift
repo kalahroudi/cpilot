@@ -247,13 +247,21 @@ struct Pill: ButtonStyle {
         let configuration: ButtonStyleConfiguration
         let kind: Kind
         @Environment(\.isEnabled) private var enabled
+        @State private var hover = false
         var body: some View {
+            let pressed = enabled && configuration.isPressed
             configuration.label.font(.system(size: 12.5, weight: kind == .primary ? .semibold : .regular))
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .foregroundStyle(foreground)
                 .background(background, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(stroke))
-                .opacity(enabled && configuration.isPressed ? 0.85 : 1)
+                .brightness(enabled && hover && !pressed ? (kind == .primary ? 0.06 : -0.02) : 0)
+                .scaleEffect(pressed ? 0.96 : 1)
+                .opacity(pressed ? 0.85 : 1)
+                .onHover { hover = $0 }
+                .animation(.easeOut(duration: 0.12), value: pressed)
+                .animation(.easeInOut(duration: 0.15), value: hover)
+                .animation(.easeInOut(duration: 0.2), value: enabled)
         }
         private var foreground: Color {
             guard enabled else { return Color.secondary.opacity(0.75) }
@@ -285,4 +293,45 @@ struct BusyLabel: View {
     var body: some View {
         HStack(spacing: 6) { if busy { ProgressView().controlSize(.mini) }; Text(busy ? busyTitle : title) }
     }
+}
+
+/// For text links and icon buttons that were `.plain`: they dim on hover and press instead of sitting there like a block.
+struct SoftButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { SoftBody(configuration: configuration) }
+    private struct SoftBody: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var hover = false
+        var body: some View {
+            configuration.label
+                .opacity(configuration.isPressed ? 0.5 : hover ? 0.75 : 1)
+                .onHover { hover = $0 }
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+                .animation(.easeInOut(duration: 0.15), value: hover)
+        }
+    }
+}
+extension ButtonStyle where Self == SoftButton { static var soft: SoftButton { SoftButton() } }
+
+/// A button for an async action. While the action runs it shows a spinner in place of its label (same size, no jump)
+/// and ignores further clicks, so a slow action can never be started twice.
+struct AsyncButton<Label: View>: View {
+    let action: @MainActor () async -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var running = false
+
+    var body: some View {
+        Button {
+            guard !running else { return }
+            running = true
+            Task { await action(); running = false }
+        } label: {
+            label().opacity(running ? 0 : 1)
+                .overlay { if running { ProgressView().controlSize(.small).transition(.opacity) } }
+        }
+        .allowsHitTesting(!running)
+        .animation(.easeInOut(duration: 0.15), value: running)
+    }
+}
+extension AsyncButton where Label == Text {
+    init(_ title: String, action: @escaping @MainActor () async -> Void) { self.init(action: action) { Text(title) } }
 }

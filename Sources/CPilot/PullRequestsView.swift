@@ -271,8 +271,8 @@ struct PullRequestsView: View {
                 HStack(spacing: 8) {
                     Segmented(options: [(false, "Repository"), (true, "Inbox")], selection: Bindable(center).showInbox)
                     RepoMenu()
-                    Button { Task { await center.refreshList() } } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
+                    AsyncButton { await center.refreshList() } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.soft).help("Refresh").accessibilityLabel("Refresh")
                 }
             }
             if center.showInbox { InboxView() }
@@ -280,7 +280,7 @@ struct PullRequestsView: View {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
                     Text("Repositories come from your sessions. Start a session in a project first.").font(.system(size: 12.5)).foregroundStyle(.secondary)
-                    if let first = center.repos().first { Button("Open \(first.name)") { Task { await center.open(first) } }.buttonStyle(Pill(kind: .primary)) }
+                    if let first = center.repos().first { AsyncButton("Open \(first.name)") { await center.open(first) }.buttonStyle(Pill(kind: .primary)) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HSplitView {
@@ -331,7 +331,7 @@ struct PRList: View {
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 9).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(center.selected == pr.number ? Theme.accentSoft : .clear).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.soft)
                             Divider().opacity(0.5)
                         }
                     }
@@ -422,7 +422,7 @@ struct SecurityPanel: View {
                 else if let s = center.scan { Badge(text: s.blocksMerge ? "\(s.confirmed.count) confirmed" : "Clean", kind: s.blocksMerge ? .warn : .ok) }
                 else { Badge(text: "Not run") }
                 Spacer()
-                Button(center.scan == nil ? "Run scan" : "Re-scan") { Task { await center.runScan() } }.buttonStyle(Pill(kind: .plain)).disabled(center.scanning || !SecurityCage.isAvailable(configured: Prefs.shared.securityCagePath))
+                AsyncButton(center.scan == nil ? "Run scan" : "Re-scan") { await center.runScan() }.buttonStyle(Pill(kind: .plain)).disabled(center.scanning || !SecurityCage.isAvailable(configured: Prefs.shared.securityCagePath))
             }.padding(12)
             if !SecurityCage.isAvailable(configured: Prefs.shared.securityCagePath) {
                 Divider(); Text(Shell.find("node") == nil ? "The scan needs Node.js. Install it with: brew install node" : SecurityCage.setupHint).font(.system(size: 12)).foregroundStyle(.secondary).padding(12)
@@ -437,7 +437,7 @@ struct SecurityPanel: View {
                         }
                         Spacer()
                         if f.confirmed {
-                            Button("Fix it") { Task { await center.startSession(prompt: SecurityCage.fixPrompt(f), title: "Fix: \(f.title)", readOnly: false) } }.buttonStyle(Pill(kind: .primary))
+                            AsyncButton("Fix it") { await center.startSession(prompt: SecurityCage.fixPrompt(f), title: "Fix: \(f.title)", readOnly: false) }.buttonStyle(Pill(kind: .primary))
                         }
                     }.padding(12)
                 }
@@ -445,7 +445,7 @@ struct SecurityPanel: View {
                 HStack {
                     Text(center.scanLog.last ?? "Scans the branch as data. With a local model and Docker running, findings are proven in a sandbox.").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
-                    Button("Post to PR") { Task { await center.post(comment: "### Security scan\n" + s.report.prefix(3000)) } }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                    AsyncButton("Post to PR") { await center.post(comment: "### Security scan\n" + s.report.prefix(3000)) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
                 }.padding(12)
             } else if center.scanning, let l = center.scanLog.last {
                 Divider(); Text(l).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).padding(12)
@@ -477,8 +477,8 @@ struct ReviewAndMerge: View {
                     Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: true) }
                 }.buttonStyle(Pill(kind: .plain))
                 let own = pr.author?.login.caseInsensitiveCompare(AppModel.shared.github?.login ?? "") == .orderedSame   // GitHub refuses both on your own PR
-                Button("Approve") { Task { await center.review(.approve) } }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't approve your own pull request." : "")
-                Button("Request changes") { Task { await center.review(.requestChanges, body: "Please see the review notes.") } }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't request changes on your own pull request." : "")
+                AsyncButton("Approve") { await center.review(.approve) }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't approve your own pull request." : "")
+                AsyncButton("Request changes") { await center.review(.requestChanges, body: "Please see the review notes.") }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't request changes on your own pull request." : "")
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
@@ -497,7 +497,7 @@ struct ReviewAndMerge: View {
                         }
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(.soft)
             }
         }.padding(6).frame(width: 320)
     }
@@ -522,7 +522,7 @@ struct ReviewAndMerge: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 0) {
-                        Button { Task { await center.mergeNow() } } label: { Text(Self.label(center.method)).frame(minWidth: 130) }
+                        AsyncButton { await center.mergeNow() } label: { Text(Self.label(center.method)).frame(minWidth: 130) }
                             .buttonStyle(MergeSplit(position: .leading, ready: ready)).disabled(!ready)
                         Button { choosing = true } label: {
                             Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).frame(width: 18)
@@ -593,8 +593,8 @@ struct DiffList: View {
                 HStack(spacing: 10) {
                     Text("\(center.files.count) files changed").font(.system(size: 13, weight: .semibold))
                     Spacer()
-                    Button("Expand all") { expanded = Set(center.files.map(\.path)) }.buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
-                    Button("Collapse all") { expanded = [] }.buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
+                    Button("Expand all") { expanded = Set(center.files.map(\.path)) }.buttonStyle(.soft).foregroundStyle(Theme.accent).font(.system(size: 12))
+                    Button("Collapse all") { expanded = [] }.buttonStyle(.soft).foregroundStyle(Theme.accent).font(.system(size: 12))
                     SearchBox(prompt: "Filter files", text: Bindable(center).fileFilter).frame(width: 180)
                 }
                 fileList(proxy)
@@ -625,7 +625,7 @@ struct DiffList: View {
                     Text("Files").font(.system(size: 12, weight: .medium))
                     Spacer()
                 }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.soft)
             if listOpen {
                 Divider()
                 ScrollView {
@@ -644,7 +644,7 @@ struct DiffList: View {
                                     Text("+\(f.additions)").foregroundStyle(Theme.ok)
                                     Text("−\(f.deletions)").foregroundStyle(Theme.danger)
                                 }.font(.system(size: 11, design: .monospaced)).padding(.horizontal, 10).padding(.vertical, 3).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.soft)
                         }
                     }
                 }.frame(maxHeight: 180)
@@ -731,7 +731,7 @@ struct InboxView: View {
 
     @ViewBuilder private func section(_ title: String, _ items: [GitHub.InboxItem], empty: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack { SectionLabel(title); Badge(text: "\(items.count)"); Spacer(); if title == "Yours" { Button { Task { await center.load(force: true) } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh") } }.padding(.leading, 4)
+            HStack { SectionLabel(title); Badge(text: "\(items.count)"); Spacer(); if title == "Yours" { AsyncButton { await center.load(force: true) } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.soft).help("Refresh") } }.padding(.leading, 4)
             VStack(spacing: 0) {
                 if items.isEmpty { Text(empty).font(.system(size: 12.5)).foregroundStyle(.secondary).padding(14).frame(maxWidth: .infinity, alignment: .leading) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
@@ -743,8 +743,8 @@ struct InboxView: View {
                         }
                         Spacer()
                         if it.isDraft == true { Badge(text: "Draft") }
-                        if center.repo(for: it) == nil { Button("Clone") { Task { await center.clone(it) } }.buttonStyle(Pill(kind: .plain)) }
-                        Button(center.repo(for: it) == nil ? "Open on GitHub" : "Review") { Task { await center.open(it) } }.buttonStyle(Pill(kind: center.repo(for: it) == nil ? .plain : .primary))
+                        if center.repo(for: it) == nil { AsyncButton("Clone") { await center.clone(it) }.buttonStyle(Pill(kind: .plain)) }
+                        AsyncButton(center.repo(for: it) == nil ? "Open on GitHub" : "Review") { await center.open(it) }.buttonStyle(Pill(kind: center.repo(for: it) == nil ? .plain : .primary))
                     }.padding(.horizontal, 14).padding(.vertical, 9)
                 }
             }.background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))

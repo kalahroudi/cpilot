@@ -81,7 +81,7 @@ struct RepoSetupView: View {
                         Text(folder.isEmpty ? "Choose a repository above" : folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 12.5, design: .monospaced)).lineLimit(1).truncationMode(.head)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
                             .background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
-                        Button("Choose…") { Task { await project.addFolder() } }.buttonStyle(Pill(kind: .plain))
+                        AsyncButton("Choose…") { await project.addFolder() }.buttonStyle(Pill(kind: .plain))
                     }
                 }
                 FormField("GitHub name", hint: "Owner and repository name.") {
@@ -109,7 +109,7 @@ struct RepoSetupView: View {
                     ForEach(topics, id: \.self) { t in
                         HStack(spacing: 4) {
                             Text(t).font(.system(size: 12))
-                            Button { topics.removeAll { $0 == t } } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove \(t)")
+                            Button { topics.removeAll { $0 == t } } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }.buttonStyle(.soft).foregroundStyle(.secondary).accessibilityLabel("Remove \(t)")
                         }.padding(.horizontal, 9).padding(.vertical, 4).background(Theme.accentSoft, in: Capsule()).foregroundStyle(Theme.accent)
                     }
                 }

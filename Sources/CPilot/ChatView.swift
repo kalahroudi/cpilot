@@ -251,7 +251,7 @@ struct ToolCard: View {
                     if isAgent { Badge(text: "Sub-agent", kind: .accent); Text("\(children.filter { $0.kind == .tool }.count) steps").font(.system(size: 11)).foregroundStyle(.secondary) }
                     if !item.text.isEmpty || !children.isEmpty { Image(systemName: open || (isAgent && item.status == .running) ? "chevron.up" : "chevron.down").font(.system(size: 10)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 10).padding(.vertical, 7).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.soft)
             if (open || (isAgent && item.status == .running)) && !children.isEmpty {
                 Divider().opacity(0.5)
                 VStack(alignment: .leading, spacing: 4) {
@@ -341,7 +341,7 @@ struct AttachmentStrip: View {
                     Text(a.title).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
                     if let r = removable {
                         Button { r(a) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
-                            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove attachment")
+                            .buttonStyle(.soft).foregroundStyle(.secondary).accessibilityLabel("Remove attachment")
                     }
                 }
                 .padding(.leading, 4).padding(.trailing, 8).padding(.vertical, 4)
@@ -405,7 +405,7 @@ struct Composer: View {
                         Button { pick(sk) } label: {
                             HStack { Image(systemName: "sparkles").foregroundStyle(Theme.accent); Text(sk.name).font(.system(size: 12.5, weight: .medium)); Text(sk.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1); Spacer() }
                                 .padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.soft)
                     }
                 }.background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
             }
