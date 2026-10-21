@@ -102,6 +102,15 @@ final class SpecTests: XCTestCase {
         do { try await Specs.remove("../x", in: dir); XCTFail("a path must be refused") } catch {}
     }
 
+    func testUniqueBranchSkipsExistingOnes() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("br-\(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let u = URL(fileURLWithPath: dir)
+        for a in [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"], ["branch", "session"], ["branch", "session-2"]] { _ = try await Shell.run("git", a, cwd: u) }
+        let fresh = await Git.uniqueBranch("other", in: dir), taken = await Git.uniqueBranch("session", in: dir)
+        XCTAssertEqual(fresh, "other"); XCTAssertEqual(taken, "session-3")
+    }
+
     func testMergedWorkMatchesByIdOrBranch() {
         let t = SpecTask(id: "T001", title: "Pin favorites first in ChatListFilter.apply", done: false)
         XCTAssertTrue(Specs.isMergedWork(task: t, spec: "001-pin", head: "spec-001-t001", title: "x"))

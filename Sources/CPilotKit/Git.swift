@@ -58,6 +58,20 @@ public enum Git {
         return joined.isEmpty ? "session" : joined
     }
 
+    /// `name` if no branch has it, locally or on origin, else `name-2`, `name-3` and so on. A new session must never pick up an old branch, with its commits and merged pull request.
+    public static func uniqueBranch(_ name: String, in dir: String) async -> String {
+        func taken(_ n: String) async -> Bool {
+            for ref in ["refs/heads/\(n)", "refs/remotes/origin/\(n)"] {
+                if (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", ref], cwd: url(dir)))?.ok == true { return true }
+            }
+            return false
+        }
+        if !(await taken(name)) { return name }
+        var i = 2
+        while await taken("\(name)-\(i)") { i += 1 }
+        return "\(name)-\(i)"
+    }
+
     public static func createBranch(_ name: String, in dir: String) async throws {
         try await Shell.check("git", ["checkout", "-b", name], cwd: url(dir))
     }
