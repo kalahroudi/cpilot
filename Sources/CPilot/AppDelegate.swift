@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         ControlServer.shared.start()
         PRCenter.shared.startWatcher()
         StackCenter.shared.startWatcher()
+        CIWatcher.shared.start()
         Updater.shared.confirmLaunch()                                   // tells a pending swap script "the new version started"
         Task { Updater.shared.autoCheckIfDue(enabled: Prefs.shared.autoCheckUpdates) }
         if model.needsSetup { showManager() }                            // first run: show the guided setup, not an empty window
