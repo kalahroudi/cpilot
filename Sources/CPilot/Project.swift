@@ -8,7 +8,7 @@ import CPilotKit
 @MainActor @Observable
 final class Project {
     static let shared = Project()
-    var current: PRCenter.Repo?
+    var current: PRCenter.Repo? { didSet { if current != oldValue { let r = current; Task { await PRCenter.shared.warm(r) } } } }
     private(set) var known: [String] = UserDefaults.standard.stringArray(forKey: "knownRepos") ?? []
 
     /// Folders of your sessions, folders you added by hand, and the current one.

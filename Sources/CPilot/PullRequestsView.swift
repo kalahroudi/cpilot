@@ -29,6 +29,9 @@ final class PRCenter {
     var armed: [String: String] = UserDefaults.standard.dictionary(forKey: "armedMerges") as? [String: String] ?? [:]
     private var scans: [String: SecurityResult] = [:]     // by head branch + number, so a re-open does not rescan
     private var watcher: Task<Void, Never>?
+    /// Open pull requests per repository, so the screen shows something at once and refreshes behind it.
+    private var cache: [String: (prs: [PullRequest], at: Date)] = [:]
+    private func cacheKey(_ dir: String, _ environment: String?) -> String { dir + "|" + (environment ?? "") }
 
     var gate: MergeGate? {
         guard let pr = detail else { return nil }
@@ -43,11 +46,24 @@ final class PRCenter {
 
     func open(repo: String, environment: String? = nil) async {
         switchRepo(repo, environment)
+        if let c = cache[cacheKey(repo, environment)], Date().timeIntervalSince(c.at) < 20 { return }
         await refreshList()
+    }
+
+    /// Loads a repository's pull requests ahead of the screen being opened.
+    func warm(_ r: Repo?) async {
+        guard let r, !AppModel.shared.demo else { return }
+        let key = cacheKey(r.dir, r.environment)
+        if let c = cache[key], Date().timeIntervalSince(c.at) < 20 { return }
+        let list = await Exec.with(Workspace.shared.environment(r.environment)) { try? await GitHub.list(in: r.dir, state: "open") }
+        guard let list else { return }
+        cache[key] = (list, .now)
+        if repoDir == r.dir, env?.id == r.environment { prs = list }
     }
 
     private func switchRepo(_ repo: String, _ environment: String?) {
         repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []; error = nil
+        prs = cache[cacheKey(repo, environment)]?.prs ?? []
         Project.shared.current = Repo(dir: repo, environment: environment)
     }
 
@@ -69,7 +85,7 @@ final class PRCenter {
     private func refreshListImpl() async {
         guard let dir = repoDir else { return }
         loading = true; defer { loading = false }
-        do { prs = try await GitHub.list(in: dir, state: "open") } catch { self.error = UserError.message(for: error, action: "Load pull requests") }
+        do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { self.error = UserError.message(for: error, action: "Load pull requests") }
     }
 
     func select(_ n: Int) async {
@@ -490,17 +506,35 @@ final class InboxCenter {
     var loading = false
     private var local: [String: PRCenter.Repo] = [:]
 
-    func load() async {
-        loading = true; defer { loading = false }
+    private var cache: [String: (review: [GitHub.InboxItem], mine: [GitHub.InboxItem], at: Date)] = [:]
+    private var localAt: Date?
+
+    /// Shows the repository's cached inbox at once; fetches only when it is older than 30 seconds, or when `force` is set.
+    func load(force: Bool = false) async {
         guard let dir = PRCenter.shared.repoDir, let slug = await Git.info(dir)?.remote else { review = []; mine = []; return }
+        if let c = cache[slug] {
+            review = c.review; mine = c.mine
+            if !force, Date().timeIntervalSince(c.at) < 30 { return }
+        } else { review = []; mine = [] }
+        loading = true; defer { loading = false }
+        async let mapping: Void = refreshLocal()
         let r = await GitHub.inbox(repo: slug)
-        review = r.reviewRequested; mine = r.mine
-        // Which repositories are on this Mac, so a click can open the full review screen.
-        var map: [String: PRCenter.Repo] = [:]
-        for repo in PRCenter.shared.repos() where repo.environment == nil {
-            if let slug = await Git.info(repo.dir)?.remote { map[slug] = repo }
+        cache[slug] = (r.reviewRequested, r.mine, .now)
+        if PRCenter.shared.repoDir == dir { review = r.reviewRequested; mine = r.mine }
+        await mapping
+    }
+
+    /// Which repositories are on this Mac, so a click can open the full review screen. Looked up in parallel and kept for a minute.
+    private func refreshLocal() async {
+        if let t = localAt, Date().timeIntervalSince(t) < 60 { return }
+        let repos = PRCenter.shared.repos().filter { $0.environment == nil }
+        let pairs = await withTaskGroup(of: (String, PRCenter.Repo)?.self) { group in
+            for repo in repos { group.addTask { await Git.info(repo.dir)?.remote.map { ($0, repo) } } }
+            var out: [(String, PRCenter.Repo)] = []
+            for await p in group { if let p { out.append(p) } }
+            return out
         }
-        local = map
+        local = Dictionary(pairs, uniquingKeysWith: { a, _ in a }); localAt = .now
     }
 
     func repo(for item: GitHub.InboxItem) -> PRCenter.Repo? { local[item.repository.nameWithOwner] }
@@ -538,7 +572,7 @@ struct InboxView: View {
 
     @ViewBuilder private func section(_ title: String, _ items: [GitHub.InboxItem], empty: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack { SectionLabel(title); Badge(text: "\(items.count)"); Spacer(); if title == "Yours" { Button { Task { await center.load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh") } }.padding(.leading, 4)
+            HStack { SectionLabel(title); Badge(text: "\(items.count)"); Spacer(); if title == "Yours" { Button { Task { await center.load(force: true) } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh") } }.padding(.leading, 4)
             VStack(spacing: 0) {
                 if items.isEmpty { Text(empty).font(.system(size: 12.5)).foregroundStyle(.secondary).padding(14).frame(maxWidth: .infinity, alignment: .leading) }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, it in

@@ -79,6 +79,8 @@ final class AppModel {
         if github == nil || setupState.items.contains(where: { $0.id == "gh" && !$0.isMet }) { github = await GitHub.account() }
         updateStatusIcon()
         loadedOnce = true; updatedAt = .now
+        Project.shared.ensureDefault()
+        let warm = Project.shared.current; Task { await PRCenter.shared.warm(warm) }
     }
 
     func updateStatusIcon() {
