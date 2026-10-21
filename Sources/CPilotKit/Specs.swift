@@ -156,7 +156,7 @@ public enum Specs {
     public static func isMergedWork(task: SpecTask, spec: String, head: String, title: String) -> Bool {
         let id = task.id.lowercased(), h = head.lowercased(), t = title.lowercased()
         if h == taskBranch(spec: spec, task: task) { return true }
-        func has(_ s: String) -> Bool { s.range(of: "(^|[^a-z0-9])\\(id)([^a-z0-9]|$)", options: .regularExpression) != nil }
+        func has(_ s: String) -> Bool { s.range(of: "(^|[^a-z0-9])\(id)([^a-z0-9]|$)", options: .regularExpression) != nil }
         if h.hasPrefix("spec-") { return h.hasPrefix("spec-\(spec.prefix(3))-") && has(h) }
         let name = task.title.lowercased().prefix(30)
         return has(t) || (name.count >= 20 && t.contains(name))
