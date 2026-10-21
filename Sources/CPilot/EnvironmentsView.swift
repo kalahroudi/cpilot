@@ -45,8 +45,12 @@ final class EnvironmentCenter {
         guard !steps.isEmpty else { setup[env.id] = nil; return }
         settingUp.insert(env.id); defer { settingUp.remove(env.id) }
         setup[env.id] = steps
-        let (fresh, done) = await Provisioner.run(env, report: report, agents: agents) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
+        let (fresh, done, remote) = await Provisioner.run(env, report: report, agents: agents) { [weak self] s in Task { @MainActor in self?.setup[env.id] = s } }
         setup[env.id] = done
+        if !remote.isEmpty, let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
+            Workspace.shared.environments[i].remoteAgents = (Workspace.shared.environments[i].remoteAgents ?? [:]).merging(remote) { _, n in n }
+            Workspace.shared.saveEnvironments()
+        }
         if fresh.connected { status[env.id] = .ok(fresh) }
         if fresh.connected, fresh.has("claude"), !fresh.claudeSignedIn, done.allSatisfy({ $0.state != .failed }) { signIn = env }
         if done.allSatisfy({ $0.state == .done }) {

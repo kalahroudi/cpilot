@@ -34,6 +34,8 @@ public enum Provisioner {
     static func ready(_ agent: AcpAgentConfig, on env: EnvironmentConfig) async -> Bool {
         let probe: String
         if AgentInstaller.installedVersion(of: agent) != nil {
+            // Until CPilot has recorded how the agent runs on this server (its own arguments), it is set up again.
+            guard env.remoteAgents?[agent.id] != nil else { return false }
             probe = "test -x \"" + AgentInstaller.onServer(agent, home: "$HOME").command + "\""
         } else { probe = "command -v " + SSH.quote(agent.command) + " >/dev/null 2>&1" }
         let r = try? await Exec.with(env) { try await Shell.run("sh", ["-c", probe], timeout: 30) }
@@ -96,6 +98,9 @@ public enum Provisioner {
         private let lock = NSLock()
         private var steps: [ProvisionStep]
         private let onUpdate: @Sendable ([ProvisionStep]) -> Void
+        private var specs: [String: AcpAgentConfig] = [:]
+        var remoteAgents: [String: AcpAgentConfig] { lock.lock(); defer { lock.unlock() }; return specs }
+        func setSpec(_ id: String, _ c: AcpAgentConfig) { lock.lock(); specs[id] = c; lock.unlock() }
         init(_ steps: [ProvisionStep], _ onUpdate: @escaping @Sendable ([ProvisionStep]) -> Void) { self.steps = steps; self.onUpdate = onUpdate; onUpdate(steps) }
         var all: [ProvisionStep] { lock.lock(); defer { lock.unlock() }; return steps }
         func set(_ id: String, _ state: ProvisionStep.State, _ detail: String = "") {
@@ -108,7 +113,7 @@ public enum Provisioner {
     }
 
     /// Runs the plan on `env`. `onUpdate` receives the full step list whenever anything changes. Returns a fresh report.
-    public static func run(_ env: EnvironmentConfig, report: EnvironmentReport, agents: [AcpAgentConfig] = [], onUpdate: @escaping @Sendable ([ProvisionStep]) -> Void) async -> (EnvironmentReport, [ProvisionStep]) {
+    public static func run(_ env: EnvironmentConfig, report: EnvironmentReport, agents: [AcpAgentConfig] = [], onUpdate: @escaping @Sendable ([ProvisionStep]) -> Void) async -> (report: EnvironmentReport, steps: [ProvisionStep], remoteAgents: [String: AcpAgentConfig]) {
         let t = Tracker(await plan(env, report, agents: agents), onUpdate)
         for step in t.all {
             t.set(step.id, .running, "Connecting…")
@@ -117,7 +122,7 @@ public enum Provisioner {
                 case "claude": try await installClaude(env) { t.set("claude", .running, $0) }
                 case let id where id.hasPrefix("agent:"):
                     guard let a = agents.first(where: { "agent:" + $0.id == id }) else { break }
-                    try await installAgent(a, on: env) { t.set(id, .running, $0) }
+                    if let c = try await installAgent(a, on: env, progress: { t.set(id, .running, $0) }) { t.setSpec(a.id, c) }
                 case "helper": try await Exec.with(env) { try await RemoteHost.install() }
                 default: break
                 }
@@ -130,7 +135,7 @@ public enum Provisioner {
         if fresh.connected, t.all.contains(where: { $0.id == "claude" && $0.state == .done }), !fresh.has("claude") {
             t.set("claude", .failed, "Claude installed but is still not found on the server's PATH.")
         }
-        return (fresh, t.all)
+        return (fresh, t.all, t.remoteAgents)
     }
 
     static func run(_ script: String, on env: EnvironmentConfig, progress: @escaping @Sendable (String) -> Void) async throws -> (code: Int32, last: String) {
@@ -147,7 +152,7 @@ public enum Provisioner {
     }
 
     /// Makes `agent` runnable on the server: its runtime (Node.js or uv), its download, or a clear message when it is a custom command.
-    static func installAgent(_ agent: AcpAgentConfig, on env: EnvironmentConfig, progress: @escaping @Sendable (String) -> Void) async throws {
+    static func installAgent(_ agent: AcpAgentConfig, on env: EnvironmentConfig, progress: @escaping @Sendable (String) -> Void) async throws -> AcpAgentConfig? {
         func fail(_ why: String) -> ShellError { .failed(command: "install", status: 1, stderr: why) }
         if let version = AgentInstaller.installedVersion(of: agent) {
             progress("Checking the server…")
@@ -159,17 +164,23 @@ public enum Provisioner {
             progress("Downloading \(agent.name)…")
             let r = try await run(binaryScript(b, dest: "\"" + AgentInstaller.serverFolder(id: agent.id, version: version, home: "$HOME") + "\""), on: env, progress: progress)
             guard r.code == 0 else { throw fail("\(agent.name) could not be installed: \(r.last)") }
-            return
+            // The registry gives each platform its own arguments (for example the Linux build needs --uid=), so the server keeps its own.
+            var c = agent
+            c.command = AgentInstaller.serverFolder(id: agent.id, version: version, home: env.remoteHome) + "/" + (b.cmd.hasPrefix("./") ? String(b.cmd.dropFirst(2)) : b.cmd)
+            c.args = b.args; c.env = b.env
+            return c
         }
         switch agent.command {
         case "npx":
             progress("Installing Node.js…")
             let r = try await run(RemoteHost.nodeInstallScript, on: env, progress: progress)
             guard r.code == 0 else { throw fail("Node.js could not be installed, and \(agent.name) needs it. \(r.last)") }
+            return nil
         case "uvx":
             progress("Installing uv…")
             let r = try await run(uvInstallScript, on: env, progress: progress)
             guard r.code == 0 else { throw fail("uv could not be installed, and \(agent.name) needs it. \(r.last)") }
+            return nil
         default:
             throw fail("\(agent.name) runs “\(agent.command)”, which is not on the server. Install it there, then check again.")
         }

@@ -171,6 +171,20 @@ public final class AcpClient: @unchecked Sendable {
     private let onEvent: @Sendable (AcpEvent) -> Void
     private let process = Process()
     private let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
+    private let linkLock = NSLock()
+    private var recentStderr = ""
+    private var onLink: (@Sendable (OAuthLink) -> Void)?
+
+    /// The agent's log. Kept briefly so a sign-in link it prints while we wait can be handed on.
+    private func sawStderr(_ s: String) {
+        linkLock.lock()
+        recentStderr = String((recentStderr + s).suffix(8192))
+        let handler = onLink, found = handler == nil ? nil : OAuthLink.find(in: recentStderr)
+        if found != nil { onLink = nil }
+        linkLock.unlock()
+        if let found { handler?(found) }
+    }
+    private func watchForLink(_ h: (@Sendable (OAuthLink) -> Void)?) { linkLock.lock(); onLink = h; recentStderr = ""; linkLock.unlock() }
     private let lock = NSLock()
     private let writeQueue = DispatchQueue(label: "cpilot.acp.write")
     private var carry = ""
@@ -195,7 +209,7 @@ public final class AcpClient: @unchecked Sendable {
         if let e = environment {
             // The agent runs on the server and reads its own files there, so CPilot offers no file access of its own.
             process.executableURL = URL(fileURLWithPath: SSH.executable)
-            let c = AgentInstaller.onServer(config, home: e.remoteHome)
+            let c = e.remoteAgents?[config.id] ?? AgentInstaller.onServer(config, home: e.remoteHome)
             process.arguments = SSH.baseArgs(e) + [e.target, SSH.remoteCommand(c.command, c.args, cwd: cwd.path, env: c.env)]
             process.environment = SSH.environment(for: e)
         } else {
@@ -210,7 +224,10 @@ public final class AcpClient: @unchecked Sendable {
             let d = h.availableData
             if !d.isEmpty { self?.ingest(d) }
         }
-        stderr.fileHandleForReading.readabilityHandler = { h in _ = h.availableData }
+        stderr.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            if !d.isEmpty { self?.sawStderr(String(decoding: d, as: UTF8.self)) }
+        }
         process.terminationHandler = { [weak self] p in
             guard let self else { return }
             self.stdout.fileHandleForReading.readabilityHandler = nil
@@ -245,6 +262,17 @@ public final class AcpClient: @unchecked Sendable {
             let env = ProcessInfo.processInfo.environment.merging(config.env) { _, n in n }
             guard let method = AcpAuth.choose(from: authMethods, preferred: config.authMethod, env: env) else { throw AcpError.authRequired(said) }
             onEvent(.items([ChatItem(id: "acp-auth", kind: .notice, text: "\(config.name) needs you signed in. Using “\(method.name)”. If a browser opens, finish signing in there.", status: .running)]))
+            // On a server nothing can open a browser, so the link the agent prints is opened here, and its callback port is
+            // forwarded to the server so the page's redirect reaches the agent.
+            let forward = ForwardBox()
+            if let e = environment {
+                watchForLink { [weak self] link in
+                    if let port = link.callbackPort { forward.set(try? SSHForward(e, port: port)) }
+                    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = [link.url.absoluteString]; try? p.run()
+                    self?.onEvent(.items([ChatItem(id: "acp-auth", kind: .notice, text: "Finish signing in to \(self?.config.name ?? "the agent") in the browser that just opened.", status: .running)]))
+                }
+            }
+            defer { watchForLink(nil); forward.stop() }
             do { _ = try await request("authenticate", ["methodId": method.id], timeout: AcpClient.signInTimeout) }
             catch { throw AcpError.authRequired("Signing in with “\(method.name)” did not work: \(error.localizedDescription)") }
             return try await call()
@@ -380,4 +408,13 @@ public final class AcpClient: @unchecked Sendable {
     private func reply(_ id: Any, error: String, code: Int = -32000) {
         write(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": error]])
     }
+}
+
+
+/// Holds the port forward opened for a sign-in, so it can be closed when the sign-in ends.
+final class ForwardBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var forward: SSHForward?
+    func set(_ f: SSHForward?) { lock.lock(); forward = f; lock.unlock() }
+    func stop() { lock.lock(); let f = forward; forward = nil; lock.unlock(); f?.stop() }
 }
