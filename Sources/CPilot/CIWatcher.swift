@@ -42,7 +42,7 @@ final class CIWatcher {
             watches[key] = watch
             if watch.hasPending { running = true }
             if first { continue }
-            for e in events { announce(e) }
+            for e in events { await announce(e, in: key) }
         }
         watches = watches.filter { done.contains($0.key) }
         return running
@@ -59,9 +59,24 @@ final class CIWatcher {
         return key
     }
 
-    private func announce(_ e: CIWatch.Event) {
+    /// A pull request CPilot is set to merge says "Merged" or "can't merge" by itself, so "passed" would only be a second notification.
+    /// A failure is always told: auto-merge will not happen.
+    private func isMergedByCPilot(_ n: Int, in repo: String) async -> Bool {
+        let path = repo.split(separator: "|", omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        for (k, dir) in PRCenter.shared.armed where k.hasSuffix("#\(n)") {
+            if let armedKey = await repoKey(PRCenter.Repo(dir: dir, environment: nil)), armedKey.hasPrefix(path + "|") { return true }
+        }
+        let stack = StackCenter.shared
+        if let r = stack.repo, stack.isArmed(r), stack.stacks.contains(where: { $0.bottomOpen?.pr == n }),
+           await repoKey(r) == repo { return true }
+        return false
+    }
+
+    private func announce(_ e: CIWatch.Event, in repo: String) async {
         switch e.verdict {
-        case .passed: AppModel.shared.notify("#\(e.pr.number) checks passed", body: e.pr.title)
+        case .passed:
+            if await isMergedByCPilot(e.pr.number, in: repo) { return }
+            AppModel.shared.notify("#\(e.pr.number) checks passed", body: e.pr.title)
         case .failed(let names): AppModel.shared.notify("#\(e.pr.number) checks failed", body: names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more" : ""))
         default: break
         }

@@ -35,6 +35,8 @@ final class PRCenter {
     private let scanStore = ScanStore()                  // on disk, by repository + number + head commit, so a re-open or a restart does not rescan
     private func scanKey(_ dir: String, _ pr: PullRequest) -> String { "\(dir)#\(pr.number)#\(pr.headRefOid ?? pr.headRefName)" }
     private var watcher: Task<Void, Never>?
+    /// Armed pull requests already reported as unable to merge, by repository, number and head commit, so the minute-by-minute check says it once.
+    private var cantMergeTold: Set<String> = []
     /// Open pull requests per repository, so the screen shows something at once and refreshes behind it.
     private var cache: [String: (prs: [PullRequest], at: Date)] = [:]
     private func cacheKey(_ dir: String, _ environment: String?) -> String { dir + "|" + (environment ?? "") }
@@ -285,6 +287,8 @@ final class PRCenter {
                     armed[k] = nil; persistArmed()
                     AppModel.shared.notify("Merged #\(n)", body: pr.title)
                 } catch { AppLog.error(error, context: "auto-merge #\(n)") }
+            } else if !chk.contains(where: { !$0.passed }), cantMergeTold.insert(key).inserted {
+                AppModel.shared.notify("#\(n) can't merge yet", body: gate.reasons.first ?? pr.title)
             }
         }
         if armed.isEmpty { watcher?.cancel(); watcher = nil }
