@@ -248,6 +248,7 @@ struct TabStrip: View {
                 .popover(isPresented: $showHistory, arrowEdge: .bottom) { SessionHistory { showHistory = false } }
         }
         .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 0)
+        .onAppear { ws.ensureSelectedTab() }
         .background(Theme.sidebar)
         .overlay(alignment: .bottom) { Divider() }
     }

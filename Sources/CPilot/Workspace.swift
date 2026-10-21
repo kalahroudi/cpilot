@@ -536,11 +536,18 @@ final class Workspace {
     func select(_ id: String) {
         let previous = selected
         selected = id
-        if !tabs.contains(id) { tabs.append(id) }
+        // With the side list there is no tab strip, so browsing it must not pile every session into the tabs.
+        if !tabs.contains(id), !Prefs.shared.tabsOnSide { tabs.append(id) }
         controller(id)?.loadIfNeeded()
         controller(id)?.showRecapIfAway()
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
+    }
+
+    /// Back on the tab strip: the session on screen gets its tab, the rest stay as they were.
+    func ensureSelectedTab() {
+        guard let id = selected, !tabs.contains(id) else { return }
+        tabs.append(id); persistTabs()
     }
 
     var archived: [SessionMeta] { store.list(includeArchived: true).filter(\.archived) }
