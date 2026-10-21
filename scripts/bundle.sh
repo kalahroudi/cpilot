@@ -1,5 +1,6 @@
 #!/bin/bash
 # Builds CPilot.app into ./dist (or $DIST_DIR). Usage: scripts/bundle.sh [version]
+# INSTALL=1 also replaces /Applications/CPilot.app (or $APP_DEST/CPilot.app) with the new build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -49,9 +50,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # Ad-hoc signed by default. With SIGN_IDENTITY set to a "Developer ID Application: ..." identity it is signed
-# for distribution with the hardened runtime.
-if [ "${SIGN_IDENTITY:--}" = "-" ]; then
+# for distribution with the hardened runtime. An "Apple Development" identity (picked automatically for INSTALL=1)
+# signs without it, which keeps the signature stable so macOS keeps Screen Recording and other grants across rebuilds.
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ] && [ "${INSTALL:-0}" = "1" ]; then
+  SIGN_IDENTITY="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
+fi
+if [ -z "$SIGN_IDENTITY" ] || [ "$SIGN_IDENTITY" = "-" ]; then
   SIGN_FLAGS=(--force --sign -)
+elif [[ "$SIGN_IDENTITY" == "Apple Development:"* ]]; then
+  SIGN_FLAGS=(--force --sign "$SIGN_IDENTITY")
 else
   SIGN_FLAGS=(--force --timestamp --options runtime --entitlements scripts/CPilot.entitlements --sign "$SIGN_IDENTITY")
 fi
@@ -60,3 +68,14 @@ codesign "${SIGN_FLAGS[@]}" "$APP"
 codesign --verify --strict "$APP"
 
 echo "Built $APP"
+
+if [ "${INSTALL:-0}" = "1" ]; then
+  DEST="${APP_DEST:-/Applications}/CPilot.app"
+  if pgrep -f "$DEST/Contents/MacOS/CPilot" >/dev/null; then
+    osascript -e 'tell application id "com.kalahroudi.cpilot" to quit' 2>/dev/null || true
+    sleep 1
+  fi
+  rm -rf "$DEST"
+  ditto "$APP" "$DEST"
+  echo "Installed $DEST"
+fi
