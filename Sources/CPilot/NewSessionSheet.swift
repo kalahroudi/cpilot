@@ -8,7 +8,8 @@ import CPilotKit
 struct NewSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
     let ws = Workspace.shared
-    @State private var folder = UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory()
+    /// The repository chosen in the side menu comes first; only without one does it fall back to the last folder used.
+    @State private var folder = Project.shared.current?.dir ?? UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory()
     @State private var info: RepoInfo?
     @State private var backend: Backend = .claude
     @State private var model = ""
@@ -22,7 +23,7 @@ struct NewSessionSheet: View {
     @State private var cloneQuery = ""
     @State private var repos: [String] = []
     @State private var showClone = false
-    @State private var envId: String? = UserDefaults.standard.string(forKey: "lastEnv").flatMap { Workspace.shared.environment($0) != nil ? $0 : nil }
+    @State private var envId: String? = Project.shared.current.map(\.environment) ?? UserDefaults.standard.string(forKey: "lastEnv").flatMap { Workspace.shared.environment($0) != nil ? $0 : nil }
     @State private var picking = false
     private var env: EnvironmentConfig? { ws.environment(envId) }
 
