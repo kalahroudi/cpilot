@@ -47,6 +47,7 @@ struct RepoSetupView: View {
                             }
                             SettingsGroup("Protection") {
                                 SettingRow("Protect main", "Changes go through a pull request. No force pushes, no deleting main, linear history. You can still merge your own work and bypass in an emergency.") { switchFor($plan.protectMain) }
+                                SettingRow("Owner can push straight to main", "Off: even you go through a pull request. Turn on only as an emergency hatch.") { switchFor($plan.ownerMayPushDirectly) }
                                 SettingRow("Security scan on every PR", "Adds a small workflow, opened as a pull request, that scans each change.") { switchFor($plan.securityScan) }
                             }
                         }.frame(maxWidth: .infinity)

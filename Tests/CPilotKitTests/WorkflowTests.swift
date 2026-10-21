@@ -321,3 +321,56 @@ final class ArtifactTests: XCTestCase {
         XCTAssertTrue(ArtifactFile(path: "/p/s.PNG", created: true, touches: 1, lastTouched: .now).isImage)
     }
 }
+
+final class SecurityPlanTests: XCTestCase {
+    /// Real output of SecurityCage's offline plan for a file with a hardcoded Stripe key.
+    let plan = """
+    # Security plan: demo
+
+    ## Worth fixing now
+
+    ### 1. 1 secret written directly in the code (Stripe live secret key).
+
+    **Severity:** critical · **How sure:** likely
+
+    **Why it matters:** Anyone who can read this code can use these keys as you.
+
+    **Do this:** Rotate each key first.
+
+    **Fix prompt** (paste into your AI coding tool):
+
+    ```text
+    These files contain hardcoded secrets: src/server.js:3. Replace each with an environment variable.
+    ```
+
+    **Where:**
+
+    - `src/server.js:3`
+
+    ### 2. A softer note
+
+    **Severity:** low · **How sure:** possible
+
+    **Why it matters:** Minor.
+
+    ## What an attacker can reach
+
+    1 HTTP endpoint
+    """
+
+    func testPlanParsing() {
+        let r = SecurityCage.parsePlan(plan)
+        XCTAssertEqual(r.findings.count, 2)
+        XCTAssertTrue(r.findings[0].confirmed); XCTAssertEqual(r.findings[0].severity, "critical")
+        XCTAssertTrue(r.findings[0].detail.contains("src/server.js:3")); XCTAssertTrue(r.findings[0].prompt?.contains("environment variable") == true)
+        XCTAssertFalse(r.findings[1].confirmed)
+        XCTAssertTrue(r.blocksMerge)
+        XCTAssertTrue(SecurityCage.fixPrompt(r.findings[0]).contains("regression test"))
+        XCTAssertFalse(SecurityCage.parsePlan("# Security plan\n\n## Worth fixing now\n\n## What an attacker can reach\n").blocksMerge)
+    }
+
+    func testNeverUsesNpx() throws {
+        let src = try String(contentsOfFile: #filePath.replacingOccurrences(of: "Tests/CPilotKitTests/WorkflowTests.swift", with: "Sources/CPilotKit/SecurityCage.swift"), encoding: .utf8)
+        XCTAssertFalse(src.contains("\"npx\""), "SecurityCage must run from a local checkout, never from a registry")
+    }
+}

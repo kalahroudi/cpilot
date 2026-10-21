@@ -93,7 +93,12 @@ struct GitHubSettings: View {
             }
             SettingsGroup("Pull requests") {
                 SettingRow("Scan every PR for security problems", "Runs before CPilot will merge. Proven issues block the merge; unconfirmed leads never do.") { toggle($p.securityScanOnPR) }
-                SettingRow("Merge style", "How the commits land on the main branch.") { EmptyView() }
+                SettingRow("SecurityCage folder", SecurityCage.locate(configured: Prefs.shared.securityCagePath).map { "Found: " + $0.replacingOccurrences(of: "/packages/cli/src/cli.ts", with: "") } ?? SecurityCage.setupHint) {
+                    Button("Choose…") {
+                        let o = NSOpenPanel(); o.canChooseDirectories = true; o.canChooseFiles = false
+                        if o.runModal() == .OK, let u = o.url { Prefs.shared.securityCagePath = u.path }
+                    }.buttonStyle(Pill(kind: .plain))
+                }
             }
             SettingsGroup("Folders and tools") {
                 SettingRow("Clone repositories into", Prefs.shared.cloneFolder.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {

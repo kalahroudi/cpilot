@@ -15,6 +15,8 @@ public struct RepoSetupPlan: Equatable, Sendable {
     public var securityScan = true
     /// Names of workflow jobs that must pass before merging. Leave empty until a workflow exists, or merges would wait forever.
     public var requiredChecks: [String] = []
+    /// Off by default: even the owner goes through a pull request. On lets the owner push straight to main in an emergency.
+    public var ownerMayPushDirectly = false
     public var slug: String { "\(owner)/\(name)" }
 
     public enum License: String, CaseIterable, Sendable {
@@ -28,8 +30,8 @@ public enum RepoSetup {
     // MARK: Pure pieces (tested)
 
     /// The "Protect main" ruleset: changes go through a pull request, history stays linear, main cannot be force pushed or deleted.
-    /// Zero required approvals, so a solo owner can merge their own work; the owner role may bypass in an emergency.
-    public static func rulesetJSON(requiredChecks: [String]) -> String {
+    /// Zero required approvals, so a solo owner can merge their own work. The owner role can bypass the pull request rules only while merging a pull request, never by pushing straight to main, unless `ownerMayPushDirectly` is set.
+    public static func rulesetJSON(requiredChecks: [String], ownerMayPushDirectly: Bool = false) -> String {
         var rules: [[String: Any]] = [
             ["type": "deletion"], ["type": "non_fast_forward"], ["type": "required_linear_history"],
             ["type": "pull_request", "parameters": ["required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false,
@@ -45,7 +47,7 @@ public enum RepoSetup {
         let body: [String: Any] = [
             "name": "Protect main", "target": "branch", "enforcement": "active",
             "conditions": ["ref_name": ["include": ["~DEFAULT_BRANCH"], "exclude": [String]()]],
-            "bypass_actors": [["actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"]],
+            "bypass_actors": [["actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": ownerMayPushDirectly ? "always" : "pull_request"]],
             "rules": rules,
         ]
         return (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -77,7 +79,7 @@ public enum RepoSetup {
         """
     }
 
-    public static let gitignore = ".DS_Store\n.build/\nnode_modules/\ndist/\n.env\n"
+    public static let gitignore = ".DS_Store\n.build/\nnode_modules/\ndist/\n.env\n.securitycage/\n"
 
     /// A small workflow that runs the security scan on every pull request. It scans the code as data and never runs it.
     public static func securityWorkflow(action: String = "kalahroudi/securitycage@main") -> String {
@@ -153,7 +155,7 @@ public enum RepoSetup {
 
         if plan.protectMain {
             let file = fm.temporaryDirectory.appendingPathComponent("cpilot-ruleset-\(UUID().uuidString).json")
-            try rulesetJSON(requiredChecks: plan.requiredChecks).write(to: file, atomically: true, encoding: .utf8)
+            try rulesetJSON(requiredChecks: plan.requiredChecks, ownerMayPushDirectly: plan.ownerMayPushDirectly).write(to: file, atomically: true, encoding: .utf8)
             defer { try? fm.removeItem(at: file) }
             let r = try? await Shell.run("gh", ["api", "-X", "POST", "repos/\(plan.slug)/rulesets", "--input", file.path], cwd: dir)
             if r?.ok == true { log("Ruleset \"Protect main\" applied") }

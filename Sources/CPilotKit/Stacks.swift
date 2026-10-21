@@ -179,6 +179,8 @@ public enum Stacks {
             var parent = parentOf[b.name] ?? b.parent
             // Parents that are merged (or gone) collapse into the trunk.
             while let p = stack.branches.first(where: { $0.name == parent }), p.isMerged { parent = parentOf[p.name] ?? stack.trunk }
+            // GitHub (and `gh pr merge --delete-branch`) removes a merged branch, so a parent that is gone collapses into the trunk too.
+            if !(await gitOK(["rev-parse", "--verify", "--quiet", parent], in: dir)) { parent = stack.trunk }
             let newBase = try await git(["rev-parse", parent], in: dir)
             var oldBase = b.base ?? ""
             if oldBase.isEmpty { oldBase = try await git(["merge-base", b.parent, b.name], in: dir) }

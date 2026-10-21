@@ -40,6 +40,8 @@ final class Prefs {
     var recapWithClaude: Bool { didSet { d.set(recapWithClaude, forKey: "recapWithClaude") } }
     /// How much the agent does by itself when turning an idea into a spec and a stack: "step", "plan" or "hands".
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
+    /// A local checkout of SecurityCage (with npm install done), used for scans.
+    var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -62,6 +64,7 @@ final class Prefs {
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")

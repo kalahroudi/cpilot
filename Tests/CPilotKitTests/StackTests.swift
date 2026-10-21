@@ -99,6 +99,19 @@ final class StackTests: XCTestCase {
         XCTAssertFalse(branches.contains("\na\n") || branches.hasPrefix("a\n"))
     }
 
+    func testRestackWhenTheMergedBranchWasDeleted() async throws {
+        try await buildStack()
+        try await sh(["checkout", "main"]); try await sh(["merge", "--squash", "a"]); try await sh(["commit", "-m", "add a (#1)"]); try await sh(["push", "origin", "main"])
+        try await sh(["branch", "-D", "a"])                       // gh pr merge --delete-branch does this
+        let stack = await Stacks.load(in: dir)[0]
+        XCTAssertEqual(stack.branches.first?.name, "b"); XCTAssertEqual(stack.trunk, "main"); XCTAssertTrue(stack.needsRestack)
+        let r = try await Stacks.restack(stack, in: dir)
+        XCTAssertEqual(r, .restacked(["b", "c"]))
+        let own = try await sh(["rev-list", "--count", "main..b"]); XCTAssertEqual(own, "1")
+        let tree = try await sh(["ls-tree", "-r", "--name-only", "c"])
+        XCTAssertTrue(tree.contains("a.txt") && tree.contains("b.txt") && tree.contains("c.txt"))
+    }
+
     func testConflictIsReportedAndCanBeAborted() async throws {
         try await buildStack()
         try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
@@ -143,6 +156,16 @@ final class StackTests: XCTestCase {
         let merged = try await Stacks.mergeBottom(stack, in: dir, host: host)
         XCTAssertEqual(merged, "a")
         XCTAssertEqual(host.calls, ["base #102->main", "merge #101"])       // the next PR is moved to main before the merge
+    }
+}
+
+final class RulesetTests: XCTestCase {
+    func testOwnerCannotPushDirectlyByDefault() throws {
+        func mode(_ on: Bool) throws -> String {
+            let j = try JSONSerialization.jsonObject(with: Data(RepoSetup.rulesetJSON(requiredChecks: [], ownerMayPushDirectly: on).utf8)) as! [String: Any]
+            return ((j["bypass_actors"] as! [[String: Any]])[0]["bypass_mode"]) as! String
+        }
+        XCTAssertEqual(try mode(false), "pull_request"); XCTAssertEqual(try mode(true), "always")
     }
 }
 
