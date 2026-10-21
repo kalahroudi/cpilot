@@ -11,6 +11,9 @@ public struct SpecTask: Identifiable, Equatable, Sendable {
     public var needs: [String] = []       // T002
     public var branch: String?
     public var pr: Int?
+    public init(id: String, title: String, done: Bool, covers: [String] = [], needs: [String] = [], branch: String? = nil, pr: Int? = nil) {
+        self.id = id; self.title = title; self.done = done; self.covers = covers; self.needs = needs; self.branch = branch; self.pr = pr
+    }
 }
 
 public struct SpecDoc: Identifiable, Equatable, Sendable {
@@ -26,6 +29,9 @@ public struct SpecDoc: Identifiable, Equatable, Sendable {
     public var tasks: [SpecTask] { tasksText.map(Specs.parseTasks) ?? [] }
     public var source: String?            // "Issue #214" and so on, from the first "Source:" line
     public var openQuestions: [String] { spec.map(Specs.openQuestions) ?? [] }
+    public init(id: String, number: Int, title: String, spec: String?, plan: String?, tasksText: String?, source: String? = nil) {
+        self.id = id; self.number = number; self.title = title; self.spec = spec; self.plan = plan; self.tasksText = tasksText; self.source = source
+    }
     public var progress: (done: Int, total: Int) { let t = tasks; return (t.filter(\.done).count, t.count) }
 
     /// Where the spec stands. `merged` holds branches whose pull requests are merged; `started` holds branches that exist.
@@ -130,9 +136,10 @@ public enum Specs {
     public static func nextNumber(existing ids: [String]) -> Int { (ids.compactMap { Int($0.prefix(while: \.isNumber)) }.max() ?? 0) + 1 }
     public static func folderName(number: Int, title: String) -> String { String(format: "%03d-%@", number, String(Git.slugify(title).prefix(40))) }
 
-    /// Tasks that can start now: not done, not started, and everything they need is finished.
-    public static func ready(_ tasks: [SpecTask], merged: Set<String> = []) -> [SpecTask] {
-        let finished = Set(tasks.filter { $0.done || ($0.branch.map(merged.contains) ?? false) }.map(\.id))
+    /// Tasks that can start now: not done, not started, and everything they need is finished, either merged or already coded
+    /// (its branch has commits), because the next task is stacked on top of it.
+    public static func ready(_ tasks: [SpecTask], merged: Set<String> = [], coded: Set<String> = []) -> [SpecTask] {
+        let finished = Set(tasks.filter { $0.done || ($0.branch.map { merged.contains($0) || coded.contains($0) } ?? false) }.map(\.id))
         return tasks.filter { t in !t.done && t.branch == nil && t.needs.allSatisfy(finished.contains) }
     }
 

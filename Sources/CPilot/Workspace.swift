@@ -27,6 +27,8 @@ final class SessionController: Identifiable {
     var pending: [Pending] = []
     var cost: Double = 0
     var loaded = false
+    /// Called after each finished turn; spec tasks use it to know when their agent is done.
+    var onTurnEnd: ((SessionController) -> Void)?
     /// The "while you were away" card is showing.
     var recapVisible = false
     var recapBusy = false
@@ -385,6 +387,7 @@ final class SessionController: Identifiable {
         if case .failed = state {} else { state = pending.isEmpty ? .idle : .waiting }
         meta.updatedAt = .now; ws.save(meta)
         ws.turnFinished(self)
+        onTurnEnd?(self)
         scheduleSleep()
     }
 
@@ -692,6 +695,34 @@ final class Workspace {
         select(meta.id)
         return c
     }
+
+    /// A session for one spec task: its own branch on top of `parent`, in its own copy of the files.
+    @discardableResult
+    func startTask(repo: String, environment: String?, branch: String, parent: String, title: String, prompt: String, focus: Bool,
+                   onTurnEnd: @escaping (SessionController) -> Void) async throws -> SessionController {
+        let remote = self.environment(environment)
+        let level: AccessLevel = policy.defaultLevel == .readOnly ? .editFiles : (policy.defaultLevel == .fullAccess ? .editFiles : policy.defaultLevel)
+        var meta = SessionMeta(title: title, cwd: repo, access: level, branch: branch)
+        meta.environment = environment
+        let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
+        try await Exec.with(remote) {
+            _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
+            let tip = try await Shell.check("git", ["rev-parse", parent], cwd: URL(fileURLWithPath: repo)).trimmingCharacters(in: .whitespacesAndNewlines)
+            try await Git.addWorktree(repo: repo, branch: branch, base: parent, to: path)
+            try await Stacks.setParent(branch, to: parent, base: tip, in: repo)
+        }
+        meta.worktree = path
+        save(meta)
+        let c = controller(meta.id)!
+        c.loaded = true
+        c.onTurnEnd = onTurnEnd
+        if focus { select(meta.id) }
+        c.draft = prompt; c.send()
+        return c
+    }
+
+    /// Lets commands starting with these words run without asking in this project (the user chose this when starting a hands-off run).
+    func allowCommands(_ prefixes: [String], for folder: String) { for p in prefixes { addProjectCommand(p, for: folder) } }
 
     func children(of id: String) -> [SessionMeta] { sessions.filter { $0.parentId == id } }
 

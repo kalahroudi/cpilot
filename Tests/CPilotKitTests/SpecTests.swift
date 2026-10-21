@@ -35,6 +35,9 @@ final class SpecTests: XCTestCase {
         let t = Specs.parseTasks(tasksText)
         XCTAssertEqual(Specs.ready(t).map(\.id), ["T002", "T004"])               // T003 already has a branch
         XCTAssertEqual(Specs.ready(t, merged: ["spec-014-t003"]).map(\.id), ["T002", "T004"])
+        var s2 = t; s2[1].branch = "b2"                                                  // T002 started
+        XCTAssertEqual(Specs.ready(s2).map(\.id), ["T004"])                               // T003 already has a branch, T002 is running
+        XCTAssertEqual(Specs.ready(s2.map { var x = $0; if x.id == "T003" { x.branch = nil; x.pr = nil }; return x }, coded: ["b2"]).map(\.id), ["T003", "T004"])   // T002 has commits, so T003 can stack on it
         XCTAssertEqual(Specs.parentBranch(for: t[1], in: t, trunk: "main"), "main")    // T001 is done
         XCTAssertEqual(Specs.parentBranch(for: t[2], in: t, trunk: "main"), "main")    // T002 has no branch yet
         var u = t; u[1].branch = "spec-014-t002"

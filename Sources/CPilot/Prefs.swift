@@ -38,6 +38,8 @@ final class Prefs {
     var recapAuto: Bool { didSet { d.set(recapAuto, forKey: "recapAuto") } }
     /// Let Claude rewrite recaps in friendlier language (a small, cheap call).
     var recapWithClaude: Bool { didSet { d.set(recapWithClaude, forKey: "recapWithClaude") } }
+    /// How much the agent does by itself when turning an idea into a spec and a stack: "step", "plan" or "hands".
+    var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -53,13 +55,14 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
         recall = d.bool(forKey: "recall")

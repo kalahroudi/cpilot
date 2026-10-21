@@ -19,6 +19,53 @@ final class StackCenter {
     var method: MergeMethod = .squash
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
 
+    /// Repositories whose stacks CPilot merges by itself, bottom first, whenever the merge rules pass. Checked once a minute while any is armed.
+    var armed: [String: String] = UserDefaults.standard.dictionary(forKey: "armedStacks") as? [String: String] ?? [:]
+    private var watcher: Task<Void, Never>?
+
+    func isArmed(_ r: PRCenter.Repo) -> Bool { armed[r.dir + "|" + (r.environment ?? "")] != nil }
+
+    func arm(repo r: PRCenter.Repo, on: Bool = true) {
+        let key = r.dir + "|" + (r.environment ?? "")
+        if on { armed[key] = r.environment ?? "" } else { armed[key] = nil }
+        UserDefaults.standard.set(armed, forKey: "armedStacks")
+        startWatcher()
+    }
+
+    func startWatcher() {
+        watcher?.cancel(); watcher = nil
+        guard !armed.isEmpty else { return }
+        watcher = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.mergeArmed()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    private func mergeArmed() async {
+        for (key, envId) in armed {
+            let dir = String(key.split(separator: "|", omittingEmptySubsequences: false).first ?? "")
+            let environment = Workspace.shared.environment(envId.isEmpty ? nil : envId)
+            let open: Bool = await Exec.with(environment) {
+                let host = LiveStackHost(dir: dir)
+                guard let stack = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { !$0.isMerged && $0.prState == "OPEN" } }),
+                      let bottom = stack.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { return false }
+                let gate = await PRCenter.shared.gateFor(n, dir: dir)
+                guard gate.ready else { return true }
+                do {
+                    _ = try await Stacks.mergeBottom(stack, in: dir, host: host, method: method)
+                    _ = try await Stacks.sync(in: dir, host: host)
+                    if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
+                    AppModel.shared.notify("Merged #\(n)", body: stack.branches.last?.title ?? "")
+                } catch { AppLog.error(error, context: "auto-merge stack") }
+                return true
+            }
+            if !open { armed[key] = nil; UserDefaults.standard.set(armed, forKey: "armedStacks") }
+        }
+        if armed.isEmpty { watcher?.cancel(); watcher = nil }
+    }
+
     func open(_ r: PRCenter.Repo) async { repo = r; conflict = nil; error = nil; notice = nil; await refresh() }
 
     func refresh() async {
@@ -183,6 +230,7 @@ struct StackCard: View {
                 Button("Restack") { Task { await center.restack(stack) } }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || center.busy != nil)
                 Button("Submit") { Task { await center.submit(stack) } }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
                 Button("Merge from the bottom") { Task { await center.mergeBottom(stack) } }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
+                if let r = center.repo { Toggle("", isOn: Binding(get: { center.isArmed(r) }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent).help("Merge the stack automatically, bottom first, whenever every rule passes") }
             }
             Text("⎇ \(stack.trunk)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
             VStack(spacing: 6) { ForEach(stack.branches) { b in StackNode(branch: b, stack: stack) } }

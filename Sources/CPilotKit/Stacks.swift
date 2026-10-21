@@ -16,6 +16,9 @@ public struct StackBranch: Identifiable, Equatable, Sendable {
     public var title: String?
     public var id: String { name }
     public var isMerged: Bool { prState == "MERGED" }
+    public init(name: String, parent: String, base: String?, needsRestack: Bool = false, commits: Int = 0, depth: Int = 0, pr: Int? = nil, prState: String? = nil, title: String? = nil) {
+        self.name = name; self.parent = parent; self.base = base; self.needsRestack = needsRestack; self.commits = commits; self.depth = depth; self.pr = pr; self.prState = prState; self.title = title
+    }
 }
 
 public struct Stack: Equatable, Sendable, Identifiable {
@@ -24,6 +27,7 @@ public struct Stack: Equatable, Sendable, Identifiable {
     public var branches: [StackBranch]
     public var id: String { branches.first?.name ?? trunk }
     public var needsRestack: Bool { branches.contains { $0.needsRestack || $0.isMerged } }
+    public init(trunk: String, branches: [StackBranch]) { self.trunk = trunk; self.branches = branches }
 }
 
 /// What a stack needs from GitHub. The live version uses the GitHub command line; tests use a stand-in.

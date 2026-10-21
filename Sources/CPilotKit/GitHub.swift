@@ -135,8 +135,8 @@ public enum GitHub {
     // MARK: Issues
 
     public struct Issue: Codable, Identifiable, Equatable, Sendable {
-        public struct Label: Codable, Equatable, Sendable { public var name: String }
-        public struct User: Codable, Equatable, Sendable { public var login: String }
+        public struct Label: Codable, Equatable, Sendable { public var name: String; public init(name: String) { self.name = name } }
+        public struct User: Codable, Equatable, Sendable { public var login: String; public init(login: String) { self.login = login } }
         public struct Comment: Codable, Equatable, Sendable { public var body: String; public var author: User? }
         public var number: Int
         public var title: String
@@ -148,6 +148,7 @@ public enum GitHub {
         public var comments: [Comment]?
         public var updatedAt: String?
         public var id: Int { number }
+        public init(number: Int, title: String, labels: [Label]? = nil) { self.number = number; self.title = title; self.labels = labels }
         public static let listFields = "number,title,state,labels,author,assignees,updatedAt"
 
         /// The issue as text an agent can work from: title, description, and the discussion.
@@ -168,5 +169,35 @@ public enum GitHub {
     public static func issue(_ n: Int, in dir: String) async throws -> Issue {
         let out = try await Shell.check("gh", ["issue", "view", String(n), "--json", "number,title,state,body,labels,author,comments"], cwd: url(dir), timeout: 60)
         return try JSONDecoder().decode(Issue.self, from: Data(out.utf8))
+    }
+
+    // MARK: Inbox (across repositories)
+
+    public struct InboxItem: Codable, Identifiable, Equatable, Sendable {
+        public struct Repo: Codable, Equatable, Sendable { public var nameWithOwner: String; public var name: String?; public init(nameWithOwner: String, name: String?) { self.nameWithOwner = nameWithOwner; self.name = name } }
+        public var number: Int
+        public var title: String
+        public var repository: Repo
+        public var author: Issue.User?
+        public var updatedAt: String?
+        public var url: String
+        public var isDraft: Bool?
+        public var id: String { "\(repository.nameWithOwner)#\(number)" }
+        public init(number: Int, title: String, repository: Repo, author: Issue.User?, updatedAt: String?, url: String, isDraft: Bool?) {
+            self.number = number; self.title = title; self.repository = repository; self.author = author; self.updatedAt = updatedAt; self.url = url; self.isDraft = isDraft
+        }
+    }
+
+    /// Open pull requests that need you: review requested, and your own.
+    public static func inbox() async -> (reviewRequested: [InboxItem], mine: [InboxItem]) {
+        async let a = searchPRs("--review-requested=@me")
+        async let b = searchPRs("--author=@me")
+        return await (a, b)
+    }
+
+    static func searchPRs(_ flag: String) async -> [InboxItem] {
+        guard let out = try? await Shell.check("gh", ["search", "prs", flag, "--state", "open", "--limit", "30", "--json", "number,title,repository,author,updatedAt,url,isDraft"], timeout: 60),
+              let list = try? JSONDecoder().decode([InboxItem].self, from: Data(out.utf8)) else { return [] }
+        return list
     }
 }

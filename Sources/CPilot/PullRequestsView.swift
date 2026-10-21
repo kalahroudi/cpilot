@@ -24,6 +24,7 @@ final class PRCenter {
     var method: MergeMethod = .squash
     var fileFilter = ""
     var showCreate = false
+    var showInbox = false
     /// Pull requests CPilot merges by itself the moment every rule passes: "owner/repo#number" -> repo folder.
     var armed: [String: String] = UserDefaults.standard.dictionary(forKey: "armedMerges") as? [String: String] ?? [:]
     private var scans: [String: SecurityResult] = [:]     // by head branch + number, so a re-open does not rescan
@@ -223,8 +224,9 @@ struct PullRequestsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Pull requests", subtitle: center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
+            PaneHeader(title: "Pull requests", subtitle: center.showInbox ? "Everything that needs you, across your repositories" : center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
                 HStack(spacing: 8) {
+                    Segmented(options: [(false, "Repository"), (true, "Inbox")], selection: Bindable(center).showInbox)
                     Menu {
                         ForEach(center.repos(), id: \.self) { r in Button(r.name) { Task { await center.open(r) } } }
                     } label: { Label("Repository", systemImage: "folder") }.menuStyle(.borderlessButton).fixedSize()
@@ -232,7 +234,8 @@ struct PullRequestsView: View {
                         .buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
                 }
             }
-            if center.repoDir == nil {
+            if center.showInbox { InboxView() }
+            else if center.repoDir == nil {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
                     Text("Repositories come from your sessions. Start a session in a project first.").font(.system(size: 12.5)).foregroundStyle(.secondary)
@@ -458,6 +461,84 @@ struct DiffList: View {
             ForEach(center.files.filter { center.fileFilter.isEmpty || $0.path.localizedCaseInsensitiveContains(center.fileFilter) }) { f in
                 DiffFileView(file: f, collapsed: collapsed.contains(f.path)) { if collapsed.contains(f.path) { collapsed.remove(f.path) } else { collapsed.insert(f.path) } }
             }
+        }
+    }
+}
+
+
+/// Every pull request that needs you, across all your repositories: review requested, and yours.
+@MainActor @Observable
+final class InboxCenter {
+    static let shared = InboxCenter()
+    var review: [GitHub.InboxItem] = []
+    var mine: [GitHub.InboxItem] = []
+    var loading = false
+    private var local: [String: PRCenter.Repo] = [:]
+
+    func load() async {
+        loading = true; defer { loading = false }
+        let r = await GitHub.inbox()
+        review = r.reviewRequested; mine = r.mine
+        // Which repositories are on this Mac, so a click can open the full review screen.
+        var map: [String: PRCenter.Repo] = [:]
+        for repo in PRCenter.shared.repos() where repo.environment == nil {
+            if let slug = await Git.info(repo.dir)?.remote { map[slug] = repo }
+        }
+        local = map
+    }
+
+    func repo(for item: GitHub.InboxItem) -> PRCenter.Repo? { local[item.repository.nameWithOwner] }
+
+    func open(_ item: GitHub.InboxItem) async {
+        if let r = repo(for: item) {
+            await PRCenter.shared.open(r)
+            await PRCenter.shared.select(item.number)
+            PRCenter.shared.showInbox = false
+        } else if let u = URL(string: item.url) { NSWorkspace.shared.open(u) }
+    }
+
+    func clone(_ item: GitHub.InboxItem) async {
+        do {
+            try? FileManager.default.createDirectory(atPath: Prefs.shared.cloneFolder, withIntermediateDirectories: true)
+            let dir = try await GitHub.clone(item.repository.nameWithOwner, into: Prefs.shared.cloneFolder)
+            local[item.repository.nameWithOwner] = PRCenter.Repo(dir: dir, environment: nil)
+            AppModel.shared.show("Cloned \(item.repository.nameWithOwner)")
+        } catch { AppModel.shared.show(UserError.message(for: error, action: "Clone"), error: true) }
+    }
+}
+
+struct InboxView: View {
+    let center = InboxCenter.shared
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if center.loading && center.review.isEmpty && center.mine.isEmpty { SkeletonList(rows: 5) }
+                section("Review requested", center.review, empty: "Nothing is waiting for your review.")
+                section("Yours", center.mine, empty: "You have no open pull requests.")
+            }.padding(22).frame(maxWidth: 860, alignment: .leading)
+        }
+        .task { if !AppModel.shared.demo { await center.load() } }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ items: [GitHub.InboxItem], empty: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack { SectionLabel(title); Badge(text: "\(items.count)"); Spacer(); if title == "Yours" { Button { Task { await center.load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).help("Refresh") } }.padding(.leading, 4)
+            VStack(spacing: 0) {
+                if items.isEmpty { Text(empty).font(.system(size: 12.5)).foregroundStyle(.secondary).padding(14).frame(maxWidth: .infinity, alignment: .leading) }
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                    if i > 0 { Divider().opacity(0.6) }
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(it.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            Text("\(it.repository.nameWithOwner) #\(it.number) · \(it.author?.login ?? "")").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if it.isDraft == true { Badge(text: "Draft") }
+                        if center.repo(for: it) == nil { Button("Clone") { Task { await center.clone(it) } }.buttonStyle(Pill(kind: .plain)) }
+                        Button(center.repo(for: it) == nil ? "Open on GitHub" : "Review") { Task { await center.open(it) } }.buttonStyle(Pill(kind: center.repo(for: it) == nil ? .plain : .primary))
+                    }.padding(.horizontal, 14).padding(.vertical, 9)
+                }
+            }.background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
         }
     }
 }

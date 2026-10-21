@@ -88,6 +88,7 @@ struct ChatHeader: View {
                 ForEach(ws.acpAgents.filter { $0.id != session.meta.backend.acpAgent }) { a in Button(a.name) { ws.fork(session, to: .acp(a.id)) } }
             }
             Divider()
+            Button("Make this a spec…") { SpecCenter.shared.fromSession(session); Task { await SpecCenter.shared.open(PRCenter.Repo(dir: session.meta.cwd, environment: session.meta.environment)); Nav.shared.pane = .specs } }
             Button("Save what we learned to memory…") { summarize = true }
             if session.meta.backend.kind == .claude, session.meta.remoteId != nil { Button("Continue in Terminal") { session.openInTerminal() } }
         } label: { Image(systemName: "ellipsis.circle") }

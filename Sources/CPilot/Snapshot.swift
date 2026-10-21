@@ -38,7 +38,7 @@ enum SnapshotMode {
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 
@@ -157,6 +157,31 @@ struct PopoverShot: View {
         +  res.cookie('sid', id, { httpOnly: true, secure: true })
         """)
         pr.scan = SecurityResult(findings: [SecurityFinding(title: "Session cookie missing SameSite", confirmed: true, detail: "src/api/session.ts:41 reproduced in an isolated container")], report: "")
+
+        // Specs and stacks
+        let repo = PRCenter.Repo(dir: "/Users/demo/code/shop", environment: nil)
+        let sc = SpecCenter.shared
+        sc.repo = repo; sc.trunk = "main"
+        let tasks = "# Tasks: Cursor pagination\n- [x] T001 Cursor encoding helper (R1) branch: spec-014-t001\n- [x] T002 Paginate the orders endpoint (R1, R2) needs: T001 branch: spec-014-t002\n- [ ] T003 Keep offset clients working (R3) needs: T002 branch: spec-014-t003 pr: #223\n- [ ] T004 Update the API docs (R4)\n- [ ] T005 Load test the new endpoints (R1) needs: T003"
+        sc.docs = [
+            SpecDoc(id: "012-login-rate-limiting", number: 12, title: "Login rate limiting", spec: "# Login rate limiting\n> Source: Issue #198", plan: "# Plan", tasksText: "- [x] T001 a\n- [ ] T002 b\n- [ ] T003 c\n- [ ] T004 d", source: "Issue #198"),
+            SpecDoc(id: "014-cursor-pagination", number: 14, title: "Cursor pagination", spec: "# Cursor pagination\n> Source: Issue #214\n## Why\nList endpoints time out on large accounts, so switch to cursor pagination and keep old clients working for two releases.\n## Open questions\n- none", plan: "# Plan: Cursor pagination", tasksText: tasks, source: "Issue #214"),
+            SpecDoc(id: "015-audit-log-export", number: 15, title: "Audit log export", spec: "# Audit log export", plan: "# Plan", tasksText: "- [ ] T001 Export endpoint (R1)\n- [ ] T002 CSV format (R1) needs: T001", source: "Described by you"),
+            SpecDoc(id: "016-team-invitations", number: 16, title: "Team invitations", spec: "# Team invitations\n## Open questions\n- Should invites expire?\n- Who can revoke them?", plan: nil, tasksText: nil, source: "Described by you"),
+        ]
+        sc.selected = "014-cursor-pagination"
+        sc.merged = ["spec-014-t001", "spec-014-t002"]; sc.started = ["spec-014-t001", "spec-014-t002", "spec-014-t003"]; sc.coded = sc.started
+        sc.issues = [GitHub.Issue(number: 214, title: "Orders list is slow for large accounts", labels: [.init(name: "bug"), .init(name: "api")]), GitHub.Issue(number: 219, title: "Export the audit log as CSV", labels: [.init(name: "feature")])]
+        let st = StackCenter.shared
+        st.repo = repo
+        st.stacks = [Stack(trunk: "main", branches: [
+            StackBranch(name: "spec-014-t001", parent: "main", base: nil, needsRestack: false, commits: 1, depth: 0, pr: 221, prState: "MERGED", title: "T001: Cursor encoding helper"),
+            StackBranch(name: "spec-014-t002", parent: "spec-014-t001", base: nil, needsRestack: false, commits: 2, depth: 1, pr: 222, prState: "MERGED", title: "T002: Paginate the orders endpoint"),
+            StackBranch(name: "spec-014-t003", parent: "spec-014-t002", base: nil, needsRestack: true, commits: 1, depth: 2, pr: 223, prState: "OPEN", title: "T003: Keep offset clients working"),
+            StackBranch(name: "spec-014-t004", parent: "spec-014-t003", base: nil, needsRestack: false, commits: 2, depth: 3, pr: nil, prState: nil, title: nil)])]
+        let ib = InboxCenter.shared
+        ib.review = [GitHub.InboxItem(number: 88, title: "Retry failed webhooks", repository: .init(nameWithOwner: "octo/api", name: "api"), author: .init(login: "ana"), updatedAt: nil, url: "u", isDraft: false)]
+        ib.mine = [GitHub.InboxItem(number: 223, title: "T003: Keep offset clients working", repository: .init(nameWithOwner: "octo/shop", name: "shop"), author: .init(login: "octo"), updatedAt: nil, url: "u", isDraft: false)]
 
         ws.memory.save(scope: MemoryStore.globalScope, name: "Writing style", body: "Plain language. Short sentences.")
     }
