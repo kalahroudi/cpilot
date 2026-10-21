@@ -42,27 +42,38 @@ final class Project {
     }
 }
 
-/// The repository picker shown in every pane that works on one: it shows which repository is active, not a bare "Repository".
-struct RepoMenu: View {
+/// The one place the repository is chosen, at the top of the side menu so it is there on every pane. Specs, Stacks, Pull requests and
+/// Repo setup follow it. Repositories with the same folder name are told apart by their parent folders.
+struct RepoSwitcher: View {
+    var expanded = true
     let project = Project.shared
 
     var body: some View {
-        Menu {
-            ForEach(project.repos(), id: \.self) { r in
-                Button { project.choose(r) } label: { if r == project.current { Label(r.name, systemImage: "checkmark") } else { Text(r.name) } }
+        let repos = project.repos()
+        let labels = RepoLabels.labels(repos.map { RepoRef(dir: $0.dir, environment: $0.environment) }) { Workspace.shared.environment($0)?.name }
+        func label(_ r: PRCenter.Repo) -> String { labels[RepoRef(dir: r.dir, environment: r.environment)] ?? r.name }
+        return Menu {
+            ForEach(repos, id: \.self) { r in
+                Button { project.choose(r) } label: { if r == project.current { Label(label(r), systemImage: "checkmark") } else { Text(label(r)) } }
             }
-            Divider()
+            if !repos.isEmpty { Divider() }
             AsyncButton("Add a folder…") { await project.addFolder() }
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(Theme.accent)
-                Text(project.current?.name ?? "Choose a repository").font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: "folder").font(.system(size: 14)).foregroundStyle(Theme.accent).frame(width: 22)
+                if expanded {
+                    Text(project.current.map(label) ?? "Choose a repository").font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                }
             }
-            .padding(.horizontal, 11).padding(.vertical, 6)
+            .padding(.horizontal, 8).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
         }
-        .menuStyle(.button).buttonStyle(.soft).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.soft).menuIndicator(.hidden)
+        .help(project.current.map { "Repository: \(label($0)). Specs, Stacks and Pull requests follow it." } ?? "Choose a repository")
+        .accessibilityLabel("Repository")
         .onAppear { project.ensureDefault() }
     }
 }

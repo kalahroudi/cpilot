@@ -15,7 +15,6 @@ struct SpecsView: View {
         VStack(spacing: 0) {
             PaneHeader(title: "Specs", subtitle: center.repo?.name ?? "From an idea to a stack of pull requests") {
                 HStack(spacing: 8) {
-                    RepoMenu()
                     if center.repo != nil {
                         TimelineView(.periodic(from: .now, by: 5)) { _ in
                             Text(center.loading ? "Refreshing…" : center.lastRefresh.map { "Updated \($0.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)))" } ?? "")

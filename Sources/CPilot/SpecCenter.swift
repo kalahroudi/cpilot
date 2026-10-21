@@ -59,7 +59,13 @@ final class SpecCenter {
     var docs: [SpecDoc] = []
     var constitution: String?
     var selected: String?
-    var jobs: [String: Job] = [:]
+    /// Jobs belong to the repository they started in: two repositories can have a spec with the same id, and a stage that finishes
+    /// after you switched repository must not write into the new one.
+    private var store = ScopedStore<Job>()
+    private var scope: String { repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key } ?? "" }
+    var jobs: [String: Job] { store.all(in: scope) }
+    private func change(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modifyExisting(scope, id, f) }
+    private func create(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modify(scope, id, new: Job(), f) }
     var issues: [GitHub.Issue] = []
     var issuesLoading = false
     var issueError: String?
@@ -136,7 +142,7 @@ final class SpecCenter {
 
     func start(_ source: SpecSource, autonomy: Autonomy, allowGit: Bool = false) async {
         guard let r = repo else { return }
-        let e = env
+        let e = env, s = scope
         let number = Specs.nextNumber(existing: docs.map(\.id))
         let id = Specs.folderName(number: number, title: source.title)
         do {
@@ -148,7 +154,7 @@ final class SpecCenter {
         if allowGit, autonomy == .hands { Workspace.shared.allowCommands(["git add", "git commit", "git status", "git diff"], for: r.dir) }
         await refresh()
         selected = id
-        jobs[id] = Job(autonomy: autonomy)
+        store[s, id] = Job(autonomy: autonomy)
         await run(id, .specify, requirement: source.requirement, label: source.label, images: source.images)
     }
 
@@ -164,11 +170,10 @@ final class SpecCenter {
     func run(_ id: String, _ stage: SpecPrompts.Stage, requirement: String? = nil, label: String? = nil, answers: String? = nil,
              images: [(mediaType: String, data: Data)] = []) async {
         guard let r = repo else { return }
-        var job = jobs[id] ?? Job()
-        job.running = true; job.stage = stage.rawValue; job.status = "Starting…"; job.error = nil; job.draft = nil; job.gate = false
-        jobs[id] = job
+        let s = scope
+        create(s, id) { $0.running = true; $0.stage = stage.rawValue; $0.status = "Starting…"; $0.error = nil; $0.draft = nil; $0.gate = false }
         let d = doc(id)
-        let assume = job.autonomy != .step
+        let assume = (store[s, id]?.autonomy ?? .step) != .step
         let prompt: String
         switch stage {
         case .specify:
@@ -179,15 +184,16 @@ final class SpecCenter {
         case .tasks: prompt = SpecPrompts.tasks(spec: d?.spec ?? "", plan: d?.plan ?? "", constitution: constitution)
         }
         do {
-            let reply = try await SpecStageRunner.run(prompt: prompt, cwd: r.dir, environment: env, images: images) { [weak self] p in Task { @MainActor in self?.jobs[id]?.status = p } }
+            let reply = try await SpecStageRunner.run(prompt: prompt, cwd: r.dir, environment: env, images: images) { [weak self] p in Task { @MainActor in self?.change(s, id) { $0.status = p } } }
             let text = SpecPrompts.extractDocument(reply)
             if stage == .tasks, Specs.parseTasks(text).isEmpty { throw SpecStageError.failed("The agent did not write any tasks in the expected format. Try again.") }
             if stage == .specify, Specs.title(of: text) == nil { throw SpecStageError.failed("The agent did not write a spec. Try again.") }
-            jobs[id]?.running = false; jobs[id]?.status = ""
-            jobs[id]?.draft = Draft(stage: stage, text: text)
-            if shouldAutoApprove(id, stage, text) { await approve(id, text: text) }
+            change(s, id) { $0.running = false; $0.status = ""; $0.draft = Draft(stage: stage, text: text) }
+            // Switched repository meanwhile: the draft waits in its own repository for you to come back and approve it.
+            if s == scope, shouldAutoApprove(id, stage, text) { await approve(id, text: text) }
         } catch {
-            jobs[id]?.running = false; jobs[id]?.error = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
+            let message = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
+            change(s, id) { $0.running = false; $0.error = message }
         }
     }
 
@@ -201,15 +207,16 @@ final class SpecCenter {
 
     func approve(_ id: String, text: String) async {
         guard let r = repo, let draft = jobs[id]?.draft else { return }
+        let s = scope
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
         do { try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir, tracked: tracked) } }
-        catch { jobs[id]?.error = AppModel.shared.capture(error, action: "Save the \(file)"); return }
-        jobs[id]?.draft = nil
+        catch { let message = AppModel.shared.capture(error, action: "Save the \(file)"); change(s, id) { $0.error = message }; return }
+        change(s, id) { $0.draft = nil }
         await refresh()
         await advance(id, after: draft.stage)
     }
 
-    func discard(_ id: String) { jobs[id]?.draft = nil }
+    func discard(_ id: String) { change(scope, id) { $0.draft = nil } }
 
     private func advance(_ id: String, after stage: SpecPrompts.Stage) async {
         guard let d = doc(id) else { return }
@@ -223,7 +230,7 @@ final class SpecCenter {
             if autonomy == .step { return }
             await run(id, .tasks)
         case .tasks:
-            if autonomy == .hands { await implementReady(id) } else if autonomy == .plan { jobs[id]?.gate = true }
+            if autonomy == .hands { await implementReady(id) } else if autonomy == .plan { change(scope, id) { $0.gate = true } }
         }
     }
 
@@ -231,7 +238,7 @@ final class SpecCenter {
 
     // MARK: Building
 
-    func startBuilding(_ id: String) async { jobs[id]?.gate = false; await implementReady(id) }
+    func startBuilding(_ id: String) async { change(scope, id) { $0.gate = false }; await implementReady(id) }
 
     /// Starts every task that can start now (up to two at a time), each on its own branch stacked on what it needs.
     func implementReady(_ id: String, limit: Int = 2) async {
@@ -243,19 +250,20 @@ final class SpecCenter {
 
     func implement(_ id: String, _ task: SpecTask, focus: Bool = true) async {
         guard let r = repo, let d = doc(id), let text = d.tasksText else { return }
+        let s = scope
         let branch = Specs.taskBranch(spec: id, task: task)
         let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
         let prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
         do {
             let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
                                                          title: "\(task.id) \(task.title)", prompt: prompt, focus: focus) { [weak self] session in
-                Task { @MainActor in await self?.taskTurnEnded(id, task.id, session) }
+                Task { @MainActor in if self?.scope == s { await self?.taskTurnEnded(id, task.id, session) } }
             }
             taskSessions["\(id)/\(task.id)"] = c.id
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
             await refresh()
-        } catch { jobs[id, default: Job()].error = AppModel.shared.capture(error, action: "Start \(task.id)") }
+        } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(s, id) { $0.error = message } }
     }
 
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
@@ -272,9 +280,9 @@ final class SpecCenter {
     /// Pushes the stack of this spec's branches, opens the pull requests, and lets the merge rules take it from there.
     func submitAndArm(_ id: String) async {
         guard let r = repo, jobs[id]?.submitting != true else { return }
-        jobs[id, default: Job()].submitting = true
-        jobs[id, default: Job()].submitNote = nil
-        defer { jobs[id, default: Job()].submitting = false }
+        let s = scope
+        create(s, id) { $0.submitting = true; $0.submitNote = nil }
+        defer { create(s, id) { $0.submitting = false } }
         let e = env
         do {
             let count = try await Exec.with(e) { () -> Int in
@@ -284,13 +292,12 @@ final class SpecCenter {
                 return count
             }
             StackCenter.shared.arm(repo: r)
-            jobs[id, default: Job()].submitFailed = false
-            jobs[id, default: Job()].submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass."
+            create(s, id) { $0.submitFailed = false; $0.submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass." }
             AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
             await refresh()
         } catch {
-            jobs[id, default: Job()].submitFailed = true
-            jobs[id, default: Job()].submitNote = AppModel.shared.capture(error, action: "Submit the stack")
+            let message = AppModel.shared.capture(error, action: "Submit the stack")
+            create(s, id) { $0.submitFailed = true; $0.submitNote = message }
         }
     }
 

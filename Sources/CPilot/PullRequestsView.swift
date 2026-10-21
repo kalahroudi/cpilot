@@ -349,7 +349,6 @@ struct PullRequestsView: View {
             PaneHeader(title: "Pull requests", subtitle: center.showInbox ? "What needs you in this repository" : center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
                 HStack(spacing: 8) {
                     Segmented(options: [(false, "Repository"), (true, "Inbox")], selection: Bindable(center).showInbox)
-                    RepoMenu()
                     AsyncButton { await center.refreshList() } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.soft).help("Refresh").accessibilityLabel("Refresh")
                 }
