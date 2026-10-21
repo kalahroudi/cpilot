@@ -166,6 +166,7 @@ struct StacksView: View {
     let pr = PRCenter.shared
     @State private var newName = ""
     @State private var splitting = false
+    @State private var startOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -219,21 +220,39 @@ struct StacksView: View {
         }
     }
 
+    /// Ways to make a stack. Folded away once there is a stack to work on; open by itself when there are none.
     private var startSection: some View {
-        VStack(spacing: 0) {
-            SettingRow("Stack a new branch", "Creates a branch on top of the one checked out in this repository.") {
-                HStack(spacing: 6) {
-                    TextField("branch name", text: $newName).textFieldStyle(CPField()).frame(width: 170)
-                    Button("Create") { let n = newName; newName = ""; Task { await center.create(n) } }.buttonStyle(Pill(kind: .plain)).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+        let open = startOpen || center.stacks.isEmpty
+        return VStack(spacing: 0) {
+            Button { if !center.stacks.isEmpty { startOpen.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(open ? 90 : 0)).opacity(center.stacks.isEmpty ? 0.3 : 1)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Create a stack").font(.system(size: 13, weight: .semibold))
+                        Text("Start one by hand, split a big branch, or build one from a spec.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }.padding(.vertical, 10).contentShape(Rectangle())
+            }.buttonStyle(.soft)
+            if open {
+                Divider()
+                SettingRow("Stack a new branch", "Creates a branch on top of the one checked out in this repository.") {
+                    HStack(spacing: 6) {
+                        TextField("branch name", text: $newName).textFieldStyle(CPField()).frame(width: 170)
+                        AsyncButton("Create") { let n = newName; newName = ""; await center.create(n) }.buttonStyle(Pill(kind: .plain)).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                SettingRow("Split a big change into a stack", "An agent proposes logical pieces of a large branch. You edit the plan, then each piece gets its own branch.") {
+                    Button("Propose a split…") { splitting = true }.buttonStyle(Pill(kind: .primary))
+                }
+                SettingRow("From a spec", "Tasks that depend on each other are built as a stack automatically.", separator: false) {
+                    Button("Open specs") { Nav.shared.pane = .specs }.buttonStyle(Pill(kind: .plain))
                 }
             }
-            SettingRow("Split a big change into a stack", "An agent proposes logical pieces of a large branch. You edit the plan, then each piece gets its own branch.") {
-                Button("Propose a split…") { splitting = true }.buttonStyle(Pill(kind: .primary))
-            }
-            SettingRow("From a spec", "Tasks that depend on each other are built as a stack automatically.") {
-                Button("Open specs") { Nav.shared.pane = .specs }.buttonStyle(Pill(kind: .plain))
-            }
-        }.padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+        }
+        .padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+        .animation(.easeInOut(duration: 0.2), value: open)
     }
 }
 
