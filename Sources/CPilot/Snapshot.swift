@@ -35,10 +35,13 @@ enum SnapshotMode {
                 return AnyView(ManagerView())
             }
         }
+        func addServer() -> Shot {
+            Shot(name: "add-environment", dark: false, size: CGSize(width: 620, height: 640)) { AnyView(AddEnvironmentSheet().background(Theme.pane)) }
+        }
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), addServer(), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 

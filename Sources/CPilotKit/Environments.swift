@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import Security
 
 /// A machine that owns agents, files and git for its projects. "This Mac" is implicit; every other environment is reached over SSH.
 /// Nothing needs installing on the server except the agents. With `persistent` on, a small helper (`cpilotd`) also keeps
@@ -15,15 +16,17 @@ public struct EnvironmentConfig: Codable, Identifiable, Equatable, Sendable {
     /// Folders on the server where sessions may start.
     public var folders: [String]
     public var persistent: Bool
+    /// Sign in with a password kept in the macOS Keychain, instead of keys or Tailscale. SSH asks for it only when the server does.
+    public var usesPassword: Bool?
     /// Home folder on the server, learned when connecting.
     public var home: String?
     /// Which route last worked.
     public var active: Int?
 
     public init(id: String = UUID().uuidString, name: String, routes: [String], port: Int? = nil, identityFile: String? = nil,
-                folders: [String] = [], persistent: Bool = false, home: String? = nil) {
+                folders: [String] = [], persistent: Bool = false, home: String? = nil, usesPassword: Bool? = nil) {
         self.id = id; self.name = name; self.routes = routes; self.port = port; self.identityFile = identityFile
-        self.folders = folders; self.persistent = persistent; self.home = home
+        self.folders = folders; self.persistent = persistent; self.home = home; self.usesPassword = usesPassword
     }
 
     public var target: String { routes.isEmpty ? name : routes[min(active ?? 0, routes.count - 1)] }
@@ -55,12 +58,37 @@ public enum Exec {
 public enum SSH {
     public static var executable = "/usr/bin/ssh"
 
+    /// The program SSH runs to get a password: this app itself, started with `--askpass`.
+    nonisolated(unsafe) public static var askpassExecutable = CommandLine.arguments.first ?? "CPilot"
+
+    /// A tiny script SSH calls when it needs a password. It holds no secret; it asks the app, which reads the Keychain.
+    public static func askpassScript() -> String {
+        let dir = AppPaths().toolsDir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("askpass.sh")
+        let body = "#!/bin/sh\nexec \(quote(askpassExecutable)) --askpass \"$@\"\n"
+        if (try? String(contentsOf: url, encoding: .utf8)) != body { try? body.write(to: url, atomically: true, encoding: .utf8) }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        return url.path
+    }
+
+    /// The process environment for an ssh command: the normal one, plus the askpass settings when this server uses a password.
+    public static func environment(for e: EnvironmentConfig) -> [String: String] {
+        var env = Shell.environment
+        if e.usesPassword == true {
+            env["SSH_ASKPASS"] = askpassScript(); env["SSH_ASKPASS_REQUIRE"] = "force"; env["CPILOT_ASKPASS_ID"] = e.id
+        }
+        return env
+    }
+
     public static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     /// Options every connection uses. One master connection is shared, so repeated commands are fast.
     public static func baseArgs(_ e: EnvironmentConfig, acceptNewHostKeys: Bool = false, connectTimeout: Int = 10) -> [String] {
-        var a = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=\(connectTimeout)", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+        // With a password SSH must be allowed to ask (through the askpass helper below); otherwise it never prompts.
+        var a = ["-T", "-o", e.usesPassword == true ? "BatchMode=no" : "BatchMode=yes", "-o", "ConnectTimeout=\(connectTimeout)", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                  "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/cpilot-%C", "-o", "ControlPersist=600"]
+        if e.usesPassword == true { a += ["-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "NumberOfPasswordPrompts=1"] }
         if acceptNewHostKeys { a += ["-o", "StrictHostKeyChecking=accept-new"] }
         if let p = e.port { a += ["-p", String(p)] }
         if let i = e.identityFile, !i.isEmpty { a += ["-i", i] }
@@ -123,7 +151,13 @@ public enum EnvironmentProbe {
     /// Plain-language reasons for the common SSH failures.
     public static func describe(_ stderr: String) -> String {
         let s = stderr.lowercased()
+        if s.contains("tailnet policy does not permit") || (s.contains("tailscale") && s.contains("not permit")) {
+            let user = stderr.range(of: #"as user \"([^\"]+)\""#, options: .regularExpression).map { String(stderr[$0]).replacingOccurrences(of: "as user ", with: "").replacingOccurrences(of: "\"", with: "") } ?? "that user"
+            return "Tailscale does not allow SSH to this server as \(user). Enter the account your tailnet allows in the User field (for example moram), and leave Sign in with on Automatic."
+        }
+        if s.contains("tailscale") && (s.contains("check") || s.contains("authenticate") || s.contains("login.tailscale")) { return "Tailscale wants you to sign in again for this server. Run ssh to it once in Terminal, finish the sign-in, then check again." }
         if s.contains("host key verification failed") || s.contains("remote host identification has changed") { return "The server's host key is not trusted, or it changed. Connect once in Terminal to check it: ssh \(stderr.isEmpty ? "host" : "…")" }
+        if s.contains("permission denied") && s.contains("password") && !s.contains("publickey") { return "The server did not accept that password. Check the user and the password." }
         if s.contains("permission denied") { return "The server did not accept your key. Add your public key to ~/.ssh/authorized_keys on the server, or pick the right key in the environment's settings." }
         if s.contains("timed out") || s.contains("no route") || s.contains("could not resolve") || s.contains("connection refused") { return "Could not reach the server. Check the address and that it is online." }
         let first = stderr.split(separator: "\n").first.map(String.init) ?? ""
@@ -142,4 +176,32 @@ public enum EnvironmentProbe {
         }
         return (env, last)
     }
+}
+
+
+/// SSH passwords live in the macOS Keychain, never in a file, a command line or an environment variable.
+public enum SSHPassword {
+    static let service = "CPilot SSH"
+
+    @discardableResult
+    public static func set(_ password: String, for id: String) -> Bool {
+        delete(id)
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: id,
+                                kSecValueData as String: Data(password.utf8), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+    }
+
+    public static func get(_ id: String) -> String? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: id,
+                                kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    public static func delete(_ id: String) {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: id] as CFDictionary)
+    }
+
+    public static func has(_ id: String) -> Bool { get(id) != nil }
 }

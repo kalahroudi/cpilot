@@ -281,10 +281,12 @@ public final class ClaudeRunner: @unchecked Sendable {
             exe = path; args = Self.arguments(config)
             process.currentDirectoryURL = URL(fileURLWithPath: config.cwd)
         case .ssh(let e):
+            env = SSH.environment(for: e); env.removeValue(forKey: "CLAUDECODE")
             exe = SSH.executable
             args = SSH.baseArgs(e) + [e.target, SSH.remoteCommand("claude", Self.arguments(config), cwd: config.cwd)]
         case .daemon(let e, let key, let attachOnly, let from):
             if !attachOnly { try await Exec.with(e) { try await RemoteHost.start(id: key, cwd: config.cwd, command: "claude", args: Self.arguments(config)) } }
+            env = SSH.environment(for: e)
             let c = RemoteHost.command(["attach", key, "--from", String(from)])
             exe = SSH.executable
             args = SSH.baseArgs(e) + [e.target, SSH.remoteCommand(c.tool, c.args, cwd: nil)]

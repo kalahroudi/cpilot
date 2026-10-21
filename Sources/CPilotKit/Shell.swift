@@ -60,7 +60,7 @@ public enum Shell {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: SSH.executable)
             p.arguments = SSH.baseArgs(remote, acceptNewHostKeys: Exec.acceptNewHostKeys) + [remote.target, SSH.remoteCommand(tool, args, cwd: cwd?.path, env: env)]
-            p.environment = environment
+            p.environment = SSH.environment(for: remote)
             return p
         }
         guard let path = find(tool) else { throw ShellError.toolNotFound(tool) }

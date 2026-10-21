@@ -33,6 +33,7 @@ struct EnvironmentsView: View {
     let center = EnvironmentCenter.shared
     @State private var adding = false
     @State private var editing: EnvironmentConfig?
+    @State private var editingServer: EnvironmentConfig?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,6 +59,7 @@ struct EnvironmentsView: View {
         .onAppear { if !AppModel.shared.demo { center.checkAll() } }
         .sheet(isPresented: $adding) { AddEnvironmentSheet() }
         .sheet(item: $editing) { e in RoutesSheet(env: e) }
+        .sheet(item: $editingServer) { e in AddEnvironmentSheet(existing: e) }
     }
 
     private func count(_ n: Int) -> String { "\(n) session\(n == 1 ? "" : "s")" }
@@ -86,10 +88,11 @@ struct EnvironmentsView: View {
                     }
                     Button("Routes…") { editing = e }.buttonStyle(Pill(kind: .plain))
                     Menu {
+                        Button("Edit…") { editingServer = e }
                         Button("Check again") { center.check(e) }
                         Button(e.persistent ? "Stop keeping sessions running" : "Keep sessions running while I am away") { toggle(e) }
                         Divider()
-                        Button("Remove", role: .destructive) { ws.environments.removeAll { $0.id == e.id }; ws.saveEnvironments() }
+                        Button("Remove", role: .destructive) { SSHPassword.delete(e.id); ws.environments.removeAll { $0.id == e.id }; ws.saveEnvironments() }
                     } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize()
                 }
             }
@@ -141,11 +144,17 @@ struct RoutesSheet: View {
 }
 
 struct AddEnvironmentSheet: View {
+    var existing: EnvironmentConfig?
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var target = ""
+    @State private var host = ""
+    @State private var user = ""
     @State private var port = ""
+    @State private var name = ""
+    enum Auth: Hashable { case automatic, password, key }
+    @State private var auth: Auth = .automatic
+    @State private var password = ""
     @State private var key = ""
+    @State private var draftId = UUID().uuidString
     @State private var folders = ""
     @State private var persistent = false
     @State private var checking = false
@@ -155,30 +164,90 @@ struct AddEnvironmentSheet: View {
     @State private var error: String?
     private let hosts = SSH.configuredHosts()
 
+    init(existing: EnvironmentConfig? = nil) {
+        self.existing = existing
+        guard let e = existing else { return }
+        let t = e.routes.first ?? ""
+        let parts = t.split(separator: "@", maxSplits: 1).map(String.init)
+        _user = State(initialValue: parts.count == 2 ? parts[0] : "")
+        _host = State(initialValue: parts.count == 2 ? parts[1] : t)
+        _port = State(initialValue: e.port.map(String.init) ?? "")
+        _name = State(initialValue: e.name)
+        _auth = State(initialValue: e.usesPassword == true ? .password : ((e.identityFile ?? "").isEmpty ? .automatic : .key))
+        _draftId = State(initialValue: e.id)
+        _key = State(initialValue: e.identityFile ?? "")
+        _folders = State(initialValue: e.folders.joined(separator: ", "))
+        _persistent = State(initialValue: e.persistent)
+    }
+
+    /// What is passed to ssh: `user@host`, or just the host when no user is given.
+    private var target: String {
+        let h = host.trimmingCharacters(in: .whitespaces), u = user.trimmingCharacters(in: .whitespaces)
+        return u.isEmpty ? h : "\(u)@\(h)"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Add environment").font(.system(size: 17, weight: .semibold))
-            VStack(alignment: .leading, spacing: 6) {
-                SectionLabel("Server")
-                if !hosts.isEmpty {
-                    FlowLayout(spacing: 6) {
-                        ForEach(hosts, id: \.self) { h in Button { target = h; if name.isEmpty { name = h }; report = nil } label: { Badge(text: h, kind: h == target ? .accent : .neutral) }.buttonStyle(.plain) }
+        VStack(alignment: .leading, spacing: 14) {
+            Text(existing == nil ? "Add environment" : "Edit \(existing!.name)").font(.system(size: 17, weight: .semibold))
+
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    label("Host")
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("node-1, node-1.local, an address or a Tailscale name", text: $host).textFieldStyle(.roundedBorder)
+                            .onChange(of: host) { _, v in
+                                report = nil
+                                if v.contains("@") { let p = v.split(separator: "@", maxSplits: 1).map(String.init); if p.count == 2 { user = p[0]; host = p[1] } }
+                            }
+                        if !hosts.isEmpty {
+                            FlowLayout(spacing: 6) {
+                                ForEach(hosts, id: \.self) { h in
+                                    Button { host = h; if name.isEmpty { name = h }; report = nil } label: { Badge(text: h, kind: h == host ? .accent : .neutral) }.buttonStyle(.plain)
+                                }
+                            }
+                            Text("From your ~/.ssh/config").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                     }
                 }
-                TextField("user@host, a name from ~/.ssh/config, or a Tailscale name", text: $target).textFieldStyle(.roundedBorder).onChange(of: target) { _, _ in report = nil }
-                HStack {
-                    TextField("Name", text: $name).textFieldStyle(.roundedBorder)
-                    TextField("Port", text: $port).textFieldStyle(.roundedBorder).frame(width: 70)
+                GridRow {
+                    label("User")
+                    VStack(alignment: .leading, spacing: 2) {
+                        TextField("The account on the server, for example moram", text: $user).textFieldStyle(.roundedBorder).onChange(of: user) { _, _ in report = nil }
+                        Text("Leave empty to use your ssh config, or your Mac username.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
-                HStack {
-                    TextField("Key file (optional)", text: $key).textFieldStyle(.roundedBorder)
-                    Button("Choose…") { let p = NSOpenPanel(); p.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh"); p.showsHiddenFiles = true; if p.runModal() == .OK { key = p.url?.path ?? "" } }.buttonStyle(Pill(kind: .plain))
+                GridRow {
+                    label("Name")
+                    TextField(host.isEmpty ? "How it appears in CPilot" : host, text: $name).textFieldStyle(.roundedBorder)
+                }
+                GridRow {
+                    label("Port")
+                    TextField("22", text: $port).textFieldStyle(.roundedBorder).frame(width: 90)
+                }
+                GridRow {
+                    label("Sign in with")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Segmented(options: [(Auth.automatic, "Automatic"), (.password, "Password"), (.key, "Key file")], selection: $auth).onChange(of: auth) { _, _ in report = nil }
+                        switch auth {
+                        case .key:
+                            HStack {
+                                TextField("Path to a private key", text: $key).textFieldStyle(.roundedBorder)
+                                Button("Choose…") { let p = NSOpenPanel(); p.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh"); p.showsHiddenFiles = true; if p.runModal() == .OK { key = p.url?.path ?? "" } }.buttonStyle(Pill(kind: .plain))
+                            }
+                        case .password:
+                            SecureField(existing?.usesPassword == true && SSHPassword.has(draftId) ? "Saved in your Keychain. Type to replace it." : "Password", text: $password).textFieldStyle(.roundedBorder).onChange(of: password) { _, _ in report = nil }
+                            Text("Kept in your macOS Keychain and given to SSH only when the server asks. Never written to a file.").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        case .automatic:
+                            Text("Uses your SSH agent, your ssh config and Tailscale SSH. No key file and no password prompt.").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
             }
-            HStack {
+
+            HStack(spacing: 10) {
                 Button { Task { await check() } } label: { if checking { ProgressView().controlSize(.small) } else { Text("Check connection") } }
-                    .buttonStyle(Pill(kind: .primary)).disabled(target.isEmpty || checking)
-                Text("Uses your SSH keys. A new server's key is trusted the first time, and refused if it ever changes.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .buttonStyle(Pill(kind: .primary)).disabled(host.trimmingCharacters(in: .whitespaces).isEmpty || checking)
+                Text(target.isEmpty ? "" : "ssh \(target)").font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
             }
             if let r = report { reportView(r) }
             if let r = report, r.connected {
@@ -186,23 +255,28 @@ struct AddEnvironmentSheet: View {
                     SectionLabel("Folders on this server")
                     TextField("~/projects, ~/work  (comma separated)", text: $folders).textFieldStyle(.roundedBorder)
                     Toggle(isOn: $persistent) { Text("Keep sessions running while I am away").font(.system(size: 12.5)) }.toggleStyle(.switch).tint(Theme.accent)
-                    Text(r.has("node") ? "Copies a small helper (one Node.js file, no network port) to the server so agents survive a dropped connection."
+                    Text(r.has("node") ? "Copies a small helper (one Node.js file, no network port) so agents survive a dropped connection."
                          : "Needs Node.js on the server. Install it there to turn this on.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                }.disabled(false)
+                }
             }
             if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await add() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Add \(name.isEmpty ? "server" : name)") } }
-                    .buttonStyle(Pill(kind: .primary)).disabled(report?.connected != true || busy || (persistent && report?.has("node") != true)).keyboardShortcut(.defaultAction)
+                Button("Cancel") { if existing == nil { SSHPassword.delete(draftId) }; dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                Button { Task { await add() } } label: { if busy { ProgressView().controlSize(.small) } else { Text(existing == nil ? "Add \(name.isEmpty ? (host.isEmpty ? "server" : host) : name)" : "Save") } }
+                    .buttonStyle(Pill(kind: .primary)).disabled(busy || host.trimmingCharacters(in: .whitespaces).isEmpty || (existing == nil && report?.connected != true) || (persistent && report?.connected == true && report?.has("node") != true))
+                    .keyboardShortcut(.defaultAction)
             }
-        }.padding(20).frame(width: 540)
+        }.padding(22).frame(width: 580).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func label(_ t: String) -> some View {
+        Text(t).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary).frame(width: 92, alignment: .trailing).gridColumnAlignment(.trailing)
     }
 
     @ViewBuilder private func reportView(_ r: EnvironmentReport) -> some View {
         VStack(spacing: 0) {
-            line("Connection", r.connected ? "Connected" : (r.error ?? "Failed"), r.connected ? .ok : .warn)
+            line("Connection", r.connected ? "Connected as \(target)" : (r.error ?? "Failed"), r.connected ? .ok : .warn)
             if r.connected {
                 Divider(); line("Claude command line", r.tools["claude"] ?? "Not found. Sessions need it on the server.", r.has("claude") ? .ok : .warn)
                 Divider(); line("Git", r.tools["git"] ?? "Not found", r.has("git") ? .ok : .warn)
@@ -214,19 +288,26 @@ struct AddEnvironmentSheet: View {
     }
 
     private func line(_ t: String, _ d: String, _ k: Badge.Kind) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) { Text(t).font(.system(size: 12.5)); Text(d).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2) }
-            Spacer(); Badge(text: k == .ok ? "OK" : k == .warn ? "Needs you" : "Optional", kind: k)
-        }.padding(.horizontal, 10).padding(.vertical, 6)
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) { Text(t).font(.system(size: 12.5, weight: .medium)); Text(d).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            Spacer(minLength: 8); Badge(text: k == .ok ? "OK" : k == .warn ? "Needs you" : "Optional", kind: k)
+        }.padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     private func config() -> EnvironmentConfig {
-        EnvironmentConfig(name: name.isEmpty ? target : name, routes: [target], port: Int(port), identityFile: key.isEmpty ? nil : key,
-                          folders: folders.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        var e = existing ?? EnvironmentConfig(id: draftId, name: "", routes: [])
+        e.name = name.trimmingCharacters(in: .whitespaces).isEmpty ? host.trimmingCharacters(in: .whitespaces) : name.trimmingCharacters(in: .whitespaces)
+        if e.routes.isEmpty { e.routes = [target] } else { e.routes[0] = target }
+        e.port = Int(port); e.identityFile = auth == .key && !key.isEmpty ? key : nil; e.usesPassword = auth == .password ? true : nil
+        e.folders = folders.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        e.active = 0
+        return e
     }
 
     private func check() async {
         checking = true; error = nil; defer { checking = false }
+        if auth == .password, !password.isEmpty { SSHPassword.set(password, for: draftId) }
+        if auth == .password, !SSHPassword.has(draftId) { report = EnvironmentReport(connected: false, error: "Enter the password first."); return }
         let (e, r) = await EnvironmentProbe.connect(config(), acceptNewHostKeys: true)
         checked = e; report = r
         if r.connected, folders.isEmpty, let h = r.home { folders = h + "/projects" }
@@ -234,12 +315,16 @@ struct AddEnvironmentSheet: View {
 
     private func add() async {
         busy = true; error = nil; defer { busy = false }
-        var e = config(); e.active = checked?.active; e.home = report?.home
-        if persistent {
+        if auth == .password, !password.isEmpty { SSHPassword.set(password, for: draftId) }
+        if auth != .password { SSHPassword.delete(draftId) }
+        var e = config(); e.home = report?.home ?? existing?.home
+        e.persistent = existing?.persistent ?? false
+        if persistent, !e.persistent {
             do { try await Exec.with(e) { try await RemoteHost.install() }; e.persistent = true }
             catch { self.error = UserError.message(for: error, action: "Install the helper"); return }
-        }
-        Workspace.shared.environments.append(e); Workspace.shared.saveEnvironments()
+        } else if !persistent { e.persistent = false }
+        if let i = Workspace.shared.environments.firstIndex(where: { $0.id == e.id }) { Workspace.shared.environments[i] = e } else { Workspace.shared.environments.append(e) }
+        Workspace.shared.saveEnvironments()
         EnvironmentCenter.shared.check(e)
         dismiss()
     }

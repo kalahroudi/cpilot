@@ -149,7 +149,7 @@ public final class AcpClient: @unchecked Sendable {
             // The agent runs on the server and reads its own files there, so CPilot offers no file access of its own.
             process.executableURL = URL(fileURLWithPath: SSH.executable)
             process.arguments = SSH.baseArgs(e) + [e.target, SSH.remoteCommand(config.command, config.args, cwd: cwd.path, env: config.env)]
-            process.environment = Shell.environment
+            process.environment = SSH.environment(for: e)
         } else {
             guard let path = Shell.find(config.command) else { throw ShellError.toolNotFound(config.command) }
             process.executableURL = URL(fileURLWithPath: path)

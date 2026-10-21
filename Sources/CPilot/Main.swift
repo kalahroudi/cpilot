@@ -13,6 +13,12 @@ enum CPilotMain {
     static func main() {
         let args = CommandLine.arguments
         // Command line helpers used by the build scripts and the updater. They must run before any app state exists.
+        // SSH runs this to get a password: print it from the Keychain and leave. Only for password prompts.
+        if args.contains("--askpass") {
+            let prompt = args.last ?? ""
+            if prompt.lowercased().contains("password"), let id = ProcessInfo.processInfo.environment["CPILOT_ASKPASS_ID"], let pw = SSHPassword.get(id) { print(pw); exit(0) }
+            exit(1)
+        }
         if args.contains("--self-test") { print("ok \(BuildInfo.current.commit ?? "dev")"); exit(0) }
         if let i = args.firstIndex(of: "--write-iconset"), i + 1 < args.count {
             do { try AppIcon.writeIconset(to: args[i + 1]); exit(0) } catch { FileHandle.standardError.write(Data("\(error)\n".utf8)); exit(1) }

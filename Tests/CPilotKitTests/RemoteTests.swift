@@ -138,3 +138,43 @@ final class DaemonTests: XCTestCase {
         }
     }
 }
+
+final class FriendlyErrorTests: XCTestCase {
+    func testTailscalePolicyError() {
+        let m = EnvironmentProbe.describe("tailscale: tailnet policy does not permit you to SSH as user \"mohammadramezanian\"")
+        XCTAssertTrue(m.contains("User field") && m.contains("mohammadramezanian"))
+        XCTAssertTrue(EnvironmentProbe.describe("moram@node: Permission denied (publickey).").contains("key"))
+    }
+}
+
+final class PasswordTests: XCTestCase {
+    func testArgumentsAllowPromptingOnlyForPasswordServers() {
+        let key = EnvironmentConfig(name: "a", routes: ["h"])
+        XCTAssertTrue(SSH.baseArgs(key).contains("BatchMode=yes")); XCTAssertFalse(SSH.baseArgs(key).contains("NumberOfPasswordPrompts=1"))
+        let pw = EnvironmentConfig(name: "b", routes: ["h"], usesPassword: true)
+        let a = SSH.baseArgs(pw)
+        XCTAssertTrue(a.contains("BatchMode=no") && a.contains("PreferredAuthentications=password,keyboard-interactive") && a.contains("NumberOfPasswordPrompts=1"))
+    }
+
+    func testEnvironmentCarriesAskpassOnlyWhenNeeded() {
+        XCTAssertNil(SSH.environment(for: EnvironmentConfig(name: "a", routes: ["h"]))["SSH_ASKPASS"])
+        let e = EnvironmentConfig(id: "abc", name: "b", routes: ["h"], usesPassword: true)
+        let env = SSH.environment(for: e)
+        XCTAssertEqual(env["SSH_ASKPASS_REQUIRE"], "force"); XCTAssertEqual(env["CPILOT_ASKPASS_ID"], "abc")
+        let script = try? String(contentsOfFile: env["SSH_ASKPASS"] ?? "", encoding: .utf8)
+        XCTAssertTrue(script?.contains("--askpass") == true); XCTAssertFalse(script?.contains("password") == true && script?.contains("secret") == true)
+        XCTAssertTrue(env.values.allSatisfy { !$0.contains("hunter2") })
+    }
+
+    func testKeychainRoundTrip() throws {
+        let id = "test-\(UUID().uuidString)"
+        guard SSHPassword.set("hunter2", for: id) else { throw XCTSkip("the keychain is not available here") }
+        XCTAssertEqual(SSHPassword.get(id), "hunter2"); XCTAssertTrue(SSHPassword.has(id))
+        SSHPassword.set("newer", for: id); XCTAssertEqual(SSHPassword.get(id), "newer")
+        SSHPassword.delete(id); XCTAssertNil(SSHPassword.get(id))
+    }
+
+    func testPasswordFailureMessage() {
+        XCTAssertTrue(EnvironmentProbe.describe("moram@node-1: Permission denied (password).").contains("password"))
+    }
+}
