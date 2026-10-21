@@ -9,6 +9,14 @@ final class KitTests: XCTestCase {
         XCTAssertFalse(Version.isNewer("garbage", than: "1.0.0"))
     }
 
+    func testIssueReportHasNoUserDetails() {
+        let err = ShellError.failed(command: "gh pr create --title Secret title --body private", status: 1, stderr: "fail at \(NSHomeDirectory())/proj/x by me@example.com on 192.168.1.5 token=abc123 /Users/someone/else")
+        let body = ErrorReport(err, action: "Create the pull request").issueBody(version: "1")
+        for leak in [NSHomeDirectory(), NSUserName(), "Secret title", "private", "me@example.com", "192.168.1.5", "abc123", "/Users/someone"] {
+            XCTAssertFalse(body.contains(leak), "leaked \(leak)")
+        }
+    }
+
     func testChecksumLookup() {
         let sums = "abc123  CPilot-0.1.0.dmg\ndef456 *other.dmg\n"
         XCTAssertEqual(UpdateChecker.checksum(in: sums, for: "CPilot-0.1.0.dmg"), "abc123")

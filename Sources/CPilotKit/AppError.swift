@@ -69,11 +69,20 @@ public struct ErrorReport: Identifiable, Sendable {
         return said == raw ? said : "\(said)\n\n\(raw)"
     }
 
-    /// Removes the home folder, user name and anything shaped like a token.
+    /// Removes the home folder, user and host names, emails, addresses, command arguments and anything shaped like a token.
     static func redact(_ text: String) -> String {
-        var s = text.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        var s = text
+        // A reflected ShellError carries the whole command line, including titles, bodies and paths the user typed.
+        s = s.replacingOccurrences(of: "command: \"([^\" ]+)[^\"]*\"", with: "command: \"$1 ‹args removed›\"", options: .regularExpression)
+        for name in [NSUserName(), NSFullUserName(), ProcessInfo.processInfo.hostName] where name.count > 1 {
+            s = s.replacingOccurrences(of: name, with: "‹user›", options: .caseInsensitive)
+        }
+        s = s.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         let patterns = ["gh[pousr]_[A-Za-z0-9]{20,}", "github_pat_[A-Za-z0-9_]{20,}", "sk-[A-Za-z0-9_-]{20,}",
-                        "(?i)(token|password|secret|authorization)([\"'=: ]+)[^\\s\"']+", "https://[^/\\s:@]+:[^@\\s]+@"]
+                        "(?i)(token|password|secret|authorization)([\"'=: ]+)[^\\s\"']+", "https?://[^/\\s:@]+:[^@\\s]+@",
+                        "/(Users|home)/[^/\\s\"']+", "/var/folders/[^\\s\"']+", "/Volumes/[^/\\s\"']+",
+                        "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "\\b\\d{1,3}(\\.\\d{1,3}){3}\\b",
+                        "\\b[A-Za-z0-9-]+\\.(ts\\.net|local|lan|internal)\\b", "\\b[0-9a-fA-F:]{12,}\\b"]
         for p in patterns { s = s.replacingOccurrences(of: p, with: "‹redacted›", options: .regularExpression) }
         return s
     }
@@ -81,6 +90,10 @@ public struct ErrorReport: Identifiable, Sendable {
     public var issueTitle: String { "Error: couldn't \(action.lowercased())" }
 
     public func issueBody(version: String) -> String {
+        ErrorReport.redact(body(version: version))
+    }
+
+    private func body(version: String) -> String {
         """
         **What I was doing:** \(action)
 

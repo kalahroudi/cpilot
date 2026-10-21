@@ -132,6 +132,11 @@ struct CreatePRSheet: View {
     private func createImpl() async {
         busy = true; error = nil; defer { busy = false }
         do {
+            if await Git.uncommittedCount(dir) > 0 { try await Git.commitAll(dir, message: title.isEmpty ? "Update" : title) }
+            if await Git.commitsAhead(dir, of: "origin/\(base)") == 0 {
+                error = "This branch has no changes compared with \(base), so there is nothing to open a pull request for."
+                return
+            }
             try await Git.push(dir, branch: branch)
             let url = try await GitHub.create(title: title, body: prBody, base: base, draft: draft, in: dir)
             let n = Int(url.split(separator: "/").last ?? "") ?? 0

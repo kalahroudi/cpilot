@@ -70,6 +70,17 @@ public enum Git {
         (try? await Shell.check("git", ["diff", "\(base)...HEAD"], cwd: url(dir), timeout: 60)) ?? ""
     }
 
+    public static func uncommittedCount(_ dir: String) async -> Int {
+        let out = (try? await Shell.check("git", ["status", "--porcelain"], cwd: url(dir))) ?? ""
+        return out.split(separator: "\n").count
+    }
+
+    /// Commits on HEAD that `base` doesn't have.
+    public static func commitsAhead(_ dir: String, of base: String) async -> Int {
+        let out = (try? await Shell.check("git", ["rev-list", "--count", "\(base)..HEAD"], cwd: url(dir))) ?? ""
+        return Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
     public static func commitAll(_ dir: String, message: String) async throws {
         try await Shell.check("git", ["add", "-A"], cwd: url(dir))
         try await Shell.check("git", ["commit", "-m", message], cwd: url(dir))
