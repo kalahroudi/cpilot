@@ -89,11 +89,20 @@ struct NewSessionSheet: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel("Agent")
-                HStack {
-                    Segmented(options: agentOptions, selection: $backend)
-                    if backend.kind == .claude {
-                        Segmented(options: [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")], selection: $model)
+                // Agents wrap onto more lines as you add them, so the sheet never grows wider than the window.
+                FlowLayout(spacing: 6) {
+                    ForEach(agentOptions, id: \.0) { o in
+                        Button { backend = o.0 } label: {
+                            Text(o.1).font(.system(size: 12, weight: backend == o.0 ? .semibold : .regular)).lineLimit(1)
+                                .padding(.horizontal, 11).padding(.vertical, 4)
+                                .foregroundStyle(backend == o.0 ? Color.primary : .secondary)
+                                .background(backend == o.0 ? Theme.card : Theme.fill, in: RoundedRectangle(cornerRadius: 7))
+                                .overlay(RoundedRectangle(cornerRadius: 7).stroke(backend == o.0 ? Theme.accent : .clear, lineWidth: 1.2))
+                        }.buttonStyle(.plain)
                     }
+                }
+                if backend.kind == .claude {
+                    Segmented(options: [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")], selection: $model)
                 }
                 HStack {
                     Text("Access").font(.system(size: 12.5))
