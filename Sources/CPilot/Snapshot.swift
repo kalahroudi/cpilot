@@ -96,9 +96,11 @@ struct PopoverShot: View {
         var b = SessionMeta(title: "api-pagination", cwd: "/Users/demo/code/shop", branch: "api-pagination"); b.updatedAt = .now.addingTimeInterval(-300)
         var c = SessionMeta(title: "docs-audit", cwd: "/Users/demo/code/docs", backend: .acp("demo")); c.updatedAt = .now.addingTimeInterval(-900)
         var d = SessionMeta(title: "release-notes", cwd: "/Users/demo/code/shop"); d.updatedAt = .now.addingTimeInterval(-86400)
-        ws.sessions = [a, b, c, d]
-        ws.tabs = [a.id, b.id, c.id, d.id]; ws.selected = a.id
-        ws.demoControllers([a, b, c, d])
+        var e = SessionMeta(title: "Add regression test", cwd: "/Users/demo/code/shop", branch: "task-add-regression-test"); e.parentId = a.id; e.updatedAt = .now.addingTimeInterval(-60)
+        a.recap = "**Latest ask:** The login test fails about one run in five on CI. Find out why and fix it.\n\n**So far:** found the race between the click and the redirect, changed the test to wait for the session response.\n\n**Waiting on you:** approval to edit src/api/session.ts."
+        ws.sessions = [a, b, c, d, e]
+        ws.tabs = [a.id, e.id, b.id, c.id, d.id]; ws.selected = a.id
+        ws.demoControllers([a, b, c, d, e])
         if let s = ws.controller(a.id) {
             s.loaded = true
             s.items = [
@@ -107,11 +109,18 @@ struct PopoverShot: View {
                 ChatItem(kind: .tool, text: "", title: "Read", detail: "tests/login.spec.ts", status: .done),
                 ChatItem(kind: .assistant, text: "The test clicks submit before the session cookie is set, so it **races with the redirect**. I'll wait for the response instead of a fixed delay:\n\n```ts\nawait Promise.all([\n  page.waitForResponse(r => r.url().includes('/session')),\n  page.click('#submit'),\n])\n```", status: .done),
                 ChatItem(kind: .tool, text: "Updated tests/login.spec.ts", title: "Edit", detail: "tests/login.spec.ts", status: .done),
-                ChatItem(id: "perm-demo", kind: .permission, text: "npm test -- login.spec.ts --repeat-each=20", title: "Bash", status: .pending),
+                ChatItem(id: "agent1", kind: .tool, text: "", title: "Agent", detail: "Check how other tests wait for responses", status: .running),
+                ChatItem(kind: .tool, title: "Grep", detail: "waitForResponse", status: .done, parent: "agent1"),
+                ChatItem(kind: .tool, title: "Read", detail: "tests/checkout.spec.ts", status: .done, parent: "agent1"),
+                ChatItem(kind: .tool, title: "Read", detail: "tests/helpers.ts", status: .running, parent: "agent1"),
+                ChatItem(id: "perm-demo", kind: .permission, text: "src/api/session.ts", title: "Edit", detail: "/Users/demo/code/shop/src/api/session.ts", status: .pending,
+                         preview: EditPreview.encode(EditPreview.lines(tool: "Edit", inputJSON: #"{"file_path":"/x","old_string":"res.cookie('sid', id, { httpOnly: true })","new_string":"res.cookie('sid', id, { httpOnly: true, secure: true, sameSite: 'lax' })"}"#))),
             ]
             s.state = .waiting
             s.pending = []
+            s.recapVisible = true
         }
+        ws.controller(e.id)?.state = .running
         for (i, id) in [b.id, c.id].enumerated() { ws.controller(id)?.state = i == 0 ? .running : .idle }
 
         let pr = PRCenter.shared

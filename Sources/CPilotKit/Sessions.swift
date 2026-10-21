@@ -56,6 +56,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var recap: String?
     public var recapRows: Int?
     public var recapHeadline: String?
+    /// The session this task was spun off from.
+    public var parentId: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -99,11 +101,15 @@ public struct ChatItem: Codable, Identifiable, Equatable, Sendable {
     public var status: Status?
     public var attachments: [Attachment] = []
     public var ts: Date
+    /// For an approval of a file edit: the proposed change (see `EditPreview`).
+    public var preview: String?
+    /// The tool row of a sub-agent run this row belongs to.
+    public var parent: String?
 
     public init(id: String = UUID().uuidString, kind: Kind, text: String = "", title: String? = nil, detail: String? = nil,
-                status: Status? = nil, attachments: [Attachment] = [], ts: Date = .now) {
+                status: Status? = nil, attachments: [Attachment] = [], ts: Date = .now, preview: String? = nil, parent: String? = nil) {
         self.id = id; self.kind = kind; self.text = text; self.title = title; self.detail = detail
-        self.status = status; self.attachments = attachments; self.ts = ts
+        self.status = status; self.attachments = attachments; self.ts = ts; self.preview = preview; self.parent = parent
     }
 }
 

@@ -274,3 +274,34 @@ final class RecapTests: XCTestCase {
         XCTAssertEqual(Recap.headline(Recap.parts([ChatItem(kind: .user, text: "Hello there")])), "Hello there")
     }
 }
+
+final class EditPreviewTests: XCTestCase {
+    func testEditWriteAndTruncation() {
+        let edit = #"{"file_path":"/x/a.ts","old_string":"a\nb","new_string":"c"}"#
+        XCTAssertEqual(EditPreview.lines(tool: "Edit", inputJSON: edit).map(\.kind), [.removed, .removed, .added])
+        let write = EditPreview.lines(tool: "Write", inputJSON: #"{"file_path":"/nonexistent/new.txt","content":"one\ntwo"}"#)
+        XCTAssertEqual(write.first, EditPreview.Line(kind: .note, text: "New file")); XCTAssertEqual(write.count, 3)
+        let big = EditPreview.lines(tool: "Write", inputJSON: #"{"file_path":"/nonexistent/n","content":"\#(String(repeating: "x\\n", count: 100))"}"#, maxLines: 10)
+        XCTAssertEqual(big.count, 11); XCTAssertTrue(big.last!.text.contains("more lines"))
+        XCTAssertTrue(EditPreview.lines(tool: "Bash", inputJSON: "{}").isEmpty)
+        let round = EditPreview.decode(EditPreview.encode(EditPreview.lines(tool: "Edit", inputJSON: edit)))
+        XCTAssertEqual(round, EditPreview.lines(tool: "Edit", inputJSON: edit))
+    }
+}
+
+final class SubagentTests: XCTestCase {
+    func testSubagentStepsNestUnderTheirTask() {
+        var p = ClaudeStreamParser()
+        var items: [ChatItem] = []
+        func feed(_ s: String) { for case .item(let i) in p.parse(line: s) { items.upsert(i) } }
+        feed(#"{"type":"assistant","message":{"id":"A","content":[{"type":"tool_use","id":"TASK","name":"Agent","input":{"description":"List files","prompt":"ls"}}]}}"#)
+        feed(#"{"type":"assistant","parent_tool_use_id":"TASK","message":{"id":"B","content":[{"type":"tool_use","id":"T2","name":"Bash","input":{"command":"ls"}}]}}"#)
+        feed(#"{"type":"user","parent_tool_use_id":"TASK","message":{"content":[{"type":"tool_result","tool_use_id":"T2","content":"a.txt","is_error":false}]}}"#)
+        feed(#"{"type":"assistant","parent_tool_use_id":"TASK","message":{"id":"C","content":[{"type":"text","text":"Found a.txt"}]}}"#)
+        XCTAssertEqual(items.first { $0.id == "TASK" }?.detail, "List files")
+        XCTAssertNil(items.first { $0.id == "TASK" }?.parent)
+        let child = items.first { $0.id == "T2" }
+        XCTAssertEqual(child?.parent, "TASK"); XCTAssertEqual(child?.status, .done)
+        XCTAssertEqual(items.first { $0.kind == .assistant }?.parent, "TASK")
+    }
+}

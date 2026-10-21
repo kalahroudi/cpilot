@@ -41,6 +41,7 @@ public struct ClaudeStreamParser: Sendable {
         case "Grep", "Glob": return s("pattern") ?? ""
         case "WebFetch": return s("url") ?? ""
         case "WebSearch": return s("query") ?? ""
+        case "Agent", "Task": return s("description") ?? s("prompt").map { String($0.prefix(120)) } ?? ""
         default:
             if let d = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]), let str = String(data: d, encoding: .utf8) { return String(str.prefix(200)) }
             return ""
@@ -116,21 +117,22 @@ public struct ClaudeStreamParser: Sendable {
     // MARK: Whole messages
 
     private mutating func parseAssistant(_ obj: [String: Any]) -> [ClaudeEvent] {
-        guard (obj["parent_tool_use_id"] as? String) == nil, let msg = obj["message"] as? [String: Any],
-              let blocks = msg["content"] as? [[String: Any]] else { return [] }
+        guard let msg = obj["message"] as? [String: Any], let blocks = msg["content"] as? [[String: Any]] else { return [] }
+        // A message from inside a sub-agent run carries the id of the tool row that started it; its steps nest under that row.
+        let parent = obj["parent_tool_use_id"] as? String
         let mid = (msg["id"] as? String) ?? UUID().uuidString
         var out: [ClaudeEvent] = []
         for b in blocks {
             switch b["type"] as? String {
             case "text":
-                if streamedMessages.contains(mid) { continue }   // already shown while it streamed
+                if parent == nil, streamedMessages.contains(mid) { continue }   // already shown while it streamed
                 let n = ordinal[mid, default: 0]; ordinal[mid] = n + 1
-                out.append(.item(ChatItem(id: "\(mid):t\(n)", kind: .assistant, text: (b["text"] as? String) ?? "", status: .done)))
+                out.append(.item(ChatItem(id: "\(mid):t\(n)", kind: .assistant, text: (b["text"] as? String) ?? "", status: .done, parent: parent)))
             case "tool_use":
                 guard let id = b["id"] as? String else { continue }
                 let name = (b["name"] as? String) ?? "Tool"
                 let input = (b["input"] as? [String: Any]) ?? [:]
-                var item = tools[id] ?? ChatItem(id: id, kind: .tool, title: name, status: .running)
+                var item = tools[id] ?? ChatItem(id: id, kind: .tool, title: name, status: .running, parent: parent)
                 item.title = name
                 item.detail = Self.summary(tool: name, input: input)
                 tools[id] = item

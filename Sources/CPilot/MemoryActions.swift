@@ -122,3 +122,76 @@ struct RecapCard: View {
         .sheet(isPresented: $save) { SummarizeSheet(session: session) }
     }
 }
+
+/// Start a task from this session: it begins with a summary of the conversation so far and can run alongside it.
+struct DelegateSheet: View {
+    let parent: SessionController
+    @Environment(\.dismiss) private var dismiss
+    @State private var prompt = ""
+    @State private var backend: Backend = .claude
+    @State private var worktree = true
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Delegate to a new task").font(.system(size: 16, weight: .semibold))
+            Text("The task starts with a summary of this session and runs on its own. Bring its result back when it is done.").font(.system(size: 12)).foregroundStyle(.secondary)
+            TextEditor(text: $prompt).font(.system(size: 13)).frame(height: 110).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            HStack {
+                Text("Agent").font(.system(size: 12.5))
+                Segmented(options: [(Backend.claude, "Claude")] + Workspace.shared.acpAgents.map { (Backend.acp($0.id), $0.name) }, selection: $backend)
+            }
+            Toggle("Own copy of the files (worktree)", isOn: $worktree).toggleStyle(.switch).tint(Theme.accent)
+            Text("Keeps the task from editing the same files as this session. Needs a git repository.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            if let error { Text(error).font(.system(size: 12)).foregroundStyle(Theme.danger) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                Button { start() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Start task") } }
+                    .buttonStyle(Pill(kind: .primary)).disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy).keyboardShortcut(.defaultAction)
+            }
+        }.padding(20).frame(width: 500)
+    }
+
+    private func start() {
+        busy = true
+        Task {
+            do { try await Workspace.shared.delegate(from: parent, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines), backend: backend, worktree: worktree); dismiss() }
+            catch { self.error = UserError.message(for: error, action: "Start the task"); busy = false }
+        }
+    }
+}
+
+/// Tasks spun off from this session: where each stands, a way to open it, and a way to bring its result back.
+struct TasksStrip: View {
+    let parent: SessionController
+    let ws = Workspace.shared
+
+    var body: some View {
+        let kids = ws.children(of: parent.id)
+        if !kids.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(kids) { k in
+                    let c = ws.controller(k.id)
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(.secondary)
+                        switch c?.state ?? .asleep {
+                        case .running: ProgressView().controlSize(.mini).frame(width: 8, height: 8)
+                        case .waiting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
+                        case .failed: Circle().fill(Theme.danger).frame(width: 8, height: 8)
+                        case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
+                        case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)
+                        }
+                        Text(k.title).font(.system(size: 12)).lineLimit(1)
+                        if c?.state == .waiting { Badge(text: "Needs approval", kind: .warn) }
+                        Spacer()
+                        Button("Open") { ws.select(k.id) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                        Button("Bring result back") { ws.bringBack(k, into: parent) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8).background(Theme.sidebar.opacity(0.5))
+        }
+    }
+}

@@ -177,7 +177,7 @@ struct SideRow: View {
                 case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
                 case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)
                 }
-                Text(meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
+                Text((meta.parentId != nil ? "↳ " : "") + meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
@@ -226,7 +226,7 @@ struct TabButton: View {
     var body: some View {
         HStack(spacing: 7) {
             dot
-            Text(session.meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
+            Text((session.meta.parentId != nil ? "↳ " : "") + session.meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
             Button { ws.closeTab(session.id) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).frame(width: 14, height: 14) }
                 .buttonStyle(.plain).foregroundStyle(.secondary).opacity(selected || hover ? 1 : 0).accessibilityLabel("Close tab")
         }

@@ -18,6 +18,7 @@ struct ChatView: View {
             Divider().opacity(0.5)
             if session.recapVisible { RecapCard(session: session).padding(.horizontal, 16).padding(.top, 10) }
             transcript
+            TasksStrip(parent: session)
             if session.meta.branch != nil { SessionPRBar(session: session) }
             Composer(session: session)
         }
@@ -30,7 +31,7 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if session.items.isEmpty { EmptyChat(session: session) }
-                    ForEach(session.items) { item in ChatRow(item: item, session: session).id(item.id) }
+                    ForEach(session.items.filter { $0.parent == nil }) { item in ChatRow(item: item, session: session, children: session.items.filter { $0.parent == item.id }).id(item.id) }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 20).padding(.vertical, 16)
@@ -149,13 +150,14 @@ struct EmptyChat: View {
 struct ChatRow: View {
     let item: ChatItem
     let session: SessionController
+    var children: [ChatItem] = []
 
     var body: some View {
         switch item.kind {
         case .user: UserBubble(item: item).frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant: AssistantText(text: item.text, streaming: item.status == .running, project: session.meta.cwd)
         case .thinking: ThinkingRow(item: item)
-        case .tool: ToolCard(item: item)
+        case .tool: ToolCard(item: item, children: children)
         case .permission: ApprovalCard(item: item, session: session)
         case .notice: Text(item.text).font(.system(size: 12)).foregroundStyle(.secondary)
         case .error:
@@ -217,18 +219,38 @@ struct ThinkingRow: View {
 
 struct ToolCard: View {
     let item: ChatItem
+    var children: [ChatItem] = []
     @State private var open = false
+    private var isAgent: Bool { item.title == "Agent" || item.title == "Task" }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { if !item.text.isEmpty { open.toggle() } } label: {
+            Button { if !item.text.isEmpty || !children.isEmpty { open.toggle() } } label: {
                 HStack(spacing: 8) {
                     statusIcon
                     Text(item.title ?? "Tool").font(.system(size: 12, weight: .semibold))
                     Text(item.detail ?? "").font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 0)
-                    if !item.text.isEmpty { Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10)).foregroundStyle(.secondary) }
+                    if isAgent { Badge(text: "Sub-agent", kind: .accent); Text("\(children.filter { $0.kind == .tool }.count) steps").font(.system(size: 11)).foregroundStyle(.secondary) }
+                    if !item.text.isEmpty || !children.isEmpty { Image(systemName: open || (isAgent && item.status == .running) ? "chevron.up" : "chevron.down").font(.system(size: 10)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 10).padding(.vertical, 7).contentShape(Rectangle())
             }.buttonStyle(.plain)
+            if (open || (isAgent && item.status == .running)) && !children.isEmpty {
+                Divider().opacity(0.5)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(children) { c in
+                        if c.kind == .tool {
+                            HStack(spacing: 6) {
+                                Image(systemName: c.status == .failed ? "xmark.circle.fill" : c.status == .running ? "circle.dotted" : "checkmark.circle.fill").font(.system(size: 10))
+                                    .foregroundStyle(c.status == .failed ? Theme.danger : c.status == .running ? Color.secondary : Theme.ok)
+                                Text(c.title ?? "Tool").font(.system(size: 11.5, weight: .medium))
+                                Text(c.detail ?? "").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                        } else if c.kind == .assistant {
+                            Text(c.text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                    }
+                }.padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+            }
             if open {
                 ScrollView([.horizontal, .vertical]) {
                     Text(item.text).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Color.white.opacity(0.85)).textSelection(.enabled)
@@ -268,6 +290,7 @@ struct ApprovalCard: View {
             }
             Text(item.text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                 .padding(8).frame(maxWidth: .infinity, alignment: .leading).background(Theme.fill, in: RoundedRectangle(cornerRadius: 6))
+            if let p = item.preview { EditPreviewView(lines: EditPreview.decode(p)) }
             if pending {
                 if let p = item.detail { Text(p).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                 HStack(spacing: 6) {
@@ -351,15 +374,26 @@ struct FlowLayout: Layout {
 struct Composer: View {
     @Bindable var session: SessionController
     @FocusState private var focused: Bool
+    @State private var delegate = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !session.attachments.isEmpty {
                 AttachmentStrip(attachments: session.attachments) { a in session.attachments.removeAll { $0.id == a.id } }
             }
-            TextField("Message \(session.meta.backend.kind == .claude ? "Claude" : "the agent")…  ⌘V pastes images, ⌃⌥⌘C captures", text: $session.draft, axis: .vertical)
+            if !slashMatches.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(slashMatches.prefix(6)) { sk in
+                        Button { pick(sk) } label: {
+                            HStack { Image(systemName: "sparkles").foregroundStyle(Theme.accent); Text(sk.name).font(.system(size: 12.5, weight: .medium)); Text(sk.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1); Spacer() }
+                                .padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                }.background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
+            }
+            TextField("Message \(session.meta.backend.kind == .claude ? "Claude" : "the agent")…  / for skills, ⌘V pastes images", text: $session.draft, axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 13.5)).lineLimit(1...10).focused($focused)
-                .onSubmit { if session.canSend, !session.isBusy { session.send() } }
+                .onSubmit { if let first = slashMatches.first { pick(first) } else if session.canSend, !session.isBusy { session.send() } }
             HStack(spacing: 8) {
                 Menu {
                     Button("Capture a region…") { CaptureCoordinator.shared.capture(into: session, window: false) }
@@ -368,6 +402,8 @@ struct Composer: View {
                     Button("Add clipboard") { CaptureCoordinator.shared.addClipboard(to: session) }
                     Divider()
                     Button("Add a file…") { addFile() }
+                    Divider()
+                    Button("Delegate to a new task…") { delegate = true }
                 } label: { Image(systemName: "plus") }
                     .menuStyle(.borderlessButton).fixedSize().help("Attach a screenshot, snippet, link or file")
                 SkillMenu(session: session)
@@ -389,6 +425,19 @@ struct Composer: View {
         .dropDestination(for: URL.self) { urls, _ in CaptureCoordinator.shared.addFiles(urls, to: session); return !urls.isEmpty }
         .onAppear { focused = true }
         .onChange(of: session.draft) { _, _ in session.saveDraftSoon() }
+        .sheet(isPresented: $delegate) { DelegateSheet(parent: session) }
+    }
+
+    /// Typing "/" lists the skills on this Mac; picking one asks for it by name (or pastes its instructions for agents without skills).
+    private var slashMatches: [Skill] {
+        let d = session.draft
+        guard d.hasPrefix("/"), !d.contains(" "), !d.contains("\n") else { return [] }
+        let q = d.dropFirst().lowercased()
+        return SkillCatalog.discover(project: session.meta.cwd).filter { q.isEmpty || $0.name.lowercased().contains(q) }
+    }
+
+    private func pick(_ sk: Skill) {
+        session.draft = session.meta.backend.kind == .claude ? "Use the \(sk.name) skill. " : SkillCatalog.body(of: sk) + "\n\n"
     }
 
     private func addFile() {
@@ -412,5 +461,26 @@ struct SkillMenu: View {
             } label: { Image(systemName: "sparkles") }
                 .menuStyle(.borderlessButton).fixedSize().help("Use a skill")
         }
+    }
+}
+
+/// The proposed change of a file edit, drawn like a diff, so an approval is an informed one.
+struct EditPreviewView: View {
+    let lines: [EditPreview.Line]
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
+                    HStack(spacing: 6) {
+                        Text(l.kind == .added ? "+" : l.kind == .removed ? "−" : " ").foregroundStyle(l.kind == .added ? Color.green : Color.red)
+                        Text(l.text.isEmpty ? " " : l.text).foregroundStyle(l.kind == .note ? Color.white.opacity(0.5) : Color.white.opacity(0.9))
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 11.5, design: .monospaced)).padding(.horizontal, 8)
+                    .background(l.kind == .added ? Color.green.opacity(0.16) : l.kind == .removed ? Color.red.opacity(0.18) : .clear)
+                }
+            }.frame(minWidth: 300, alignment: .leading).padding(.vertical, 4)
+        }
+        .frame(maxHeight: 200).background(Theme.terminal).clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

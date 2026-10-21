@@ -289,8 +289,9 @@ final class SessionController: Identifiable {
             answer(e, allow: false, always: false, message: reason)
             ws.audit.record(AuditEntry(session: id, tool: e.request.tool, summary: e.request.summary, outcome: "denied (\(reason))"))
         case .ask:
+            let preview = EditPreview.lines(tool: e.request.tool, inputJSON: e.request.input)
             let row = ChatItem(id: "perm-" + e.request.id, kind: .permission, text: e.request.summary, title: e.request.tool,
-                               detail: e.request.path, status: .pending)
+                               detail: e.request.path, status: .pending, preview: preview.isEmpty ? nil : EditPreview.encode(preview))
             items.upsert(row)
             pending.append(Pending(id: e.request.id, source: e.source, request: e.request))
             state = .waiting
@@ -518,11 +519,14 @@ final class Workspace {
         var branch: String?
         var useWorktree = false
         var firstMessage = ""
+        var parentId: String?
+        var handoff: String?
     }
 
     @discardableResult
     func create(_ n: NewSession) async throws -> SessionController {
         var meta = SessionMeta(title: "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
+        meta.parentId = n.parentId; meta.handoff = n.handoff
         if let branch = n.branch, !branch.isEmpty, await Git.isRepo(n.folder) {
             if n.useWorktree {
                 let path = AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
@@ -564,6 +568,31 @@ final class Workspace {
         c.addNotice(native ? "Forked from \"\(source.meta.title)\". The agent keeps the full conversation." : "Continuing from \"\(source.meta.title)\" with a summary of it. The new agent has not seen the full conversation.")
         select(m.id)
         return c
+    }
+
+    /// Spins a piece of work off into its own task: a new session that starts with a summary of this one, in its own copy of the
+    /// files by default, so both can run at the same time. Its result can be brought back into this conversation.
+    @discardableResult
+    func delegate(from parent: SessionController, prompt: String, backend: Backend, worktree: Bool) async throws -> SessionController {
+        parent.loadIfNeeded()
+        let isRepo = await Git.isRepo(parent.meta.cwd)
+        let n = NewSession(folder: parent.meta.cwd, backend: backend, access: parent.meta.access == .fullAccess ? .editFiles : parent.meta.access,
+                           branch: isRepo && worktree ? "task-" + Git.slugify(prompt) + "-" + String(Int(Date().timeIntervalSince1970) % 10000) : nil,
+                           useWorktree: isRepo && worktree, firstMessage: prompt, parentId: parent.id,
+                           handoff: ContextDigest.handoff(ContextDigest.build(items: parent.items), from: parent.meta.title))
+        return try await create(n)
+    }
+
+    func children(of id: String) -> [SessionMeta] { sessions.filter { $0.parentId == id } }
+
+    /// Puts a task's result into the parent's message box, for you to read and send.
+    func bringBack(_ child: SessionMeta, into parent: SessionController) {
+        guard let c = controller(child.id) else { return }
+        c.loadIfNeeded()
+        let result = c.items.last(where: { $0.kind == .assistant && !$0.text.isEmpty })?.text ?? child.recap ?? "(no result yet)"
+        parent.draft += (parent.draft.isEmpty ? "" : "\n\n") + "Result from the task \"\(child.title)\":\n\(result)"
+        c.unloadIfIdle()
+        select(parent.id)
     }
 
     func remember(_ text: String, project: String?, name: String? = nil) {
