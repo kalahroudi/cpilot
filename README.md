@@ -13,4 +13,4 @@ A superlight native macOS menu bar app for running and managing AI coding agent 
 
 ## License
 
-MIT
+Apache License 2.0
