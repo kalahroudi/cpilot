@@ -44,13 +44,16 @@ enum SnapshotMode {
         func addServer() -> Shot {
             Shot(name: "add-environment", dark: false, size: CGSize(width: 620, height: 640)) { AnyView(AddEnvironmentSheet().background(Theme.pane)) }
         }
+        func newSession() -> Shot {
+            Shot(name: "new-session", dark: false, size: CGSize(width: 620, height: 760)) { AnyView(NewSessionSheet().background(Theme.pane)) }
+        }
         func wide(_ p: Pane, name: String, collapsed: Bool = false, size: CGSize = CGSize(width: 1500, height: 900)) -> Shot {
             Shot(name: name, dark: false, size: size) { Nav.shared.pane = p; Prefs.shared.sidebarCollapsed = collapsed; return AnyView(ManagerView()) }
         }
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), addServer(), wide(.settings, name: "settings-wide"), wide(.settings, name: "settings-collapsed", collapsed: true, size: CGSize(width: 900, height: 800)), wide(.repo, name: "repo-setup-wide"), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), addServer(), newSession(), wide(.settings, name: "settings-wide"), wide(.settings, name: "settings-collapsed", collapsed: true, size: CGSize(width: 900, height: 800)), wide(.repo, name: "repo-setup-wide"), manager(.specs), manager(.stacks), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 
