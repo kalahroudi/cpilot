@@ -29,7 +29,10 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
 - **Nothing lost on a crash.** Messages are written to disk as they complete, streaming replies are checkpointed, drafts are saved as you type, and sessions resume by id with the agent's own context.
 - **Capture.** Press Control-Option-Command-C to grab part of the screen, or add selected text, the front browser page or the clipboard. It lands in the active session's composer.
 - **Servers.** Add a machine over SSH and run sessions there, with its files, git and pull requests. Nothing to install on the server except the agents. Turn on "keep sessions running" and a small helper (one Node.js file, no network port) keeps agents working when your connection drops, then catches you up when you reconnect. Several addresses per server are tried in order. Approvals and captures stay on your Mac, and Full access is not offered on servers.
-- **Pull requests, end to end.** Create, read the diff, review with an agent, run a security scan, and merge automatically when your rules pass. Everything goes through your own GitHub login.
+- **Pull requests, end to end.** Create, read the diff, review with an agent, run a security scan, and merge automatically when your rules pass. Everything goes through your own GitHub login. An inbox lists every pull request that needs you across your repositories.
+- **Stacks.** Split a big change into small pull requests that build on each other. CPilot restacks when something changes underneath (including after a squash merge), submits the chain with the right bases, merges from the bottom, and offers an agent for conflicts. An agent can also propose how to split a large branch. It uses plain git and the GitHub CLI.
+- **Specs.** Start from a GitHub issue, a rough requirement you type, a conversation, existing code, a capture or an existing spec folder. A read-only agent drafts `spec.md`, `plan.md` and `tasks.md` (plain Markdown in your repo's `specs/` folder); you approve each document, or let it run on its own. Each task then runs as a session on its own branch, stacked on the tasks it needs, and ticks itself off when its pull request merges.
+- **Files from a session.** See every file a session wrote or changed, with a preview, its changes, and a way to show it in Finder.
 - **Repo setup in one go.** README, license, GitHub Pages, a protected main branch and a scan on every pull request.
 - **Memory that recalls.** Plain Markdown notes every session starts with, plus a local index (full-text and on-device meaning search, one SQLite file) of your finished messages. A new session starts with the best matches from earlier work. Fork a session or hand it to another agent with a summary, save what a session learned as a note in one click, and see exactly which notes a session loaded. An optional long-term memory engine can also connect over MCP.
 - **Skills.** Skills found on your Mac are listed and one click away in the composer.
@@ -37,8 +40,8 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
 - **Self-updating.** Checks GitHub Releases once a day and rolls back by itself if a new version fails to start.
 
 <p align="center">
-  <img src="docs/assets/manager-pulls.png" alt="Pull requests" width="49%">
-  <img src="docs/assets/manager-remote.png" alt="Environments" width="49%">
+  <img src="docs/assets/manager-specs.png" alt="Specs" width="49%">
+  <img src="docs/assets/manager-stacks.png" alt="Stacks" width="49%">
 </p>
 
 ## Requirements
@@ -53,7 +56,7 @@ scripts/bundle.sh                         # builds dist/CPilot.app
 dist/CPilot.app/Contents/MacOS/CPilot --self-test
 ```
 
-The core lives in `Sources/CPilotKit` (no UI, unit tested), the app in `Sources/CPilot`, and the MCP server in `Sources/cpilot-mcp`. One dependency, used only to render Markdown and highlight code in the chat. Set `CPILOT_LIVE=1` to also run the test that talks to the real Claude command line.
+The core lives in `Sources/CPilotKit` (no UI, unit tested), the app in `Sources/CPilot`, and the MCP server in `Sources/cpilot-mcp`. One dependency, used only to render Markdown and highlight code in the chat. Set `CPILOT_LIVE=1` to also run the tests that talk to the real Claude command line (sessions, resume, approvals, forks, a server-held agent that survives a dropped connection, and a requirement turned into a spec, plan and tasks). `CPilot --bench` opens and closes the window and popover ten times and reports memory and idle CPU.
 
 ## Where your data lives
 
