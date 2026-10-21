@@ -75,10 +75,13 @@ struct ChatHeader: View {
     }
 
     @State private var summarize = false
+    @State private var stacking = false
+    @State private var stackName = ""
 
     private var actionsMenu: some View {
         Menu {
             Button("Recap this session") { session.refreshRecap(force: true); session.recapVisible = true }
+            if session.meta.branch != nil { Button("Stack a new branch on top…") { stacking = true } }
             Button("Fork this session") { ws.fork(session) }
             Menu("Continue with another agent") {
                 if session.meta.backend.kind != .claude { Button("Claude") { ws.fork(session, to: .claude) } }
@@ -90,6 +93,16 @@ struct ChatHeader: View {
         } label: { Image(systemName: "ellipsis.circle") }
         .menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary).help("Fork, switch agent, save to memory")
         .sheet(isPresented: $summarize) { SummarizeSheet(session: session) }
+        .sheet(isPresented: $stacking) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Stack a new branch").font(.system(size: 16, weight: .semibold))
+                Text("Creates a branch on top of \(session.meta.branch ?? "this one") with its own session and copy of the files.").font(.system(size: 12)).foregroundStyle(.secondary)
+                TextField("branch name", text: $stackName).textFieldStyle(.roundedBorder)
+                HStack { Spacer(); Button("Cancel") { stacking = false }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                    Button("Create") { let n = stackName; stacking = false; Task { do { try await ws.stackOn(session, name: n) } catch { AppModel.shared.show(UserError.message(for: error, action: "Stack a branch"), error: true) } } }
+                        .buttonStyle(Pill(kind: .primary)).disabled(stackName.trimmingCharacters(in: .whitespaces).isEmpty).keyboardShortcut(.defaultAction) }
+            }.padding(20).frame(width: 420)
+        }
     }
 
     private var backendName: String {

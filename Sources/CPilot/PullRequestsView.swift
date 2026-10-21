@@ -173,6 +173,17 @@ final class PRCenter {
         await refreshList()
     }
 
+    /// Can this pull request be merged now? Runs the security scan first if that is required and has not been done.
+    /// Call inside `Exec.with` for a server's repository.
+    func gateFor(_ n: Int, dir: String) async -> MergeGate {
+        guard let pr = try? await GitHub.view(n, in: dir) else { return MergeGate(ready: false, reasons: ["Could not read the pull request."]) }
+        let chk = await GitHub.checks(n, in: dir)
+        let key = "\(dir)#\(n)#\(pr.headRefName)"
+        var result = scans[key]
+        if result == nil, Prefs.shared.securityScanOnPR, let r = await scanQuietly(pr, dir: dir) { result = r; scans[key] = r }
+        return MergeGate.evaluate(pr: pr, checks: chk, scan: result, requireScan: Prefs.shared.securityScanOnPR)
+    }
+
     private func scanQuietly(_ pr: PullRequest, dir: String) async -> SecurityResult? {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("cpilot-scan-\(pr.number)-\(UUID().uuidString.prefix(6))").path
         defer { Task { await Git.removeWorktree(repo: dir, path: tmp) } }

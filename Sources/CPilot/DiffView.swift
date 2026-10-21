@@ -144,11 +144,13 @@ struct SessionPRBar: View {
     let session: SessionController
     @State private var pr: PullRequest?
     @State private var showCreate = false
+    @State private var stackPos: String?
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.pull").foregroundStyle(.secondary)
             Text(session.meta.branch ?? "").font(.system(size: 12, design: .monospaced)).lineLimit(1)
+            if let stackPos { Badge(text: stackPos, kind: .accent) }
             if let pr {
                 Badge(text: "#\(pr.number)", kind: .accent)
                 if pr.autoMerge { Badge(text: "Auto-merge", kind: .ok) }
@@ -169,5 +171,7 @@ struct SessionPRBar: View {
         guard let b = session.meta.branch else { return }
         let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", b, "--state", "open", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
         pr = out.flatMap { try? JSONDecoder().decode([PullRequest].self, from: Data($0.utf8)).first }
+        let stacks = await Exec.with(session.env) { await Stacks.load(in: session.meta.cwd) }
+        if let st = stacks.first(where: { $0.branches.contains { $0.name == b } }), st.branches.count > 1, let i = st.branches.firstIndex(where: { $0.name == b }) { stackPos = "Stack \(i + 1) of \(st.branches.count)" } else { stackPos = nil }
     }
 }

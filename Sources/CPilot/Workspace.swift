@@ -644,6 +644,55 @@ final class Workspace {
         return try await create(n)
     }
 
+    func session(forBranch branch: String, repo: String, environment: String?) -> SessionMeta? {
+        sessions.first { $0.branch == branch && $0.cwd == repo && $0.environment == environment }
+    }
+
+    /// Opens (or creates) a session working on a branch that already exists, in its own worktree when git allows it.
+    @discardableResult
+    func startSession(onBranch branch: String, repo: String, environment: String?, prompt: String = "") async throws -> SessionController {
+        if let m = session(forBranch: branch, repo: repo, environment: environment), let c = controller(m.id) { select(m.id); if !prompt.isEmpty { c.draft = prompt; c.send() }; return c }
+        let remote = self.environment(environment)
+        var meta = SessionMeta(title: branch, cwd: repo, access: policy.defaultLevel, branch: branch)
+        meta.environment = environment
+        let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
+        let made: Bool = await Exec.with(remote) {
+            _ = try? await Shell.run("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
+            return ((try? await Shell.run("git", ["worktree", "add", path, branch], cwd: URL(fileURLWithPath: repo)))?.ok) ?? false
+        }
+        if made { meta.worktree = path } else { _ = try? await Exec.with(remote) { try await Shell.run("git", ["checkout", branch], cwd: URL(fileURLWithPath: repo)) } }
+        save(meta)
+        let c = controller(meta.id)!
+        c.loaded = true
+        select(meta.id)
+        if !prompt.isEmpty { c.draft = prompt; c.send() }
+        return c
+    }
+
+    /// A new branch on top of this session's branch, with its own session and copy of the files, so the stack grows as you work.
+    @discardableResult
+    func stackOn(_ source: SessionController, name: String) async throws -> SessionController {
+        let remote = source.env
+        let slug = Git.slugify(name)
+        guard let parent = source.meta.branch else { throw StackError.message("This session is not on a branch yet.") }
+        var meta = SessionMeta(title: slug, cwd: source.meta.cwd, backend: source.meta.backend, model: source.meta.model, access: source.meta.access, branch: slug)
+        meta.environment = source.meta.environment
+        let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
+        try await Exec.with(remote) {
+            _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
+            let tip = try await Shell.check("git", ["rev-parse", parent], cwd: URL(fileURLWithPath: source.meta.cwd)).trimmingCharacters(in: .whitespacesAndNewlines)
+            try await Git.addWorktree(repo: source.meta.cwd, branch: slug, base: parent, to: path)
+            try await Stacks.setParent(slug, to: parent, base: tip, in: source.meta.cwd)
+        }
+        meta.worktree = path
+        meta.handoff = ContextDigest.handoff(ContextDigest.build(items: source.items), from: source.meta.title)
+        save(meta)
+        let c = controller(meta.id)!
+        c.loaded = true
+        select(meta.id)
+        return c
+    }
+
     func children(of id: String) -> [SessionMeta] { sessions.filter { $0.parentId == id } }
 
     /// Puts a task's result into the parent's message box, for you to read and send.

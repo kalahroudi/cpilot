@@ -5,17 +5,17 @@ import CPilotKit
 
 /// Panes of the Manager window. Named `Pane`, not `Section`: SwiftUI already has a `Section`.
 enum Pane: String, CaseIterable, Identifiable {
-    case sessions, pulls, memory, skills, repo, remote, settings, help
+    case sessions, pulls, stacks, specs, memory, skills, repo, remote, settings, help
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .sessions: "Sessions"; case .pulls: "Pull requests"; case .memory: "Memory"; case .skills: "Skills"
+        case .sessions: "Sessions"; case .pulls: "Pull requests"; case .stacks: "Stacks"; case .specs: "Specs"; case .memory: "Memory"; case .skills: "Skills"
         case .repo: "Repo setup"; case .remote: "Environments"; case .settings: "Settings"; case .help: "Help"
         }
     }
     var symbol: String {
         switch self {
-        case .sessions: "bubble.left.and.text.bubble.right"; case .pulls: "arrow.triangle.pull"; case .memory: "brain"; case .skills: "sparkles"
+        case .sessions: "bubble.left.and.text.bubble.right"; case .pulls: "arrow.triangle.pull"; case .stacks: "square.stack.3d.up"; case .specs: "doc.text.magnifyingglass"; case .memory: "brain"; case .skills: "sparkles"
         case .repo: "shippingbox"; case .remote: "server.rack"; case .settings: "gearshape"; case .help: "questionmark.circle"
         }
     }
@@ -62,6 +62,8 @@ struct ManagerView: View {
             switch nav.pane {
             case .sessions: SessionsPane()
             case .pulls: PullRequestsView()
+            case .stacks: StacksView()
+            case .specs: SpecsView()
             case .memory: MemoryView()
             case .skills: SkillsView()
             case .repo: RepoSetupView()
@@ -79,7 +81,7 @@ struct Rail: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach([Pane.sessions, .pulls, .memory, .skills, .repo, .remote]) { item($0) }
+            ForEach([Pane.sessions, .specs, .stacks, .pulls, .memory, .skills, .repo, .remote]) { item($0) }
             Spacer()
             ForEach([Pane.settings, .help]) { item($0) }
             Text(AppMemory.footprint.replacingOccurrences(of: " MB", with: "")).font(.system(size: 9)).foregroundStyle(.secondary).help("CPilot memory use, in MB")

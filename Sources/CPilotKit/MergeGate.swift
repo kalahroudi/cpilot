@@ -6,6 +6,7 @@ import Foundation
 public struct MergeGate: Equatable, Sendable {
     public var ready: Bool
     public var reasons: [String]
+    public init(ready: Bool, reasons: [String]) { self.ready = ready; self.reasons = reasons }
 
     public static func evaluate(pr: PullRequest, checks: [PullRequest.Check], scan: SecurityResult?, requireScan: Bool) -> MergeGate {
         var why: [String] = []
