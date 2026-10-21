@@ -231,6 +231,11 @@ struct StackCard: View {
                 Button("Merge from the bottom") { Task { await center.mergeBottom(stack) } }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
                 if let r = center.repo { Toggle("", isOn: Binding(get: { center.isArmed(r) }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent).help("Merge the stack automatically, bottom first, whenever every rule passes") }
             }
+            if let r = center.repo {
+                Text(center.isArmed(r) ? "Auto-merge is on: the bottom pull request merges by itself once its checks and reviews pass, then the next one follows."
+                                       : "Switch on to merge this stack automatically, bottom first, whenever every rule passes.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing).multilineTextAlignment(.trailing)
+            }
             Text("⎇ \(stack.trunk)").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
             VStack(spacing: 6) { ForEach(stack.branches) { b in StackNode(branch: b, stack: stack) } }
                 .padding(.leading, 14).overlay(alignment: .leading) { Rectangle().fill(Theme.hairline).frame(width: 2).padding(.vertical, 10) }
