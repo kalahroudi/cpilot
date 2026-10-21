@@ -102,6 +102,29 @@ public struct AuditEntry: Codable, Identifiable, Equatable, Sendable {
     public init(session: String, tool: String, summary: String, outcome: String) {
         self.session = session; self.tool = tool; self.summary = summary; self.outcome = outcome
     }
+
+    /// A short, readable name for what was approved: "Ran git status", "Edited Package.swift". The full text stays in `summary`.
+    public var headline: String {
+        let s = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        func file() -> String { (s as NSString).lastPathComponent.isEmpty ? s : (s as NSString).lastPathComponent }
+        switch tool {
+        case "Bash":
+            var words = s.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            // Skip a leading `cd dir &&` and VAR=value prefixes to find the command itself.
+            while let f = words.first {
+                if f == "cd", words.count > 2, words[2] == "&&" { words.removeFirst(3) }
+                else if f.contains("="), !f.hasPrefix("-"), !f.hasPrefix("/"), !f.hasPrefix("\"") { words.removeFirst() }
+                else { break }
+            }
+            let name = words.first.map { ($0 as NSString).lastPathComponent } ?? "a command"
+            let sub = words.dropFirst().first.flatMap { w -> String? in w.hasPrefix("-") || w.count > 20 || w.contains("/") || w.contains("\"") ? nil : w }
+            return "Ran " + [name, sub].compactMap { $0 }.joined(separator: " ")
+        case "Edit", "MultiEdit", "NotebookEdit": return "Edited " + file()
+        case "Write": return "Wrote " + file()
+        case "Read": return "Read " + file()
+        default: return tool + (s.isEmpty || s.count > 40 ? "" : ": " + s)
+        }
+    }
 }
 
 /// Every approval, kept as one line of JSON so it is easy to read, grep and revoke.

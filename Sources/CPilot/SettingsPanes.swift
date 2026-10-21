@@ -6,6 +6,31 @@ import CPilotKit
 
 private func toggle(_ b: Binding<Bool>) -> some View { Toggle("", isOn: b).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
 
+/// One approval: a plain headline, with the full command behind a "Details" toggle.
+struct ApprovalRow: View {
+    let entry: AuditEntry
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingRow(entry.headline, entry.ts.formatted(date: .abbreviated, time: .shortened), separator: false) {
+                HStack(spacing: 8) {
+                    Badge(text: entry.outcome, kind: entry.outcome.hasPrefix("denied") ? .warn : .ok)
+                    if entry.summary.count > entry.headline.count {
+                        Button(open ? "Hide details" : "Details") { open.toggle() }.buttonStyle(.soft).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if open {
+                Text(entry.summary).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
+                    .padding(.horizontal, 14).padding(.bottom, 6)
+            }
+            Divider()
+        }
+    }
+}
+
 /// What agents may do, per project, and a log of every approval.
 struct AccessSettings: View {
     let ws = Workspace.shared
@@ -39,9 +64,7 @@ struct AccessSettings: View {
             }
             SettingsGroup("Approvals") {
                 if log.isEmpty { SettingRow("Nothing yet", "Every approval and denial is listed here.") { EmptyView() } }
-                ForEach(log.prefix(12)) { e in
-                    SettingRow("\(e.tool): \(e.summary)", e.ts.formatted(date: .abbreviated, time: .shortened)) { Badge(text: e.outcome, kind: e.outcome.hasPrefix("denied") ? .warn : .ok) }
-                }
+                ForEach(log.prefix(12)) { e in ApprovalRow(entry: e) }
                 SettingRow("Revoke everything", "Forgets all project command rules. Sessions ask again from now on.") {
                     Button("Revoke") { for i in w.policy.rules.indices { w.policy.rules[i].allowCommands = [] }; w.savePolicy() }.buttonStyle(Pill(kind: .danger))
                 }

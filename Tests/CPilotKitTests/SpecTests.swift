@@ -99,3 +99,12 @@ final class SpecTests: XCTestCase {
         XCTAssertFalse(Specs.isMergedWork(task: t, spec: "001-pin", head: "other", title: "T0011 unrelated"))
     }
 }
+
+final class AuditHeadlineTests: XCTestCase {
+    func testHeadlines() {
+        func h(_ t: String, _ s: String) -> String { AuditEntry(session: "s", tool: t, summary: s, outcome: "allowed once").headline }
+        XCTAssertEqual(h("Bash", "cd /tmp/x && FOO=1 git status --short | head"), "Ran git status")
+        XCTAssertEqual(h("Bash", "/usr/bin/ssh -o X=1 host 'long script'"), "Ran ssh")
+        XCTAssertEqual(h("Edit", "/a/b/Package.swift"), "Edited Package.swift")
+    }
+}
