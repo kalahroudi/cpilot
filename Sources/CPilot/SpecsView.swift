@@ -80,9 +80,23 @@ struct SpecList: View {
                                 .background(center.selected == d.id ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7))
                                 .foregroundStyle(center.selected == d.id ? Theme.accent : Color.primary).contentShape(Rectangle())
                             }.buttonStyle(.soft)
-                            .contextMenu { if center.status(d) == .draft { Button("Delete draft", role: .destructive) { Task { await center.delete(d.id) } } } }
+                            .contextMenu {
+                                if center.status(d) == .done { Button("Archive") { Task { await center.archive(d.id) } } }
+                                if center.status(d) == .draft { Button("Delete draft", role: .destructive) { Task { await center.delete(d.id) } } }
+                            }
                         }
                     }
+                }
+                if !center.archived.isEmpty {
+                    DisclosureGroup {
+                        ForEach(center.archived.reversed(), id: \.self) { id in
+                            HStack {
+                                Text(id).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                                Spacer(minLength: 4)
+                                AsyncButton("Restore") { await center.unarchive(id) }.buttonStyle(Pill(kind: .plain))
+                            }.padding(.horizontal, 10).padding(.vertical, 3)
+                        }
+                    } label: { SectionLabel("Archived (\(center.archived.count))") }.padding(.horizontal, 12).padding(.top, 10)
                 }
             }.padding(.horizontal, 6).padding(.bottom, 10)
         }
@@ -168,6 +182,9 @@ struct SpecDetail: View {
             Toggle("Track in git", isOn: Binding(get: { center.tracked }, set: { on in Task { await center.setTracked(on) } }))
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12)).foregroundStyle(.secondary)
                 .help(center.tracked ? "The specs folder (.cpilot/specs) shows up in git so you can commit and share it." : "The specs folder (.cpilot/specs) stays out of git. Turn on to commit and share it.")
+            if center.status(doc) == .done {
+                AsyncButton("Archive") { await center.archive(doc.id) }.buttonStyle(Pill(kind: .plain)).help("Moves this finished spec into the archive folder. It is no longer read when specs refresh.")
+            }
             if center.status(doc) == .draft {
                 Button("Delete") { confirmDelete = true }.buttonStyle(Pill(kind: .danger)).disabled(job.running)
             }

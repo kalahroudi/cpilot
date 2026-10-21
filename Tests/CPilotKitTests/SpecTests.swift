@@ -111,6 +111,21 @@ final class SpecTests: XCTestCase {
         XCTAssertEqual(fresh, "other"); XCTAssertEqual(taken, "session-3")
     }
 
+    func testArchivedSpecsAreNotListedAndCanComeBack() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("arc-\(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try await Specs.write("\(Specs.folder)/001-a/spec.md", "# A", in: dir)
+        try await Specs.write("\(Specs.folder)/002-b/spec.md", "# B", in: dir)
+        try await Specs.archive("001-a", in: dir)
+        var docs = await Specs.list(in: dir).docs
+        XCTAssertEqual(docs.map(\.id), ["002-b"])
+        let ids = await Specs.archivedIds(in: dir); XCTAssertEqual(ids, ["001-a"])
+        try await Specs.unarchive("001-a", in: dir)
+        docs = await Specs.list(in: dir).docs
+        XCTAssertEqual(docs.map(\.id), ["001-a", "002-b"])
+        let none = await Specs.archivedIds(in: dir); XCTAssertEqual(none, [])
+    }
+
     func testMergedWorkMatchesByIdOrBranch() {
         let t = SpecTask(id: "T001", title: "Pin favorites first in ChatListFilter.apply", done: false)
         XCTAssertTrue(Specs.isMergedWork(task: t, spec: "001-pin", head: "spec-001-t001", title: "x"))

@@ -63,6 +63,8 @@ final class SpecCenter {
         await Exec.with(env) { await Specs.setTracked(on, in: r.dir) }
     }
     var docs: [SpecDoc] = []
+    /// Folder names of archived specs. They are not loaded, only listed, and still count when numbering new specs.
+    var archived: [String] = []
     var constitution: String?
     var selected: String?
     var jobs: [String: Job] = [:]
@@ -212,6 +214,7 @@ final class SpecCenter {
         let e = env
         let (list, const) = await Exec.with(e) { await Specs.list(in: r.dir) }
         docs = list; constitution = const
+        archived = await Exec.with(e) { await Specs.archivedIds(in: r.dir) }
         let stacks = await Exec.with(e) { await Stacks.load(in: r.dir, host: LiveStackHost(dir: r.dir)) }
         trunk = stacks.first?.trunk ?? "main"
         merged = Set(stacks.flatMap(\.branches).filter(\.isMerged).map(\.name))
@@ -245,7 +248,7 @@ final class SpecCenter {
     func start(_ source: SpecSource, autonomy: Autonomy, allowGit: Bool = false) async {
         guard let r = repo else { return }
         let e = env
-        let number = Specs.nextNumber(existing: docs.map(\.id))
+        let number = Specs.nextNumber(existing: docs.map(\.id) + archived)
         let id = Specs.folderName(number: number, title: source.title)
         do {
             try await Exec.with(e) {
@@ -440,6 +443,21 @@ final class SpecCenter {
         await refresh()
     }
 
+    /// Moves a finished spec out of the way. Its files are kept in the specs folder's `archive` and are no longer read.
+    func archive(_ id: String) async {
+        guard let r = repo, status(doc(id) ?? SpecDoc(id: id, number: 0, title: "", spec: nil, plan: nil, tasksText: nil)) == .done, jobs[id]?.running != true else { return }
+        do { try await Exec.with(env) { try await Specs.archive(id, in: r.dir) } } catch { AppModel.shared.show("\(error)", error: true); return }
+        jobs[id] = nil; dropRun(id)
+        if selected == id { selected = nil }
+        await refresh()
+    }
+
+    func unarchive(_ id: String) async {
+        guard let r = repo else { return }
+        do { try await Exec.with(env) { try await Specs.unarchive(id, in: r.dir) } } catch { AppModel.shared.show("\(error)", error: true); return }
+        await refresh(); selected = id
+    }
+
     // MARK: Other ways in
 
     func fromSession(_ s: SessionController) {
@@ -468,7 +486,7 @@ final class SpecCenter {
         for (src, dst) in map { if let t = try? String(contentsOf: url.appendingPathComponent(src), encoding: .utf8) { files[dst] = t } }
         guard let spec = files["spec.md"] else { AppModel.shared.show("No spec.md or requirements.md found in that folder.", error: true); return }
         let title = Specs.title(of: spec) ?? url.lastPathComponent
-        let id = Specs.folderName(number: Specs.nextNumber(existing: docs.map(\.id)), title: title)
+        let id = Specs.folderName(number: Specs.nextNumber(existing: docs.map(\.id) + archived), title: title)
         for (name, text) in files { try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(name)", text, in: r.dir, tracked: tracked) } }
         await refresh(); selected = id
     }

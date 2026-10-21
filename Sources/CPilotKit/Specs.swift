@@ -202,6 +202,24 @@ public enum Specs {
         guard r.ok else { throw ShellError.failed(command: "remove", status: r.status, stderr: r.stderr) }
     }
 
+    /// Archived specs live in `<specs>/archive/<id>`. They are not read on refresh (the listing only looks one folder down), so they cost nothing to keep.
+    public static let archiveFolder = "archive"
+
+    public static func archive(_ id: String, in dir: String) async throws { try await move(id, in: dir, from: folder, to: "\(folder)/\(archiveFolder)") }
+    public static func unarchive(_ id: String, in dir: String) async throws { try await move(id, in: dir, from: "\(folder)/\(archiveFolder)", to: folder) }
+
+    private static func move(_ id: String, in dir: String, from: String, to: String) async throws {
+        guard !id.isEmpty, !id.contains("/"), !id.hasPrefix(".") else { throw ShellError.failed(command: "move", status: 1, stderr: "Not a spec folder: \(id)") }
+        let r = try await Shell.run("sh", ["-c", #"cd "$1" && [ -d "$2/$4" ] && mkdir -p "$3" && [ ! -e "$3/$4" ] && mv "$2/$4" "$3/$4""#, "sh", dir, from, to, id], timeout: 30)
+        guard r.ok else { throw ShellError.failed(command: "move", status: r.status, stderr: r.stderr.isEmpty ? "Could not move \(id)." : r.stderr) }
+    }
+
+    /// Folder names of the archived specs, newest last. Only names are read.
+    public static func archivedIds(in dir: String) async -> [String] {
+        guard let r = try? await Shell.run("sh", ["-c", #"cd "$1/$2/$3" 2>/dev/null && ls -1"#, "sh", dir, folder, archiveFolder], timeout: 30), r.ok else { return [] }
+        return r.stdout.split(separator: "\n").map(String.init).filter { $0.first?.isNumber == true }.sorted()
+    }
+
     /// Adds or removes the local ignore line for `.cpilot`. Only the clone's own exclude file is touched, never a committed .gitignore.
     public static func setTracked(_ tracked: Bool, in dir: String) async {
         let script = tracked
