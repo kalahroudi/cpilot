@@ -276,3 +276,13 @@ struct DimWhenDisabled: ViewModifier {
     func body(content: Content) -> some View { content.opacity(enabled ? 1 : 0.4) }
 }
 extension View { func dimWhenDisabled() -> some View { modifier(DimWhenDisabled()) } }
+
+/// A button label that swaps to a spinner and its "-ing" wording while the action runs.
+struct BusyLabel: View {
+    let title: String
+    let busyTitle: String
+    let busy: Bool
+    var body: some View {
+        HStack(spacing: 6) { if busy { ProgressView().controlSize(.mini) }; Text(busy ? busyTitle : title) }
+    }
+}

@@ -39,6 +39,10 @@ final class SpecCenter {
         var error: String?
         var gate: Bool = false                  // spec, plan and tasks are written; waiting for "start building"
         var autonomy: Autonomy = .step
+        var submitting = false
+        /// The result of the last Submit stack: a line to show next to the button, and whether it failed.
+        var submitNote: String?
+        var submitFailed = false
     }
 
     var repo: PRCenter.Repo?
@@ -52,6 +56,8 @@ final class SpecCenter {
     var merged: Set<String> = []
     var started: Set<String> = []
     var coded: Set<String> = []
+    /// Branches with code that has no open pull request yet, or commits the remote has not seen.
+    var unsubmitted: Set<String> = []
     var trunk = "main"
     var newWork = false
     var preset: SpecSource?
@@ -93,6 +99,7 @@ final class SpecCenter {
         merged = Set(stacks.flatMap(\.branches).filter(\.isMerged).map(\.name))
         started = Set(stacks.flatMap(\.branches).map(\.name))
         coded = Set(stacks.flatMap(\.branches).filter { $0.commits > 0 }.map(\.name))
+        unsubmitted = Set(stacks.flatMap(\.unsubmitted).map(\.name))
         // A task whose pull request merged is ticked off.
         for d in docs { await tickMerged(d) }
         if selected == nil { selected = docs.last?.id }
@@ -253,19 +260,27 @@ final class SpecCenter {
 
     /// Pushes the stack of this spec's branches, opens the pull requests, and lets the merge rules take it from there.
     func submitAndArm(_ id: String) async {
-        guard let r = repo else { return }
+        guard let r = repo, jobs[id]?.submitting != true else { return }
+        jobs[id, default: Job()].submitting = true
+        jobs[id, default: Job()].submitNote = nil
+        defer { jobs[id, default: Job()].submitting = false }
         let e = env
         do {
-            _ = try await Exec.with(e) { () -> Int in
+            let count = try await Exec.with(e) { () -> Int in
                 let host = LiveStackHost(dir: r.dir)
                 var count = 0
                 for st in await Stacks.load(in: r.dir, host: host) where st.branches.contains(where: { $0.name.hasPrefix("spec-\(id.prefix(3))-") }) { count += try await Stacks.submit(st, in: r.dir, host: host).count }
                 return count
             }
             StackCenter.shared.arm(repo: r)
+            jobs[id, default: Job()].submitFailed = false
+            jobs[id, default: Job()].submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass."
             AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
             await refresh()
-        } catch { jobs[id, default: Job()].error = AppModel.shared.capture(error, action: "Submit the stack") }
+        } catch {
+            jobs[id, default: Job()].submitFailed = true
+            jobs[id, default: Job()].submitNote = AppModel.shared.capture(error, action: "Submit the stack")
+        }
     }
 
     // MARK: Editing

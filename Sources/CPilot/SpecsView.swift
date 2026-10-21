@@ -245,11 +245,15 @@ struct SpecDetail: View {
                 Text("Tasks").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Button("Run all ready") { Task { await center.implementReady(doc.id, limit: 4) } }.buttonStyle(Pill(kind: .plain)).disabled(ready.isEmpty)
-                Button("Submit stack") { Task { await center.submitAndArm(doc.id) } }.buttonStyle(Pill(kind: .plain))
-                    .disabled(!doc.tasks.contains { $0.branch.map(center.coded.contains) ?? false })
-                    .help("Push this spec's finished task branches, open their pull requests, and turn on auto-merge so they land bottom first when the rules pass. Needs at least one task with code. Hands-off mode does this by itself.")
+                Button { Task { await center.submitAndArm(doc.id) } } label: { BusyLabel(title: "Submit stack", busyTitle: "Submitting…", busy: job.submitting) }.buttonStyle(Pill(kind: .plain))
+                    .disabled(job.submitting || !doc.tasks.contains { $0.branch.map(center.unsubmitted.contains) ?? false })
+                    .help("Push this spec's finished task branches, open their pull requests, and turn on auto-merge so they land bottom first when the rules pass. Disabled when there is nothing new to push. Hands-off mode does this by itself.")
                 Button("View stack") { if let r = center.repo { Task { await StackCenter.shared.open(r); Nav.shared.pane = .stacks } } }.buttonStyle(Pill(kind: .plain))
             }.padding(12)
+            if let note = job.submitNote {
+                Label { job.submitFailed ? AnyView(ErrorLine(text: note)) : AnyView(Text(note)) } icon: { Image(systemName: job.submitFailed ? "exclamationmark.triangle" : "checkmark.circle").foregroundStyle(job.submitFailed ? Theme.danger : Theme.ok) }
+                    .font(.system(size: 12.5)).padding(.horizontal, 12).padding(.bottom, 10).frame(maxWidth: .infinity, alignment: .leading)
+            }
             ForEach(doc.tasks) { t in Divider(); TaskRow(doc: doc, task: t, ready: ready.contains { $0.id == t.id }) }
         }.background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
     }

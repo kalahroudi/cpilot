@@ -226,10 +226,10 @@ struct StackCard: View {
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
-                Button("Restack") { Task { await center.restack(stack) } }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || center.busy != nil)
-                Button("Submit") { Task { await center.submit(stack) } }.buttonStyle(Pill(kind: .plain))
+                Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || center.busy != nil)
+                Button { Task { await center.submit(stack) } } label: { BusyLabel(title: "Submit", busyTitle: "Submitting…", busy: center.busy == "Submitting") }.buttonStyle(Pill(kind: .plain))
                     .disabled(stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)
-                Button("Merge from the bottom") { Task { await center.mergeBottom(stack) } }.buttonStyle(Pill(kind: .primary))
+                Button { Task { await center.mergeBottom(stack) } } label: { BusyLabel(title: "Merge from the bottom", busyTitle: "Merging…", busy: center.busy == "Merging") }.buttonStyle(Pill(kind: .primary))
                     .disabled(stack.nextStep != .merge || center.busy != nil)
                 if let r = center.repo { Toggle("", isOn: Binding(get: { center.isArmed(r) }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).tint(Theme.accent).help("Merge the stack automatically, bottom first, whenever every rule passes") }
             }
