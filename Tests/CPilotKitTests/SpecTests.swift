@@ -79,11 +79,11 @@ final class SpecTests: XCTestCase {
     func testListAndWriteRoundTrip() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("specs-\(UUID().uuidString.prefix(6))").path
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        try await Specs.write("specs/001-first-thing/spec.md", "# First thing\n> Source: Issue #1\n## Why\nx", in: dir)
-        try await Specs.write("specs/001-first-thing/plan.md", "# Plan\nbody", in: dir)
-        try await Specs.write("specs/001-first-thing/tasks.md", "# Tasks\n- [ ] T001 do it (R1)", in: dir)
-        try await Specs.write("specs/constitution.md", "# Rules", in: dir)
-        try await Specs.write("specs/002-second/source.md", "> Source: Described by you\nmake it faster", in: dir)
+        try await Specs.write("\(Specs.folder)/001-first-thing/spec.md", "# First thing\n> Source: Issue #1\n## Why\nx", in: dir)
+        try await Specs.write("\(Specs.folder)/001-first-thing/plan.md", "# Plan\nbody", in: dir)
+        try await Specs.write("\(Specs.folder)/001-first-thing/tasks.md", "# Tasks\n- [ ] T001 do it (R1)", in: dir)
+        try await Specs.write("\(Specs.folder)/constitution.md", "# Rules", in: dir)
+        try await Specs.write("\(Specs.folder)/002-second/source.md", "> Source: Described by you\nmake it faster", in: dir)
         let (docs, constitution) = await Specs.list(in: dir)
         XCTAssertEqual(docs.map(\.id), ["001-first-thing", "002-second"])
         XCTAssertEqual(docs[0].title, "First thing"); XCTAssertEqual(docs[0].source, "Issue #1"); XCTAssertEqual(docs[0].tasks.count, 1)

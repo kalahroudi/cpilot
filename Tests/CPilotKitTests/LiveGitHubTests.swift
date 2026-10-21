@@ -71,7 +71,7 @@ final class LiveGitHubTests: XCTestCase {
         let tasks = Specs.parseTasks(tasksText)
         XCTAssertGreaterThanOrEqual(tasks.count, 1)
         let id = Specs.folderName(number: 1, title: Specs.title(of: spec) ?? "farewell")
-        try await Specs.write("specs/\(id)/spec.md", spec, in: work); try await Specs.write("specs/\(id)/plan.md", plantext, in: work); try await Specs.write("specs/\(id)/tasks.md", tasksText, in: work)
+        try await Specs.write("\(Specs.folder)/\(id)/spec.md", spec, in: work); try await Specs.write("\(Specs.folder)/\(id)/plan.md", plantext, in: work); try await Specs.write("\(Specs.folder)/\(id)/tasks.md", tasksText, in: work)
         let (docs, _) = await Specs.list(in: work)
         XCTAssertEqual(docs.first?.status(), .ready)
         say("spec: \(docs.first?.title ?? "?") with \(tasks.count) tasks: " + tasks.map { "\($0.id) \($0.title)" }.joined(separator: " | "))

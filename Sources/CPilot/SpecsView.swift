@@ -160,7 +160,7 @@ struct SpecDetail: View {
             Badge(text: center.status(doc).label, kind: center.status(doc) == .done ? .ok : center.status(doc) == .inProgress ? .accent : .neutral)
             if let s = doc.source { Badge(text: s) }
             Spacer()
-            Button("Open folder") { if let r = center.repo, center.env == nil { NSWorkspace.shared.open(URL(fileURLWithPath: r.dir + "/specs/" + doc.id)) } }.buttonStyle(Pill(kind: .plain)).disabled(center.env != nil)
+            Button("Open folder") { if let r = center.repo, center.env == nil { NSWorkspace.shared.open(URL(fileURLWithPath: r.dir + "/" + Specs.folder + "/" + doc.id)) } }.buttonStyle(Pill(kind: .plain)).disabled(center.env != nil)
         }
     }
 

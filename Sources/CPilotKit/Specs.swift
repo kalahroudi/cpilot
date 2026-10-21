@@ -48,7 +48,8 @@ public struct SpecDoc: Identifiable, Equatable, Sendable {
 }
 
 public enum Specs {
-    public static let folder = "specs"
+    /// Kept out of the project tree and out of git: `.cpilot` is listed in `.git/info/exclude` the first time something is written.
+    public static let folder = ".cpilot/specs"
 
     // MARK: Parsing
 
@@ -157,7 +158,7 @@ public enum Specs {
 
     /// Every spec in `<dir>/specs`, read with one command so it is as fast on a server as on this Mac.
     public static func list(in dir: String) async -> (docs: [SpecDoc], constitution: String?) {
-        let script = #"cd "$1" 2>/dev/null || exit 0; for f in specs/constitution.md specs/*/source.md specs/*/spec.md specs/*/plan.md specs/*/tasks.md; do if [ -f "$f" ]; then printf '@@FILE %s\n' "$f"; cat "$f"; printf '\n'; fi; done"#
+        let script = #"cd "$1" 2>/dev/null || exit 0; if [ -d specs ] && [ ! -e .cpilot/specs ] && [ -z "$(git ls-files specs 2>/dev/null)" ]; then mkdir -p .cpilot && mv specs .cpilot/specs; fi; for f in .cpilot/specs/constitution.md .cpilot/specs/*/source.md .cpilot/specs/*/spec.md .cpilot/specs/*/plan.md .cpilot/specs/*/tasks.md; do if [ -f "$f" ]; then printf '@@FILE %s\n' "$f"; cat "$f"; printf '\n'; fi; done"#
         guard let r = try? await Shell.run("sh", ["-c", script, "sh", dir], timeout: 30), r.ok else { return ([], nil) }
         var files: [String: String] = [:], current: String?, buf: [String] = []
         func flush() { if let c = current { files[c] = buf.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) } }
@@ -166,19 +167,19 @@ public enum Specs {
         }
         flush()
         var ids = Set<String>()
-        for k in files.keys { let p = k.split(separator: "/"); if p.count == 3 { ids.insert(String(p[1])) } }
+        for k in files.keys { let p = k.split(separator: "/"); if p.count == 4 { ids.insert(String(p[2])) } }
         let docs = ids.sorted().map { id -> SpecDoc in
-            let spec = files["specs/\(id)/spec.md"]
-            let src = files["specs/\(id)/source.md"]
+            let spec = files["\(folder)/\(id)/spec.md"]
+            let src = files["\(folder)/\(id)/source.md"]
             return SpecDoc(id: id, number: Int(id.prefix(while: \.isNumber)) ?? 0, title: spec.flatMap(title(of:)) ?? String(id.drop(while: { $0.isNumber || $0 == "-" })).replacingOccurrences(of: "-", with: " ").capitalized,
-                           spec: spec, plan: files["specs/\(id)/plan.md"], tasksText: files["specs/\(id)/tasks.md"],
+                           spec: spec, plan: files["\(folder)/\(id)/plan.md"], tasksText: files["\(folder)/\(id)/tasks.md"],
                            source: spec.flatMap(sourceLine(of:)) ?? src.flatMap(sourceLine(of:)))
         }
-        return (docs, files["specs/constitution.md"])
+        return (docs, files["\(folder)/constitution.md"])
     }
 
     public static func write(_ relativePath: String, _ text: String, in dir: String) async throws {
-        let r = try await Shell.run("sh", ["-c", #"cd "$1" && mkdir -p "$(dirname "$2")" && cat > "$2""#, "sh", dir, relativePath], input: Data(text.utf8), timeout: 30)
+        let r = try await Shell.run("sh", ["-c", #"cd "$1" && mkdir -p "$(dirname "$2")" && cat > "$2" && { x="$(git rev-parse --git-path info/exclude 2>/dev/null)" && [ -n "$x" ] && { grep -qx '/.cpilot/' "$x" 2>/dev/null || { mkdir -p "$(dirname "$x")"; echo '/.cpilot/' >> "$x"; }; }; true; }"#, "sh", dir, relativePath], input: Data(text.utf8), timeout: 30)
         guard r.ok else { throw ShellError.failed(command: "write", status: r.status, stderr: r.stderr) }
     }
 
