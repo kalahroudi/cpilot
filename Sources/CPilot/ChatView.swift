@@ -67,6 +67,7 @@ struct ChatHeader: View {
             }
             Spacer()
             stateView
+            ArtifactsButton(session: session)
             MemoryChip(session: session)
             actionsMenu
             accessMenu

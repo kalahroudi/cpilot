@@ -195,3 +195,85 @@ struct TasksStrip: View {
         }
     }
 }
+
+/// Files this session wrote or changed, with a quick look, a diff, and a way to show them in Finder.
+struct ArtifactsButton: View {
+    let session: SessionController
+    @State private var open = false
+    var body: some View {
+        let files = Artifacts.files(from: session.items)
+        if !files.isEmpty {
+            Button { open.toggle() } label: {
+                HStack(spacing: 4) { Image(systemName: "doc.on.doc").font(.system(size: 10)); Text("\(files.count) file\(files.count == 1 ? "" : "s")") }
+                    .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 7).padding(.vertical, 2).background(Theme.fill, in: Capsule())
+            }.buttonStyle(.plain).help("Files this session wrote or changed")
+            .popover(isPresented: $open, arrowEdge: .bottom) { ArtifactsList(session: session, files: files).frame(width: 420) }
+        }
+    }
+}
+
+struct ArtifactsList: View {
+    let session: SessionController
+    let files: [ArtifactFile]
+    @State private var preview: String?
+    @State private var previewText = ""
+    @State private var diff: [DiffFile] = []
+    @State private var showDiff = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Files from this session").font(.system(size: 13, weight: .semibold)).padding(12)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(files) { f in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Image(systemName: f.isImage ? "photo" : "doc.text").foregroundStyle(Theme.accent)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(f.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                                    Text(Artifacts.display(f.path, root: session.meta.workingDirectory)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                                }
+                                Spacer()
+                                Badge(text: f.created ? "Created" : "Edited ×\(f.touches)", kind: f.created ? .ok : .neutral)
+                            }
+                            HStack(spacing: 10) {
+                                Button("Preview") { Task { await load(f) } }.buttonStyle(.plain)
+                                Button("Changes") { Task { await loadDiff(f) } }.buttonStyle(.plain)
+                                if session.env == nil { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) }.buttonStyle(.plain)
+                                    Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: f.path)) }.buttonStyle(.plain) }
+                                Button("Copy path") { Clipboard.copy(f.path) }.buttonStyle(.plain)
+                            }.font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                            if preview == f.path {
+                                if f.isImage, session.env == nil, let img = NSImage(contentsOfFile: f.path) { Image(nsImage: img).resizable().scaledToFit().frame(maxHeight: 180) }
+                                else { Text(previewText).font(.system(size: 11, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding(8).background(Theme.terminal, in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(Color.white.opacity(0.85)).lineLimit(30) }
+                            }
+                        }.padding(12)
+                        Divider().opacity(0.6)
+                    }
+                }
+            }.frame(maxHeight: 420)
+        }
+        .sheet(isPresented: $showDiff) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(diff) { DiffFileView(file: $0, collapsed: false) {} }
+                if diff.isEmpty { Text("No uncommitted changes in this file.").font(.system(size: 12.5)).foregroundStyle(.secondary) }
+                HStack { Spacer(); Button("Close") { showDiff = false }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction) }
+            }.padding(18).frame(width: 640, height: 420)
+        }
+    }
+
+    private func load(_ f: ArtifactFile) async {
+        preview = f.path
+        guard f.isText || f.isImage else { previewText = "No preview for this kind of file."; return }
+        if f.isImage, session.env == nil { return }
+        let out = try? await Exec.with(session.env) { try await Shell.check("head", ["-c", "4000", f.path], timeout: 20) }
+        previewText = out ?? "Could not read this file."
+    }
+
+    private func loadDiff(_ f: ArtifactFile) async {
+        let dir = session.meta.workingDirectory
+        let out = (try? await Exec.with(session.env) { try await Shell.check("git", ["diff", "HEAD", "--", f.path], cwd: URL(fileURLWithPath: dir), timeout: 30) }) ?? ""
+        diff = DiffParser.parse(out); showDiff = true
+    }
+}

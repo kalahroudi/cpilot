@@ -5,7 +5,7 @@ description: Use on macOS to hand work to the user's CPilot app, read what their
 
 # CPilot
 
-CPilot is a menu bar app that runs AI coding sessions for the user, with notes it keeps per project. Use its tools to see what sessions exist and what they said, to save a note future sessions should start with, and to start a session the user approves. Prefer these over guessing what the user has been working on.
+CPilot is a menu bar app that runs AI coding sessions for the user, with notes it keeps per project. Use its tools to see what specs and stacked branches a repository has, to see what sessions exist and what they said, to save a note future sessions should start with, and to start a session the user approves. Prefer these over guessing what the user has been working on.
 
 ## Before you act
 
@@ -28,6 +28,9 @@ CPilot is a menu bar app that runs AI coding sessions for the user, with notes i
 | `get_session {session_id, tail?}` | no |
 | `search_memory {query}` | no |
 | `list_pull_requests {folder}` | no |
+| `list_specs {folder}` | no |
+| `get_spec {folder, id, part?}` | no |
+| `list_stacks {folder}` | no |
 | `save_memory {name, body, project_folder?}` | yes, a note |
 | `start_session {folder, message?, access?}` | yes, user approves in the app |
 | `send_message {session_id, text}` | yes, user approves in the app |

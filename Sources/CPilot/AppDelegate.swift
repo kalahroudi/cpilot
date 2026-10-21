@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if SnapshotMode.dir != nil { SnapshotMode.run(); return }
+        if CommandLine.arguments.contains("--bench") { Bench.run(delegate: self) }
         Prefs.shared.applyTheme()
         Prefs.shared.applyDockIcon()
         NSApp.applicationIconImage = AppIcon.image(size: 512, padded: true)
@@ -92,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         } else { togglePopover() }
     }
     @objc private func openManager() { showManager() }
+
+    func closeManagerForBench() { managerWindow?.close() }
+    func togglePopoverForBench() { togglePopover() }
 
     private func togglePopover() {
         if popover.isShown { popover.performClose(nil); return }

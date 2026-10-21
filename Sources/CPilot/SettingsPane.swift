@@ -72,6 +72,12 @@ struct SettingsPane: View {
                     }
                     if prefs.memoryEngine == "engine" { MemoryEngineRow() }
                 }
+                SettingsGroup("Specs and stacks") {
+                    SettingRow("Default autonomy", Autonomy(rawValue: prefs.specAutonomy)?.detail ?? "") {
+                        Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
+                    }
+                    SettingRow("Scan every PR for security problems", "Runs before a pull request or a stack is merged by CPilot.") { toggle($p.securityScanOnPR) }
+                }
                 SettingsGroup("Notifications") {
                     SettingRow("Notify me", "When a session needs approval or finishes while CPilot is in the background.") { toggle($p.notify) }
                 }

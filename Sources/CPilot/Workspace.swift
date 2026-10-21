@@ -543,6 +543,13 @@ final class Workspace {
         persistTabs()
     }
 
+    var archived: [SessionMeta] { store.list(includeArchived: true).filter(\.archived) }
+
+    func restore(_ id: String) {
+        guard var m = store.load(id) else { return }
+        m.archived = false; save(m); select(id)
+    }
+
     func closeTab(_ id: String) {
         controllers[id]?.close(); controllers[id] = nil
         tabs.removeAll { $0 == id }

@@ -305,3 +305,19 @@ final class SubagentTests: XCTestCase {
         XCTAssertEqual(items.first { $0.kind == .assistant }?.parent, "TASK")
     }
 }
+
+final class ArtifactTests: XCTestCase {
+    func testFilesFromToolRows() {
+        let t0 = Date(timeIntervalSince1970: 100)
+        let items = [ChatItem(kind: .tool, title: "Write", detail: "/p/a.md", status: .done, ts: t0),
+                     ChatItem(kind: .tool, title: "Edit", detail: "/p/b.ts", status: .done, ts: t0 + 5),
+                     ChatItem(kind: .tool, title: "Edit", detail: "/p/b.ts", status: .done, ts: t0 + 9),
+                     ChatItem(kind: .tool, title: "Edit", detail: "/p/c.ts", status: .failed, ts: t0 + 10),
+                     ChatItem(kind: .tool, title: "Read", detail: "/p/d.ts", status: .done), ChatItem(kind: .tool, title: "Bash", detail: "ls")]
+        let f = Artifacts.files(from: items)
+        XCTAssertEqual(f.map(\.path), ["/p/b.ts", "/p/a.md"])
+        XCTAssertEqual(f[0].touches, 2); XCTAssertFalse(f[0].created); XCTAssertTrue(f[1].created)
+        XCTAssertEqual(Artifacts.display("/p/src/x.ts", root: "/p"), "src/x.ts")
+        XCTAssertTrue(ArtifactFile(path: "/p/s.PNG", created: true, touches: 1, lastTouched: .now).isImage)
+    }
+}

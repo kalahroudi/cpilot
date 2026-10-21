@@ -212,6 +212,8 @@ struct TabStrip: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
             Menu {
                 ForEach(ws.sessions.prefix(15)) { m in Button(m.title) { ws.select(m.id) } }
+                let archived = ws.archived
+                if !archived.isEmpty { Divider(); Menu("Archived") { ForEach(archived.prefix(20)) { m in Button(m.title) { ws.restore(m.id) } } } }
             } label: { Image(systemName: "clock.arrow.circlepath") }.menuStyle(.borderlessButton).fixedSize().help("Earlier sessions")
         }
         .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 0)

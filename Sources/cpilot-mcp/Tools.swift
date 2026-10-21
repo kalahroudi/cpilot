@@ -117,6 +117,29 @@ let allTools: [Tool] = {
         return try json(try await GitHub.list(in: try requireString(a, "folder")).map { Row(number: $0.number, title: $0.title, branch: $0.headRefName, autoMerge: $0.autoMerge) })
     })
 
+    t.append(Tool(name: "list_specs", description: "List the specs in a repository's specs folder, with their status and task progress.", properties: ["folder": prop("string", "Repository folder.")], required: ["folder"]) { a in
+        struct Row: Encodable { let id: String; let title: String; let status: String; let tasksDone: Int; let tasksTotal: Int; let source: String? }
+        let (docs, _) = await Specs.list(in: try requireString(a, "folder"))
+        return try json(docs.map { Row(id: $0.id, title: $0.title, status: $0.status().label, tasksDone: $0.progress.done, tasksTotal: $0.progress.total, source: $0.source) })
+    })
+
+    t.append(Tool(name: "get_spec", description: "Read one spec: its spec, plan and tasks.", properties: ["folder": prop("string", "Repository folder."), "id": prop("string", "Spec id from list_specs, such as 014-cursor-pagination."), "part": prop("string", "Which document to return.", enumValues: ["spec", "plan", "tasks", "all"])], required: ["folder", "id"]) { a in
+        let (docs, _) = await Specs.list(in: try requireString(a, "folder"))
+        guard let d = docs.first(where: { $0.id == (a["id"] as? String) }) else { throw ToolError(message: "No such spec.") }
+        switch (a["part"] as? String) ?? "all" {
+        case "spec": return d.spec ?? ""
+        case "plan": return d.plan ?? ""
+        case "tasks": return d.tasksText ?? ""
+        default: return [d.spec, d.plan, d.tasksText].compactMap { $0 }.joined(separator: "\n\n---\n\n")
+        }
+    })
+
+    t.append(Tool(name: "list_stacks", description: "List the stacked branches in a repository folder and whether each needs restacking.", properties: ["folder": prop("string", "Repository folder.")], required: ["folder"]) { a in
+        struct B: Encodable { let name: String; let parent: String; let commits: Int; let needsRestack: Bool }
+        struct S: Encodable { let trunk: String; let branches: [B] }
+        return try json(await Stacks.load(in: try requireString(a, "folder")).map { S(trunk: $0.trunk, branches: $0.branches.map { B(name: $0.name, parent: $0.parent, commits: $0.commits, needsRestack: $0.needsRestack) }) })
+    })
+
     t.append(Tool(name: "start_session", description: "Start a new CPilot session in a folder and optionally send a first message. The user is asked to approve it in CPilot. Access can be read_only, ask_first or edit_files; full access cannot be requested.",
                   properties: ["folder": prop("string", "Working folder."), "message": prop("string", "First message."), "access": prop("string", "Access level.", enumValues: ["readOnly", "askFirst", "editFiles"])],
                   required: ["folder"]) { a in try await control("/v1/start_session", a) })

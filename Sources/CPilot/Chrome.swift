@@ -38,6 +38,13 @@ extension PaneHeader where Trailing == EmptyView, Tabs == EmptyView {
 
 /// Resident memory of this app, shown in the sidebar so the "light" claim is visible.
 enum AppMemory {
+    static var megabytes: Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
+        return kr == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : 0
+    }
+
     static var footprint: String {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
