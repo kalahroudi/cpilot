@@ -36,15 +36,15 @@ struct AccessSettings: View {
     let ws = Workspace.shared
     @State private var log: [AuditEntry] = []
     @State private var newPath = ""
+    @State private var showAllApprovals = false
 
     var body: some View {
         @Bindable var w = ws
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Default access") {
-                SettingRow("For new sessions", "What an agent may do without asking you.") {
+                SettingRow("For new sessions", "What an agent may do without asking you. \(w.policy.defaultLevel.label): \(w.policy.defaultLevel.detail)") {
                     Segmented(options: AccessLevel.allCases.map { ($0, $0.label) }, selection: Binding(get: { w.policy.defaultLevel }, set: { w.policy.defaultLevel = $0; w.savePolicy() }))
                 }
-                SettingRow(w.policy.defaultLevel.label, w.policy.defaultLevel.detail) { EmptyView() }
                 SettingRow("Ask outside the project folder", "Anything outside the session's folder asks first, whatever the level above.") {
                     toggle(Binding(get: { w.policy.askOutsideProject }, set: { w.policy.askOutsideProject = $0; w.savePolicy() }))
                 }
@@ -64,7 +64,8 @@ struct AccessSettings: View {
             }
             SettingsGroup("Approvals") {
                 if log.isEmpty { SettingRow("Nothing yet", "Every approval and denial is listed here.") { EmptyView() } }
-                ForEach(log.prefix(12)) { e in ApprovalRow(entry: e) }
+                ForEach(log.prefix(showAllApprovals ? 40 : 5)) { e in ApprovalRow(entry: e) }
+                if log.count > 5 { SettingRow(showAllApprovals ? "Showing the latest \(min(log.count, 40))" : "Showing the latest 5 of \(log.count)", nil) { Button(showAllApprovals ? "Show fewer" : "Show more") { showAllApprovals.toggle() }.buttonStyle(Pill(kind: .plain)) } }
                 SettingRow("Revoke everything", "Forgets all project command rules. Sessions ask again from now on.") {
                     Button("Revoke") { for i in w.policy.rules.indices { w.policy.rules[i].allowCommands = [] }; w.savePolicy() }.buttonStyle(Pill(kind: .danger))
                 }
@@ -103,7 +104,7 @@ struct GitHubSettings: View {
 
     var body: some View {
         @Bindable var p = Prefs.shared
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("GitHub account") {
                 if let a = model.github {
                     SettingRow("Signed in as \(a.login)", "CPilot uses your GitHub command line login. It stores no token of its own.") { Badge(text: "Connected", kind: .ok) }
@@ -181,7 +182,7 @@ struct AgentSettings: View {
     @State private var installNotes: [String: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Agents CPilot can run") {
                 SettingRow("Claude", Shell.find("claude").map { "Command line found at \($0). Sessions resume by id with full context." } ?? "Not found. Install the Claude command line first.") {
                     Badge(text: Shell.find("claude") == nil ? "Missing" : "Ready", kind: Shell.find("claude") == nil ? .warn : .ok)

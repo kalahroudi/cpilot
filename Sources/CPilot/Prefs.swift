@@ -51,6 +51,8 @@ final class Prefs {
     var captureSendTo: String { didSet { d.set(captureSendTo, forKey: "captureSendTo") } }
     var captureHotkey: Bool { didSet { d.set(captureHotkey, forKey: "captureHotkey"); (NSApp?.delegate as? AppDelegate)?.applyHotkey() } }
     var autoMergeDefault: Bool { didSet { d.set(autoMergeDefault, forKey: "autoMergeDefault") } }
+    /// Archive a spec by itself when its last task merges.
+    var autoArchiveSpecs: Bool { didSet { d.set(autoArchiveSpecs, forKey: "autoArchiveSpecs") } }
     var securityScanOnPR: Bool { didSet { d.set(securityScanOnPR, forKey: "securityScanOnPR") } }
     var notifyChecks: Bool { didSet { d.set(notifyChecks, forKey: "notifyChecks"); if notifyChecks != oldValue { CIWatcher.shared.start() } } }
 
@@ -61,7 +63,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -84,6 +86,7 @@ final class Prefs {
         captureHotkey = d.bool(forKey: "captureHotkey")
         autoMergeDefault = d.bool(forKey: "autoMergeDefault")
         securityScanOnPR = d.bool(forKey: "securityScanOnPR")
+        autoArchiveSpecs = d.bool(forKey: "autoArchiveSpecs")
         notifyChecks = d.bool(forKey: "notifyChecks")
         autoCheckUpdates = d.bool(forKey: "autoCheckUpdates")
         updateChannel = UpdateChannel(rawValue: d.string(forKey: "updateChannel") ?? "") ?? .releases

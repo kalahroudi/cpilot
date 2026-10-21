@@ -232,7 +232,7 @@ final class SpecCenter {
     /// A spec that has just become done (its last task merged since the previous refresh) is archived by itself. Specs that were already done
     /// when first read, or that you restored, stay where they are.
     private func archiveFinished(before: [String: SpecDoc.Status]) async {
-        guard let r = repo else { return }
+        guard Prefs.shared.autoArchiveSpecs, let r = repo else { return }
         for d in docs where status(d) == .done && before[d.id].map({ $0 != .done }) == true && jobs[d.id]?.running != true {
             guard (try? await Exec.with(env) { try await Specs.archive(d.id, in: r.dir) }) != nil else { continue }
             jobs[d.id] = nil; dropRun(d.id)

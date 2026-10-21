@@ -12,12 +12,13 @@ struct UpdatesView: View {
 
     var body: some View {
         @Bindable var p = prefs
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("This build") {
                 SettingRow("Version", "From \(u.build.repo) · branch \(u.build.branch)") { Text("\(u.build.version) · \(u.build.shortCommit)\(u.build.isDirty ? " (modified)" : "")").font(.system(size: 12.5, design: .monospaced)) }
                 SettingRow("Update channel", "Releases: signed disk images, the safe default. Main branch: also offers a build of the newest commit (needs Xcode command line tools).") { Segmented(options: UpdateChannel.allCases.map { ($0, $0.label) }, selection: $p.updateChannel) }
                 SettingRow("Check automatically", "Once a day at most, when the app starts. Nothing runs in between.") { Toggle("", isOn: $p.autoCheckUpdates).labelsHidden().toggleStyle(.switch).tint(Theme.accent) }
             }
+            VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     statusLine
@@ -46,6 +47,7 @@ struct UpdatesView: View {
                     ScrollView { Text((u.log.isEmpty ? u.savedLog : u.log).suffix(80).joined(separator: "\n")).font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(white: 0.85)).frame(maxWidth: .infinity, alignment: .leading).padding(10).textSelection(.enabled) }
                         .frame(height: 150).background(Theme.terminal, in: RoundedRectangle(cornerRadius: 8))
                 }.font(.system(size: 12.5))
+            }
             }
         }.frame(maxWidth: 720)
     }
