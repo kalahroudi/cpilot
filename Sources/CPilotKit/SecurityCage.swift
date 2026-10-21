@@ -102,15 +102,56 @@ public enum SecurityCage {
     public static func isAvailable(configured: String? = nil) -> Bool { Shell.find("node") != nil && locate(configured: configured) != nil }
     public static func dockerRunning() async -> Bool { (try? await Shell.run("docker", ["info"], timeout: 8))?.ok ?? false }
 
+    // MARK: Local models (no API key, no cloud)
+
+    public static let defaultModelURL = "http://localhost:8080/v1"
+
+    /// The models an OpenAI-compatible local server (mlxplayer, Ollama, and so on) offers, or nil when nothing answers.
+    public static func localModels(baseURL: String = defaultModelURL) async -> [String]? {
+        guard let url = URL(string: baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) + "/models") else { return nil }
+        var req = URLRequest(url: url); req.timeoutInterval = 2.5
+        guard let (data, resp) = try? await URLSession.shared.data(for: req), (resp as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let list = obj["data"] as? [[String: Any]] else { return nil }
+        return list.compactMap { $0["id"] as? String }
+    }
+
+    /// An instruction-tuned coding model if there is one; a base model that only continues text is a poor choice for triage.
+    public static func pickModel(_ models: [String]) -> String? {
+        let l = models.map { ($0, $0.lowercased()) }
+        return l.first { $0.1.contains("coder") && $0.1.contains("instruct") }?.0 ?? l.first { $0.1.contains("instruct") }?.0 ?? l.first { !$0.1.hasSuffix("-pt") && !$0.1.contains("-pt-") }?.0 ?? models.first
+    }
+
+    public static func localEnvironment(baseURL: String, model: String) -> [String: String] {
+        ["SECURITYCAGE_MODEL_PROVIDER": "mlx", "MLX_BASE_URL": baseURL, "SECURITYCAGE_TRIAGE_MODEL": model, "SECURITYCAGE_VERIFY_MODEL": model]
+    }
+
+    public struct Mode: Equatable, Sendable {
+        public var deep: Bool
+        public var environment: [String: String]
+        /// What to tell the user about how the scan runs.
+        public var note: String
+    }
+
+    /// Deep scan with sandboxed proofs when a local model server and Docker (or Colima) are both up; the free offline plan otherwise.
+    public static func chooseMode(baseURL: String = defaultModelURL, preferredModel: String = "", dockerUp: Bool? = nil) async -> Mode {
+        let docker: Bool
+        if let dockerUp { docker = dockerUp } else { docker = await dockerRunning() }
+        guard let models = await localModels(baseURL: baseURL), let model = preferredModel.isEmpty ? pickModel(models) : preferredModel else {
+            return Mode(deep: false, environment: [:], note: "No local model server answered at \(baseURL), so this is the free offline plan. Start mlxplayer (or Ollama) for the deep scan.")
+        }
+        guard docker else { return Mode(deep: false, environment: [:], note: "A local model is ready (\(model)) but Docker is not running, so this is the offline plan. Start Colima for proofs.") }
+        return Mode(deep: true, environment: localEnvironment(baseURL: baseURL, model: model), note: "Deep scan with \(model) on this Mac, with proofs in Docker. Nothing leaves your machine.")
+    }
+
     public static let setupHint = "Set the SecurityCage folder in Settings → GitHub. Clone github.com/kalahroudi/securitycage, run npm install in it, and choose that folder."
 
     /// Runs the offline plan, or with `deep` the model-backed scan with sandboxed proofs (which needs Docker and an API key).
-    public static func scan(folder: String, deep: Bool = false, configured: String? = nil, onLine: @escaping @Sendable (String) -> Void) async throws -> SecurityResult {
+    public static func scan(folder: String, deep: Bool = false, environment: [String: String] = [:], configured: String? = nil, onLine: @escaping @Sendable (String) -> Void) async throws -> SecurityResult {
         guard Exec.environment == nil else { throw ShellError.failed(command: "securitycage", status: 1, stderr: "Security scans run on this Mac. Open the repository here to scan it.") }
         guard Shell.find("node") != nil else { throw ShellError.toolNotFound("node") }
         guard let cli = locate(configured: configured) else { throw ShellError.failed(command: "securitycage", status: 1, stderr: setupHint) }
-        let args = deep ? [cli, "scan", ".", "--prove", "--max-cost", "2"] : [cli, "plan", "."]
-        let status = try await Shell.stream("node", args, cwd: URL(fileURLWithPath: folder), onLine: onLine)
+        let args = deep ? [cli, "scan", ".", "--prove"] : [cli, "plan", "."]
+        let status = try await Shell.stream("node", args, cwd: URL(fileURLWithPath: folder), env: environment, onLine: onLine)
         let deepReport = (try? String(contentsOfFile: folder + "/.securitycage/scan-report.md", encoding: .utf8)) ?? ""
         let planReport = (try? String(contentsOfFile: folder + "/.securitycage/plan.md", encoding: .utf8)) ?? ""
         if deep, !deepReport.isEmpty { return parse(report: deepReport) }

@@ -374,3 +374,19 @@ final class SecurityPlanTests: XCTestCase {
         XCTAssertFalse(src.contains("\"npx\""), "SecurityCage must run from a local checkout, never from a registry")
     }
 }
+
+final class LocalModelTests: XCTestCase {
+    func testPickModelPrefersInstructCoders() {
+        XCTAssertEqual(SecurityCage.pickModel(["mlx-community/gemma-3-4b-pt-4bit", "mlx-community/Qwen2.5-Coder-14B-Instruct-abliterated-4bit", "mlx-community/Qwen2.5-0.5B-Instruct-4bit"]), "mlx-community/Qwen2.5-Coder-14B-Instruct-abliterated-4bit")
+        XCTAssertEqual(SecurityCage.pickModel(["a-pt-4bit", "b-Instruct"]), "b-Instruct")
+        XCTAssertEqual(SecurityCage.pickModel(["x-pt-4bit", "plain"]), "plain")
+        XCTAssertNil(SecurityCage.pickModel([]))
+        let env = SecurityCage.localEnvironment(baseURL: "http://h:1/v1", model: "m")
+        XCTAssertEqual(env["SECURITYCAGE_MODEL_PROVIDER"], "mlx"); XCTAssertEqual(env["MLX_BASE_URL"], "http://h:1/v1"); XCTAssertEqual(env["SECURITYCAGE_TRIAGE_MODEL"], "m")
+    }
+
+    func testModeFallsBackToThePlanWhenNothingIsRunning() async {
+        let none = await SecurityCage.chooseMode(baseURL: "http://127.0.0.1:9/v1", dockerUp: true)
+        XCTAssertFalse(none.deep); XCTAssertTrue(none.environment.isEmpty); XCTAssertTrue(none.note.contains("offline plan"))
+    }
+}

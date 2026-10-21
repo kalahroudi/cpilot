@@ -89,9 +89,9 @@ final class PRCenter {
         do {
             _ = try await Shell.check("git", ["fetch", "origin", "pull/\(pr.number)/head"], cwd: URL(fileURLWithPath: dir), timeout: 120)
             try await Shell.check("git", ["worktree", "add", "--detach", tmp, "FETCH_HEAD"], cwd: URL(fileURLWithPath: dir))
-            let deep = await SecurityCage.dockerRunning() && ProcessInfo.processInfo.environment["SECURITYCAGE_ANTHROPIC_API_KEY"] != nil
-            if !deep { scanLog.append("Running the offline plan. Findings are listed but not proven (proofs need Docker and an API key).") }
-            let result = try await SecurityCage.scan(folder: tmp, deep: deep, configured: Prefs.shared.securityCagePath) { [weak self] line in Task { @MainActor in self?.scanLog.append(line) } }
+            let mode = await SecurityCage.chooseMode(baseURL: Prefs.shared.localModelURL)
+            scanLog.append(mode.note)
+            let result = try await SecurityCage.scan(folder: tmp, deep: mode.deep, environment: mode.environment, configured: Prefs.shared.securityCagePath) { [weak self] line in Task { @MainActor in self?.scanLog.append(line) } }
             scan = result; scans["\(dir)#\(pr.number)#\(pr.headRefName)"] = result
         } catch { self.error = UserError.message(for: error, action: "Run the security scan") }
         await Git.removeWorktree(repo: dir, path: tmp)
@@ -190,7 +190,8 @@ final class PRCenter {
         defer { Task { await Git.removeWorktree(repo: dir, path: tmp) } }
         guard (try? await Shell.check("git", ["fetch", "origin", "pull/\(pr.number)/head"], cwd: URL(fileURLWithPath: dir), timeout: 120)) != nil,
               (try? await Shell.check("git", ["worktree", "add", "--detach", tmp, "FETCH_HEAD"], cwd: URL(fileURLWithPath: dir))) != nil else { return nil }
-        return try? await SecurityCage.scan(folder: tmp, deep: false, configured: Prefs.shared.securityCagePath) { _ in }
+        let mode = await SecurityCage.chooseMode(baseURL: Prefs.shared.localModelURL)
+        return try? await SecurityCage.scan(folder: tmp, deep: mode.deep, environment: mode.environment, configured: Prefs.shared.securityCagePath) { _ in }
     }
 
     /// Starts a session on the pull request's branch, in its own worktree, asking the agent to review or to fix a finding.
@@ -406,7 +407,7 @@ struct SecurityPanel: View {
                 }
                 Divider()
                 HStack {
-                    Text(center.scanLog.last ?? "Scans the branch as data, offline. Findings are proven in Docker when it is running.").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(center.scanLog.last ?? "Scans the branch as data. With a local model and Docker running, findings are proven in a sandbox.").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
                     Button("Post to PR") { Task { await center.post(comment: "### Security scan\n" + s.report.prefix(3000)) } }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.accent)
                 }.padding(12)

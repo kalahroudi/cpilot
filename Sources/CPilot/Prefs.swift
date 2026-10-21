@@ -42,6 +42,8 @@ final class Prefs {
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
+    /// Where the local model server answers (mlxplayer by default).
+    var localModelURL: String { didSet { d.set(localModelURL, forKey: "localModelURL") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -64,6 +66,7 @@ final class Prefs {
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        localModelURL = d.string(forKey: "localModelURL") ?? SecurityCage.defaultModelURL
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         recapAuto = d.bool(forKey: "recapAuto")

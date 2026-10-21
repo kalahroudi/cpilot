@@ -158,3 +158,27 @@ final class LiveGitHubTests: XCTestCase {
         say("security scan of a sample with a hardcoded key: \(found.confirmed.map(\.title))")
     }
 }
+
+/// The deep scan with a local model (mlxplayer) and sandboxed proofs in Docker/Colima: no API key, nothing leaves the Mac.
+final class LiveDeepScanTests: XCTestCase {
+    func testDeepScanWithLocalModel() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CPILOT_DEEP_LIVE"] == "1", "opt in with CPILOT_DEEP_LIVE=1")
+        try XCTSkipUnless(SecurityCage.locate(configured: nil) != nil, "no local SecurityCage checkout")
+        let mode = await SecurityCage.chooseMode()
+        FileHandle.standardError.write(Data("[live] mode: deep=\(mode.deep) — \(mode.note)\n".utf8))
+        try XCTSkipUnless(mode.deep, mode.note)
+        let sample = FileManager.default.temporaryDirectory.appendingPathComponent("deep-\(UUID().uuidString.prefix(6))").path
+        try FileManager.default.createDirectory(atPath: sample + "/src", withIntermediateDirectories: true)
+        try """
+        const express = require('express')
+        const app = express()
+        app.get('/users/:id', (req, res) => { res.json(db.query('select * from users where id = ' + req.params.id)) })
+        app.listen(3000)
+        """.write(toFile: sample + "/src/server.js", atomically: true, encoding: .utf8)
+        try #"{"dependencies":{"express":"4.18.2"}}"#.write(toFile: sample + "/package.json", atomically: true, encoding: .utf8)
+        let started = Date()
+        let result = try await SecurityCage.scan(folder: sample, deep: true, environment: mode.environment) { line in FileHandle.standardError.write(Data("[scan] \(line)\n".utf8)) }
+        FileHandle.standardError.write(Data("[live] deep scan took \(Int(Date().timeIntervalSince(started))) s: \(result.confirmed.count) confirmed, \(result.leads.count) leads: \(result.findings.map(\.title))\n".utf8))
+        XCTAssertFalse(result.report.isEmpty)
+    }
+}
