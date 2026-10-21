@@ -116,6 +116,7 @@ struct NewSkillSheet: View {
     @State private var idea = ""
     @State private var forProject = false
     @State private var busy = false
+    @State private var stage = ""
     @State private var failure: ErrorReport?
     private var project: String? { Workspace.shared.current?.meta.cwd }
 
@@ -130,10 +131,11 @@ struct NewSkillSheet: View {
                 Text("All my projects (~/.claude/skills)").tag(false)
                 if let project { Text("This project (\((project as NSString).lastPathComponent))").tag(true) }
             }.pickerStyle(.radioGroup)
-            HStack {
+            HStack(spacing: 8) {
+                if busy { ProgressView().controlSize(.small); Text(stage).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await start() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Create with Claude") } }
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction).disabled(busy)
+                Button { Task { await start() } } label: { Text(busy ? "Starting…" : "Create with Claude") }
                     .buttonStyle(Pill(kind: .primary)).disabled(idea.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
                     .keyboardShortcut(.defaultAction)
             }
@@ -144,6 +146,7 @@ struct NewSkillSheet: View {
 
     private func start() async {
         busy = true; defer { busy = false }
+        stage = "Opening a session for Claude…"
         let home = NSHomeDirectory()
         let root = forProject ? (project ?? home) : home
         let target = forProject ? "\(root)/.claude/skills" : "\(home)/.claude/skills"
@@ -157,6 +160,8 @@ struct NewSkillSheet: View {
         do {
             try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true)
             try await Workspace.shared.create(.init(folder: root, access: .editFiles, firstMessage: prompt))
+            Nav.shared.pane = .sessions
+            AppModel.shared.show("Claude is starting the skill creator")
             dismiss()
         } catch { failure = ErrorReport(error, action: "Start the skill creator") }
     }
@@ -169,6 +174,7 @@ struct ExtendSkillSheet: View {
     @State private var note = ""
     @State private var fromSession = true
     @State private var busy = false
+    @State private var stage = ""
     @State private var failure: ErrorReport?
     private var current: SessionController? { Workspace.shared.current }
 
@@ -179,13 +185,15 @@ struct ExtendSkillSheet: View {
                 .font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $note).font(.system(size: 12.5)).frame(height: 110)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+                .disabled(busy).opacity(busy ? 0.6 : 1)
             if let current {
-                Toggle("Also learn from my current session: \(current.meta.title)", isOn: $fromSession)
+                Toggle("Also learn from my current session: \(current.meta.title)", isOn: $fromSession).disabled(busy)
             }
-            HStack {
+            HStack(spacing: 8) {
+                if busy { ProgressView().controlSize(.small); Text(stage).font(.system(size: 12.5)).foregroundStyle(.secondary) }
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
-                Button { Task { await start() } } label: { if busy { ProgressView().controlSize(.small) } else { Text("Update with Claude") } }
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction).disabled(busy)
+                Button { Task { await start() } } label: { Text(busy ? "Starting…" : "Update with Claude") }
                     .buttonStyle(Pill(kind: .primary)).disabled(busy || (note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !(fromSession && current != nil)))
                     .keyboardShortcut(.defaultAction)
             }
@@ -196,6 +204,8 @@ struct ExtendSkillSheet: View {
 
     private func start() async {
         busy = true; defer { busy = false }
+        stage = fromSession && current != nil ? "Reading your session…" : "Preparing the update…"
+        await Task.yield()
         let dir = (skill.path as NSString).deletingLastPathComponent
         let learned: String
         if fromSession, let c = current {
@@ -208,8 +218,11 @@ struct ExtendSkillSheet: View {
 
         \(learned)\(note)
         """
+        stage = "Opening a session for Claude…"
         do {
             try await Workspace.shared.create(.init(folder: dir, access: .editFiles, firstMessage: prompt))
+            Nav.shared.pane = .sessions
+            AppModel.shared.show("Claude is reading \(skill.name) and will show you the change")
             dismiss()
         } catch { failure = ErrorReport(error, action: "Start the skill update") }
     }
