@@ -346,7 +346,7 @@ final class SessionController: Identifiable {
             items.upsert(row)
             pending.append(Pending(id: e.request.id, source: e.source, request: e.request))
             state = .waiting
-            ws.notifyApproval(session: meta.title, summary: e.request.summary)
+            ws.notifyApproval(session: meta.title, repo: URL(fileURLWithPath: meta.cwd).lastPathComponent)
         }
     }
 
@@ -768,12 +768,12 @@ final class Workspace {
 
     // MARK: Notifications
 
-    func notifyApproval(session: String, summary: String) {
+    func notifyApproval(session: String, repo: String) {
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
-            let c = UNMutableNotificationContent(); c.title = "\(session) needs approval"; c.body = summary
+            let c = UNMutableNotificationContent(); c.title = repo.isEmpty ? session : repo; c.subtitle = repo.isEmpty ? "" : session; c.body = "Needs your approval"
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
     }
