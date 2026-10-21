@@ -1,29 +1,37 @@
 ---
 name: cpilot
-description: Use on macOS when <the situation where an agent should reach for CPilot>. Uses the CPilot menu bar app through its MCP tools. Also covers installing CPilot.
+description: Use on macOS to hand work to the user's CPilot app, read what their sessions did, look up their saved project notes, or list pull requests. Uses CPilot through its MCP tools. Also covers installing CPilot.
 ---
 
 # CPilot
 
-One paragraph: what CPilot shows or does, and why an agent should use it instead of guessing.
+CPilot is a menu bar app that runs AI coding sessions for the user, with notes it keeps per project. Use its tools to see what sessions exist and what they said, to save a note future sessions should start with, and to start a session the user approves. Prefer these over guessing what the user has been working on.
 
-## Before you <do the risky thing>
+## Before you act
 
-1. Check first with the read-only tool: `get_status`.
-2. Decide using the fields it returns, not assumptions.
-3. After any change, verify with the same read-only tool.
+1. Call `get_status`. If `appRunning` is false, tools that start or message sessions will fail; ask the user to open CPilot.
+2. Look before you write: `list_sessions`, then `get_session` for the one that matters, and `search_memory` for notes on the project.
 
 ## Changing things
 
-- Say what you are about to do, then wait for the result. If a call returns "The user denied this request", respect it and do not retry.
-- Never call destructive tools (`delete_thing`) without asking the user first, and pass the exact confirmation argument.
+- `start_session` and `send_message` show an approval dialog to the user in CPilot. Say what you are about to ask for first. If the answer is "The user declined", respect it and do not retry.
+- You cannot request Full access. Ask for `readOnly`, `askFirst` or `editFiles`.
+- `save_memory` writes a note every later session starts with. Save short, durable facts, not transcripts.
+- Never call `delete_session` without asking the user, and pass the session's exact title as `confirm_title`.
 
 ## Tool reference
 
 | MCP tool | Changes the system |
 |---|---|
 | `get_status {}` | no |
-| `delete_thing {name, confirm_name}` | yes, ask the user first |
+| `list_sessions {limit?}` | no |
+| `get_session {session_id, tail?}` | no |
+| `search_memory {query}` | no |
+| `list_pull_requests {folder}` | no |
+| `save_memory {name, body, project_folder?}` | yes, a note |
+| `start_session {folder, message?, access?}` | yes, user approves in the app |
+| `send_message {session_id, text}` | yes, user approves in the app |
+| `delete_session {session_id, confirm_title}` | yes, ask the user first |
 
 ## Installing CPilot (ask the user first)
 
