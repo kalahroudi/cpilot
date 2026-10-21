@@ -27,6 +27,9 @@ final class SessionController: Identifiable {
     var pending: [Pending] = []
     var cost: Double = 0
     var loaded = false
+    /// The "while you were away" card is showing.
+    var recapVisible = false
+    var recapBusy = false
 
     private let ws: Workspace
     private var runner: ClaudeRunner?
@@ -90,6 +93,34 @@ final class SessionController: Identifiable {
         items = []; loaded = false
     }
 
+    // MARK: Recap. A short "where things stand" for when you come back: built instantly from the transcript,
+    // then rewritten by Claude in a few friendlier lines. It is prepared when a tab falls asleep, so it is ready when you return.
+
+    func refreshRecap(force: Bool = false) {
+        loadIfNeeded()
+        let parts = Recap.parts(items)
+        guard !parts.isEmpty else { return }
+        if !force, meta.recapRows == items.count, meta.recap != nil { return }
+        meta.recap = Recap.text(parts); meta.recapHeadline = Recap.headline(parts); meta.recapRows = items.count
+        ws.save(meta)
+        guard Prefs.shared.recapWithClaude, Shell.find("claude") != nil else { return }
+        recapBusy = true
+        let digest = ContextDigest.build(items: items, budget: 8000), dir = meta.workingDirectory, rows = items.count
+        Task { @MainActor in
+            let out = await ClaudeOneShot.run(Recap.prompt(digest: digest), in: dir)
+            recapBusy = false
+            if let out, meta.recapRows == rows { meta.recap = out; ws.save(meta) }
+        }
+    }
+
+    /// Called when you open a session: if you have been away a while, show the recap.
+    func showRecapIfAway() {
+        guard Prefs.shared.recapAuto, !isBusy, !items.isEmpty, Recap.isDue(lastActivity: meta.updatedAt) else { return }
+        refreshRecap(); recapVisible = true
+    }
+
+    func dismissRecap() { recapVisible = false }
+
     // MARK: Sending
 
     func send() {
@@ -97,7 +128,7 @@ final class SessionController: Identifiable {
         loadIfNeeded()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
-        draft = ""; attachments = []; meta.draft = nil
+        draft = ""; attachments = []; meta.draft = nil; recapVisible = false
         let composed = Capture.compose(message: text, attachments: atts)
         let isFirst = !items.contains { $0.kind == .user }
         let row = ChatItem(kind: .user, text: text, attachments: atts, ts: .now)
@@ -329,6 +360,7 @@ final class SessionController: Identifiable {
     /// Stops the agent process. The session keeps its id, so the next message resumes it with full context.
     func sleep() {
         guard !isBusy else { return }
+        if loaded, Prefs.shared.recapAuto { refreshRecap() }
         stoppedOnPurpose = true
         runner?.stop(); runner = nil
         acp?.stop(); acp = nil; acpSession = nil
@@ -446,6 +478,7 @@ final class Workspace {
         selected = id
         if !tabs.contains(id) { tabs.append(id) }
         controller(id)?.loadIfNeeded()
+        controller(id)?.showRecapIfAway()
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
     }

@@ -243,3 +243,34 @@ final class MemoryIndexTests: XCTestCase {
         XCTAssertGreaterThan(dot(a, b), dot(a, c))
     }
 }
+
+final class RecapTests: XCTestCase {
+    func items() -> [ChatItem] {
+        [ChatItem(kind: .user, text: "Fix the flaky login test"),
+         ChatItem(kind: .assistant, text: "I found a race. Fixing it now.", status: .done),
+         ChatItem(kind: .tool, title: "Edit", detail: "/code/shop/tests/login.spec.ts", status: .done),
+         ChatItem(kind: .tool, title: "Bash", detail: "npm test", status: .failed),
+         ChatItem(kind: .user, text: "Also run it 20 times"),
+         ChatItem(kind: .assistant, text: "Sure. Running it twenty times.", status: .done),
+         ChatItem(id: "perm-1", kind: .permission, text: "npm test -- --repeat-each=20", title: "Bash", status: .pending)]
+    }
+
+    func testPartsAndText() {
+        let p = Recap.parts(items())
+        XCTAssertEqual(p.firstAsk, "Fix the flaky login test"); XCTAssertEqual(p.latestAsk, "Also run it 20 times")
+        XCTAssertEqual(p.files, ["login.spec.ts"]); XCTAssertEqual(p.commands, ["npm test"]); XCTAssertEqual(p.failures, 1)
+        XCTAssertEqual(p.lastReply, "Sure")
+        XCTAssertTrue(p.waiting?.contains("npm test -- --repeat-each=20") == true)
+        let t = Recap.text(p)
+        XCTAssertTrue(t.contains("**Latest ask:** Also run it 20 times") && t.contains("**Started with:**") && t.contains("changed 1 file") && t.contains("1 step failed") && t.contains("**Waiting on you:**"))
+        XCTAssertTrue(Recap.headline(p).hasPrefix("Waiting on approval to run"))
+    }
+
+    func testEmptyAndDue() {
+        XCTAssertTrue(Recap.parts([]).isEmpty)
+        XCTAssertEqual(Recap.text(Recap.parts([])), "Nothing has happened in this session yet.")
+        XCTAssertTrue(Recap.isDue(lastActivity: .now.addingTimeInterval(-1300)))
+        XCTAssertFalse(Recap.isDue(lastActivity: .now.addingTimeInterval(-60)))
+        XCTAssertEqual(Recap.headline(Recap.parts([ChatItem(kind: .user, text: "Hello there")])), "Hello there")
+    }
+}

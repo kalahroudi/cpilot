@@ -59,6 +59,8 @@ struct SettingsPane: View {
                     SettingRow("Put idle tabs to sleep", "Stops an idle session's agent after this long. It resumes with its full context when you send the next message.") {
                         Segmented(options: [(5, "5 min"), (10, "10 min"), (30, "30 min"), (240, "4 h")], selection: $p.sleepMinutes)
                     }
+                    SettingRow("Recap when you return", "Opening a session you have been away from for a while shows where things stand: the latest ask, what got done, and anything waiting on you.") { toggle($p.recapAuto) }
+                    if prefs.recapAuto { SettingRow("Let Claude write recaps", "A small, cheap call that rewrites the recap in a few friendly lines. Off keeps it to the plain version built on your Mac.") { toggle($p.recapWithClaude) } }
                     SettingRow("Isolate new sessions in a worktree", "Each session on a new branch gets its own copy of the files, so parallel sessions never collide.") { toggle($p.useWorktrees) }
                 }
                 SettingsGroup("Memory") {

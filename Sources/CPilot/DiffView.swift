@@ -110,7 +110,7 @@ struct CreatePRSheet: View {
         drafting = true; defer { drafting = false }
         let diff = String((await Git.diff(dir, base: "origin/\(base)")).prefix(30000))
         let prompt = "Write a pull request title (one line, under 70 characters) and a short description for this diff. Reply with the title on the first line, then a blank line, then the description in plain Markdown. No preamble.\n\n\(diff)"
-        guard let out = try? await Shell.check("claude", ["-p", "--model", "haiku", prompt], cwd: URL(fileURLWithPath: dir), timeout: 120) else { error = "Claude could not write the text. Write it yourself."; return }
+        guard let out = await ClaudeOneShot.run(prompt, in: dir, timeout: 120) else { error = "Claude could not write the text. Write it yourself."; return }
         let parts = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
         title = (parts.first ?? "").replacingOccurrences(of: "# ", with: "")
         prBody = parts.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

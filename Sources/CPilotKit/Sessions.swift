@@ -52,6 +52,10 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var handoff: String?
     /// The next start forks the agent's own session instead of continuing it.
     public var forkPending: Bool?
+    /// The last recap, the number of chat rows it covered, and its one-line form for lists.
+    public var recap: String?
+    public var recapRows: Int?
+    public var recapHeadline: String?
     public var createdAt: Date
     public var updatedAt: Date
 

@@ -78,7 +78,7 @@ struct SummarizeSheet: View {
         let digest = ContextDigest.build(items: session.items, budget: 12000)
         guard !digest.isEmpty else { working = false; error = "There is nothing to summarize yet."; return }
         let prompt = "From this conversation summary, write a short note for future sessions in this project. Reply with a title on the first line, a blank line, then at most 8 bullet points of durable facts (how to build or test, decisions and reasons, pitfalls). No preamble.\n\n\(digest)"
-        if let out = try? await Shell.check("claude", ["-p", "--model", "haiku", prompt], cwd: URL(fileURLWithPath: session.meta.workingDirectory), timeout: 120) {
+        if let out = await ClaudeOneShot.run(prompt, in: session.meta.workingDirectory, timeout: 120) {
             let parts = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
             title = (parts.first ?? "").replacingOccurrences(of: "# ", with: "")
             text = parts.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,5 +87,38 @@ struct SummarizeSheet: View {
             error = "Claude could not draft this, so the raw summary is below. Trim it before saving."
         }
         working = false
+    }
+}
+
+/// "Where things stand", shown at the top of a session you have come back to.
+struct RecapCard: View {
+    let session: SessionController
+    @State private var save = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundStyle(Theme.accent)
+                Text("Recap").font(.system(size: 13, weight: .semibold))
+                Text(session.meta.updatedAt.formatted(.relative(presentation: .named))).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                if session.recapBusy { ProgressView().controlSize(.mini) }
+                Spacer()
+                Button { session.refreshRecap(force: true) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Write the recap again").accessibilityLabel("Refresh recap")
+                Button { session.dismissRecap() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Dismiss").accessibilityLabel("Dismiss recap")
+            }
+            if let text = session.meta.recap, let md = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                Text(md).font(.system(size: 12.5)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Pick up where we left off") { session.dismissRecap() }.buttonStyle(Pill(kind: .primary))
+                Button("Save to memory…") { save = true }.buttonStyle(Pill(kind: .plain))
+            }
+        }
+        .padding(12)
+        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.25)))
+        .sheet(isPresented: $save) { SummarizeSheet(session: session) }
     }
 }

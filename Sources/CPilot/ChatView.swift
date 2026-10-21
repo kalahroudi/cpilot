@@ -16,12 +16,13 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ChatHeader(session: session)
             Divider().opacity(0.5)
+            if session.recapVisible { RecapCard(session: session).padding(.horizontal, 16).padding(.top, 10) }
             transcript
             if session.meta.branch != nil { SessionPRBar(session: session) }
             Composer(session: session)
         }
         .background(Theme.pane)
-        .onAppear { session.loadIfNeeded() }
+        .onAppear { session.loadIfNeeded(); session.showRecapIfAway() }
     }
 
     private var transcript: some View {
@@ -75,6 +76,7 @@ struct ChatHeader: View {
 
     private var actionsMenu: some View {
         Menu {
+            Button("Recap this session") { session.refreshRecap(force: true); session.recapVisible = true }
             Button("Fork this session") { ws.fork(session) }
             Menu("Continue with another agent") {
                 if session.meta.backend.kind != .claude { Button("Claude") { ws.fork(session, to: .claude) } }

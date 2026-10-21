@@ -34,6 +34,10 @@ final class Prefs {
     var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
     /// Index finished messages and recall the best matches at the start of a new session.
     var recall: Bool { didSet { d.set(recall, forKey: "recall") } }
+    /// Show a recap when you open a session you have been away from.
+    var recapAuto: Bool { didSet { d.set(recapAuto, forKey: "recapAuto") } }
+    /// Let Claude rewrite recaps in friendlier language (a small, cheap call).
+    var recapWithClaude: Bool { didSet { d.set(recapWithClaude, forKey: "recapWithClaude") } }
     var sleepMinutes: Int { didSet { d.set(sleepMinutes, forKey: "sleepMinutes") } }
     var cloneFolder: String { didSet { d.set(cloneFolder, forKey: "cloneFolder") } }
     var useWorktrees: Bool { didSet { d.set(useWorktrees, forKey: "useWorktrees") } }
@@ -49,13 +53,15 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "securityScanOnPR": true])
+                              "autoMergeDefault": false, "recall": true, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
         refreshSeconds = d.integer(forKey: "refreshSeconds")
         sidebarCollapsed = d.bool(forKey: "sidebarCollapsed")
         sleepMinutes = d.integer(forKey: "sleepMinutes")
+        recapAuto = d.bool(forKey: "recapAuto")
+        recapWithClaude = d.bool(forKey: "recapWithClaude")
         recall = d.bool(forKey: "recall")
         memoryEngine = d.string(forKey: "memoryEngine") ?? "files"
         memoryEngineURL = d.string(forKey: "memoryEngineURL") ?? MemoryEngine.defaultURL

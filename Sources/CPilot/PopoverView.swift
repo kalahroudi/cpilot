@@ -121,7 +121,9 @@ struct SessionRow: View {
         if let p = c?.pending.first { return "\(who) wants to \(p.request.tool == "Bash" ? "run" : "use") \(p.request.summary)" }
         switch c?.state {
         case .running: return "\(who) · working"
-        default: return "\(who) · \(meta.project) · \(meta.updatedAt.formatted(.relative(presentation: .named)))"
+        default:
+            if let h = meta.recapHeadline, !h.isEmpty { return h }
+            return "\(who) · \(meta.project) · \(meta.updatedAt.formatted(.relative(presentation: .named)))"
         }
     }
 
