@@ -212,6 +212,8 @@ public final class ClaudeRunner: @unchecked Sendable {
     public struct Config: Sendable {
         public var cwd: String
         public var resumeId: String?
+        /// With `resumeId`, start a copy of that session that diverges from it.
+        public var fork = false
         public var model: String?
         public var access: AccessLevel = .askFirst
         public var appendSystemPrompt: String?
@@ -240,7 +242,7 @@ public final class ClaudeRunner: @unchecked Sendable {
                  "--permission-prompt-tool", "stdio", "--permission-mode", c.access.claudeMode]
         if c.access == .fullAccess { a.append("--allow-dangerously-skip-permissions") }
         if let m = c.model, !m.isEmpty { a += ["--model", m] }
-        if let r = c.resumeId { a += ["--resume", r] }
+        if let r = c.resumeId { a += ["--resume", r]; if c.fork { a.append("--fork-session") } }
         if let s = c.appendSystemPrompt, !s.isEmpty { a += ["--append-system-prompt", s] }
         for d in c.addDirs { a += ["--add-dir", d] }
         if let m = c.mcpConfigPath { a += ["--mcp-config", m] }

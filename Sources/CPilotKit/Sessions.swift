@@ -48,6 +48,10 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var archived = false
     /// Unsent text in the composer, kept so a crash or restart does not lose it.
     public var draft: String?
+    /// A summary of earlier work, placed before this session's first message (a fork or a switch of agent).
+    public var handoff: String?
+    /// The next start forks the agent's own session instead of continuing it.
+    public var forkPending: Bool?
     public var createdAt: Date
     public var updatedAt: Date
 

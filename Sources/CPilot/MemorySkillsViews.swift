@@ -24,7 +24,7 @@ struct MemoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: "Memory", subtitle: "Notes every session starts with. They are plain Markdown files you can edit anywhere.") {
+            PaneHeader(title: "Memory", subtitle: "Notes every session starts with. Plain Markdown files you can edit anywhere. \(budget)") {
                 Button("New note") { selection = nil; title = ""; text = "" }.buttonStyle(Pill(kind: .primary))
             }
             HSplitView {
@@ -59,6 +59,12 @@ struct MemoryView: View {
         .onChange(of: selection) { _, id in
             if let n = notes.first(where: { $0.id == id }) { title = n.name; text = n.body; scope = n.scope }
         }
+    }
+
+    /// Sessions load notes up to a cap, so show how close you are.
+    private var budget: String {
+        let used = notes.reduce(0) { $0 + $1.body.count }
+        return "\(used.formatted()) characters saved; a session loads up to 6,000."
     }
 
     private var filtered: [MemoryNote] { query.isEmpty ? notes : notes.filter { ($0.name + $0.body).localizedCaseInsensitiveContains(query) } }

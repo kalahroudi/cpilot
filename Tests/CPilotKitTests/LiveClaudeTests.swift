@@ -56,6 +56,18 @@ final class LiveClaudeTests: XCTestCase {
         let b = try await run("What was the secret word? Reply with only the word.", resume: a.sessionId, dir: dir)
         XCTAssertTrue(b.items.contains { $0.kind == .assistant && $0.text.lowercased().contains("pineapple") }, "context was not restored: \(b.items.map(\.text))")
 
+        // 2b. Forking starts a new session that still knows the conversation, and leaves the original alone.
+        var cfg = ClaudeRunner.Config(cwd: dir.path); cfg.model = "haiku"; cfg.resumeId = a.sessionId; cfg.fork = true
+        let fbox = Box()
+        let fr = ClaudeRunner(config: cfg, onLine: { fbox.feed($0) }, onExit: { _ in })
+        fbox.runner = fr
+        try fr.start()
+        fr.send(ClaudeWire.userMessage(text: "What was the secret word? Reply with only the word."))
+        for _ in 0..<240 { if fbox.ended { break }; try await Task.sleep(for: .milliseconds(250)) }
+        fr.stop()
+        XCTAssertTrue(fbox.items.contains { $0.kind == .assistant && $0.text.lowercased().contains("pineapple") }, "fork lost the context")
+        XCTAssertNotEqual(fbox.sessionId, a.sessionId, "fork reused the original session id")
+
         // 3. A command asks for approval; allowing it runs the tool.
         let c = try await run("Run the shell command: echo cpilot-ok > proof.txt", dir: dir)
         XCTAssertFalse(c.permissions.isEmpty, "no approval was requested")

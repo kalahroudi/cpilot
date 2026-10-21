@@ -144,3 +144,40 @@ final class MemoryEngineTests: XCTestCase {
         XCTAssertEqual(MemoryEngine.acpServers(base: "http://h:1", bank: "b").first?["name"] as? String, "memory")
     }
 }
+
+final class MemoryQualityTests: XCTestCase {
+    func testDigestCompactsAndKeepsRecent() {
+        XCTAssertEqual(ContextDigest.compact("a   b\n c"), "a b c")
+        XCTAssertEqual(ContextDigest.compact(String(repeating: "x", count: 300)).count, 240)
+        let items = [ChatItem(kind: .user, text: "first question"),
+                     ChatItem(kind: .assistant, text: "an answer"),
+                     ChatItem(kind: .tool, title: "Bash", detail: "npm test", status: .done),
+                     ChatItem(kind: .tool, title: "Edit", detail: "src/a.ts", status: .done),
+                     ChatItem(kind: .thinking, text: "hmm"), ChatItem(kind: .notice, text: "n")]
+        let d = ContextDigest.build(items: items)
+        XCTAssertEqual(d, "User: first question\nAssistant: an answer\nRan: npm test\nChanged: src/a.ts")
+        let tight = ContextDigest.build(items: items, budget: 40)
+        XCTAssertTrue(tight.hasPrefix("(") && tight.contains("Changed: src/a.ts"))
+        XCTAssertFalse(tight.contains("first question"))
+    }
+
+    func testRankingAndPlan() {
+        let m = MemoryStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = MemoryStore.scope(forProject: "/code/shop")
+        m.save(scope: scope, name: "Login tests", body: "flaky because of redirect")
+        m.save(scope: scope, name: "Deploy", body: "login is not part of deploy but mentioned login login")
+        XCTAssertEqual(m.search("login", scopes: [scope]).first?.name, "login-tests")
+        XCTAssertTrue(m.search("nonexistent", scopes: [scope]).isEmpty)
+        let plan = m.plan(forProject: "/code/shop", limit: 120)
+        XCTAssertEqual(plan.included.count + plan.dropped.count, 2)
+        XCTAssertFalse(plan.dropped.isEmpty)
+        XCTAssertNil(m.plan(forProject: "/code/none-xyz", limit: 6000).text?.contains("Login") == true ? "" : nil)
+    }
+
+    func testForkArguments() {
+        var c = ClaudeRunner.Config(cwd: "/tmp"); c.resumeId = "abc"; c.fork = true
+        XCTAssertTrue(ClaudeRunner.arguments(c).contains("--fork-session"))
+        c.resumeId = nil
+        XCTAssertFalse(ClaudeRunner.arguments(c).contains("--fork-session"))
+    }
+}

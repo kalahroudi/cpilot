@@ -125,6 +125,7 @@ final class SessionController: Identifiable {
         if let r = runner, r.isRunning { return r }
         var c = ClaudeRunner.Config(cwd: meta.workingDirectory)
         c.resumeId = meta.remoteId
+        c.fork = meta.forkPending == true
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
         c.appendSystemPrompt = ws.memory.context(forProject: meta.cwd)
@@ -144,7 +145,7 @@ final class SessionController: Identifiable {
     private func sendClaude(_ text: String, _ images: [(mediaType: String, data: Data)]) {
         do {
             let r = try ensureRunner()
-            r.send(ClaudeWire.userMessage(text: text, images: images))
+            r.send(ClaudeWire.userMessage(text: takeHandoff() + text, images: images))
         } catch {
             fail(UserError.message(for: error, action: "Start Claude"))
         }
@@ -154,7 +155,7 @@ final class SessionController: Identifiable {
         for ev in parser.parse(line: line) {
             switch ev {
             case .initialized(let sid, _):
-                if meta.remoteId != sid { meta.remoteId = sid; ws.save(meta) }
+                if meta.remoteId != sid || meta.forkPending == true { meta.remoteId = sid; meta.forkPending = nil; ws.save(meta) }
             case .item(let item):
                 items.upsert(item)
                 if item.status != .running { ws.store.append(item, to: id) } else { checkpoint(item) }
@@ -178,13 +179,24 @@ final class SessionController: Identifiable {
         pending.removeAll()
     }
 
+    /// The summary of earlier work, used once, before the first message of a session that continues something.
+    private func takeHandoff() -> String {
+        guard let h = meta.handoff else { return "" }
+        meta.handoff = nil; ws.save(meta)
+        return h + "\n\n---\n\n"
+    }
+
     // MARK: ACP
 
     private func sendAcp(_ text: String, _ images: [(mediaType: String, data: Data)]) {
         Task { @MainActor in
             do {
+                let fresh = meta.remoteId == nil
                 let (client, session) = try await ensureAcp()
-                _ = try await client.prompt(sessionId: session, text: text, images: images)
+                // ACP has no system prompt, so a new session's notes ride along with its first message.
+                var prefix = takeHandoff()
+                if fresh, let notes = ws.memory.context(forProject: meta.cwd) { prefix += notes + "\n\n---\n\n" }
+                _ = try await client.prompt(sessionId: session, text: prefix + text, images: images)
                 finishTurn()
             } catch {
                 fail(UserError.message(for: error, action: "Talk to the agent"))
@@ -451,6 +463,36 @@ final class Workspace {
         select(meta.id)
         if !n.firstMessage.isEmpty { c.draft = n.firstMessage; c.send() }
         return c
+    }
+
+    // MARK: Fork, switch agent, remember
+
+    /// Continues a session as a new one. With the same Claude agent it forks the agent's own conversation, so the context is
+    /// complete; with another agent it hands over a short summary instead, which is all that can be carried across.
+    @discardableResult
+    func fork(_ source: SessionController, to backend: Backend? = nil) -> SessionController? {
+        source.loadIfNeeded()
+        let target = backend ?? source.meta.backend
+        var m = SessionMeta(title: (backend == nil ? "Fork of " : "") + source.meta.title, cwd: source.meta.cwd, backend: target,
+                            model: target == source.meta.backend ? source.meta.model : nil, access: source.meta.access,
+                            branch: source.meta.branch, worktree: source.meta.worktree)
+        let native = target.kind == .claude && source.meta.backend.kind == .claude && source.meta.remoteId != nil
+        if native { m.remoteId = source.meta.remoteId; m.forkPending = true }
+        else { m.handoff = ContextDigest.handoff(ContextDigest.build(items: source.items), from: source.meta.title) }
+        save(m)
+        for row in source.items where row.kind != .permission { store.append(row, to: m.id) }
+        guard let c = controller(m.id) else { return nil }
+        c.loaded = false; c.loadIfNeeded()
+        c.addNotice(native ? "Forked from \"\(source.meta.title)\". The agent keeps the full conversation." : "Continuing from \"\(source.meta.title)\" with a summary of it. The new agent has not seen the full conversation.")
+        select(m.id)
+        return c
+    }
+
+    func remember(_ text: String, project: String?, name: String? = nil) {
+        let first = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Note"
+        let title = name ?? String(first.prefix(48))
+        memory.save(scope: project.map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope, name: title, body: text)
+        AppModel.shared.show("Saved to memory")
     }
 
     // MARK: Policy and agents

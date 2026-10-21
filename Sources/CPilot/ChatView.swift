@@ -64,13 +64,28 @@ struct ChatHeader: View {
             }
             Spacer()
             stateView
-            if session.meta.backend.kind == .claude, session.meta.remoteId != nil {
-                Button { session.openInTerminal() } label: { Image(systemName: "terminal") }.buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Continue this session in Terminal").accessibilityLabel("Open in Terminal")
-            }
+            MemoryChip(session: session)
+            actionsMenu
             accessMenu
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
+    @State private var summarize = false
+
+    private var actionsMenu: some View {
+        Menu {
+            Button("Fork this session") { ws.fork(session) }
+            Menu("Continue with another agent") {
+                if session.meta.backend.kind != .claude { Button("Claude") { ws.fork(session, to: .claude) } }
+                ForEach(ws.acpAgents.filter { $0.id != session.meta.backend.acpAgent }) { a in Button(a.name) { ws.fork(session, to: .acp(a.id)) } }
+            }
+            Divider()
+            Button("Save what we learned to memory…") { summarize = true }
+            if session.meta.backend.kind == .claude, session.meta.remoteId != nil { Button("Continue in Terminal") { session.openInTerminal() } }
+        } label: { Image(systemName: "ellipsis.circle") }
+        .menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary).help("Fork, switch agent, save to memory")
+        .sheet(isPresented: $summarize) { SummarizeSheet(session: session) }
     }
 
     private var backendName: String {
@@ -136,7 +151,7 @@ struct ChatRow: View {
     var body: some View {
         switch item.kind {
         case .user: UserBubble(item: item).frame(maxWidth: .infinity, alignment: .trailing)
-        case .assistant: AssistantText(text: item.text, streaming: item.status == .running)
+        case .assistant: AssistantText(text: item.text, streaming: item.status == .running, project: session.meta.cwd)
         case .thinking: ThinkingRow(item: item)
         case .tool: ToolCard(item: item)
         case .permission: ApprovalCard(item: item, session: session)
@@ -166,6 +181,8 @@ struct UserBubble: View {
 struct AssistantText: View {
     let text: String
     let streaming: Bool
+    var project: String?
+    @State private var hover = false
     var body: some View {
         StructuredText(markdown: text)
             .textual.structuredTextStyle(.gitHub)
@@ -173,6 +190,14 @@ struct AssistantText: View {
             .font(.system(size: 13.5))
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(streaming && text.isEmpty ? 0.4 : 1)
+            .overlay(alignment: .topTrailing) {
+                if hover, !streaming, !text.isEmpty {
+                    Button { Workspace.shared.remember(text, project: project) } label: { Label("Remember", systemImage: "brain") }
+                        .buttonStyle(Pill(kind: .plain)).help("Save this reply as a note for future sessions")
+                }
+            }
+            .onHover { hover = $0 }
+            .contextMenu { Button("Remember this") { Workspace.shared.remember(text, project: project) } }
     }
 }
 
