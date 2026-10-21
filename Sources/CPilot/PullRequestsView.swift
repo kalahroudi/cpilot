@@ -446,6 +446,8 @@ struct ReviewAndMerge: View {
     let pr: PullRequest
     let center = PRCenter.shared
 
+    @State private var choosing = false
+
     private static let styles: [(MergeMethod, String)] = [(.merge, "Create a merge commit"), (.squash, "Squash and merge"), (.rebase, "Rebase and merge")]
 
     var body: some View {
@@ -467,6 +469,24 @@ struct ReviewAndMerge: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+    }
+
+    private var styleList: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Self.styles, id: \.0) { m, title in
+                Button { center.method = m; choosing = false } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark").opacity(center.method == m ? 1 : 0).frame(width: 14)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(title).font(.system(size: 12.5, weight: .medium))
+                            Text(Self.blurb(m, base: pr.baseRefName)).font(.system(size: 11)).foregroundStyle(.secondary)
+                                .frame(maxWidth: 260, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+        }.padding(6).frame(width: 320)
     }
 
     /// Like GitHub's merge box: what is blocking the merge, then one button whose arrow picks the merge style.
@@ -491,18 +511,11 @@ struct ReviewAndMerge: View {
                     HStack(spacing: 0) {
                         Button { Task { await center.mergeNow() } } label: { Text(Self.label(center.method)).frame(minWidth: 130) }
                             .buttonStyle(MergeSplit(position: .leading, ready: ready)).disabled(!ready)
-                        Menu {
-                            ForEach(Self.styles, id: \.0) { m, title in
-                                Button { center.method = m } label: { if center.method == m { Label(title, systemImage: "checkmark") } else { Text(title) } }
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(ready ? Theme.onAccent : Color.secondary.opacity(0.75))
-                                .frame(width: 32, height: 32)   // same height as the main button
-                                .background(ready ? Theme.ok : Theme.fill, in: MergeSplit.shape(.trailing))
-                                .overlay(alignment: .leading) { Rectangle().fill(Color.black.opacity(0.2)).frame(width: 1) }
+                        Button { choosing = true } label: {
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).frame(width: 18)
                         }
-                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .buttonStyle(MergeSplit(position: .trailing, ready: ready))
+                        .popover(isPresented: $choosing, arrowEdge: .bottom) { styleList }
                     }
                     Text(Self.blurb(center.method, base: pr.baseRefName)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Toggle(isOn: Binding(get: { armed }, set: { center.setArmed($0, pr.number) })) {
@@ -547,6 +560,7 @@ private struct MergeSplit: ButtonStyle {
             .padding(.horizontal, position == .leading ? 14 : 10).frame(height: 32)
             .foregroundStyle(on ? Theme.onAccent : Color.secondary.opacity(0.75))
             .background(on ? Theme.ok.opacity(configuration.isPressed ? 0.8 : 1) : Theme.fill, in: shape)
+            .overlay(alignment: .leading) { if position == .trailing { Rectangle().fill(Color.black.opacity(0.2)).frame(width: 1) } }
     }
 }
 
