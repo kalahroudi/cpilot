@@ -481,18 +481,79 @@ struct ReviewAndMerge: View {
 
 struct DiffList: View {
     let center = PRCenter.shared
-    @State private var collapsed: Set<String> = []
+    @State private var expanded: Set<String> = []
+    @State private var seeded: String?
+    @State private var listOpen = true
+
+    private var visible: [DiffFile] {
+        center.files.filter { center.fileFilter.isEmpty || $0.path.localizedCaseInsensitiveContains(center.fileFilter) }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("\(center.files.count) files changed").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                SearchBox(prompt: "Filter files", text: Bindable(center).fileFilter).frame(width: 180)
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Text("\(center.files.count) files changed").font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Button("Expand all") { expanded = Set(center.files.map(\.path)) }.buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
+                    Button("Collapse all") { expanded = [] }.buttonStyle(.plain).foregroundStyle(Theme.accent).font(.system(size: 12))
+                    SearchBox(prompt: "Filter files", text: Bindable(center).fileFilter).frame(width: 180)
+                }
+                fileList(proxy)
+                ForEach(visible) { f in
+                    DiffFileView(file: f, collapsed: !expanded.contains(f.path)) {
+                        if expanded.contains(f.path) { expanded.remove(f.path) } else { expanded.insert(f.path) }
+                    }.id(f.path)
+                }
             }
-            ForEach(center.files.filter { center.fileFilter.isEmpty || $0.path.localizedCaseInsensitiveContains(center.fileFilter) }) { f in
-                DiffFileView(file: f, collapsed: collapsed.contains(f.path)) { if collapsed.contains(f.path) { collapsed.remove(f.path) } else { collapsed.insert(f.path) } }
+            .onAppear(perform: seed)
+            .onChange(of: center.files.first?.path) { seed() }
+        }
+    }
+
+    /// A new pull request starts with only its first file open.
+    private func seed() {
+        let key = center.files.first?.path
+        guard key != seeded else { return }
+        seeded = key
+        expanded = key.map { [$0] } ?? []
+    }
+
+    private func fileList(_ proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { listOpen.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: listOpen ? "chevron.down" : "chevron.right").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("Files").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                }.padding(.horizontal, 10).padding(.vertical, 6).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if listOpen {
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(visible) { f in
+                            Button {
+                                expanded.insert(f.path)
+                                withAnimation { proxy.scrollTo(f.path, anchor: .top) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: expanded.contains(f.path) ? "doc.text.fill" : "doc.text").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                                    Text(f.path).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).truncationMode(.head)
+                                    if f.isNew { Badge(text: "New", kind: .ok) }
+                                    if f.isDeleted { Badge(text: "Deleted", kind: .danger) }
+                                    Spacer()
+                                    Text("+\(f.additions)").foregroundStyle(Theme.ok)
+                                    Text("−\(f.deletions)").foregroundStyle(Theme.danger)
+                                }.font(.system(size: 11, design: .monospaced)).padding(.horizontal, 10).padding(.vertical, 3).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }.frame(maxHeight: 180)
             }
         }
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline))
     }
 }
 
