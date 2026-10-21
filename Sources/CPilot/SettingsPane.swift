@@ -47,6 +47,7 @@ struct SettingsPane: View {
                 SettingsGroup("Appearance") {
                     SettingRow("Theme", "Applies to the window and the menu bar popover.") { Segmented(options: ThemeChoice.allCases.map { ($0, $0.label) }, selection: $p.theme) }
                     SettingRow("Dock icon", "Keep CPilot in the Dock as well as the menu bar.") { toggle($p.showDockIcon) }
+                    SettingRow("Follow the session", "Opening a session makes its repository the active one, so Specs, Stacks and Pull requests show the repository you are working in.") { toggle($p.followSession) }
                     SettingRow("Sessions as", "Tabs across the top, or a list down the left grouped by project.") { Segmented(options: [(false, "Tabs"), (true, "Side list")], selection: $p.tabsOnSide) }
                 }
                 SettingsGroup("Capture") {

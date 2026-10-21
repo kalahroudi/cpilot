@@ -63,3 +63,51 @@ public struct ScopedStore<Value> {
         items[scope]?[id] = v
     }
 }
+
+extension RepoRef {
+    /// Folders inside one repository are one repository. `roots` maps a reference's `key` to the top folder git reported for it; a folder
+    /// that has not been looked up yet stays as it is. The first appearance keeps its place in the list.
+    public static func collapse(_ repos: [RepoRef], roots: [String: String]) -> [RepoRef] {
+        var seen = Set<RepoRef>(), out: [RepoRef] = []
+        for r in repos {
+            let mapped = RepoRef(dir: roots[r.key] ?? r.dir, environment: r.environment)
+            if seen.insert(mapped).inserted { out.append(mapped) }
+        }
+        return out
+    }
+
+    /// Whether `path` is this repository's folder or inside it (a session started in a subfolder belongs to the repository).
+    public func contains(_ path: String) -> Bool {
+        let base = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+        return path == base || path.hasPrefix(base + "/")
+    }
+}
+
+/// Work that could not continue because you were in another repository, kept until you are back in the one it belongs to.
+public struct ResumeQueue {
+    private var waiting: [String: [String]] = [:]
+    public init() {}
+
+    /// Remembers `id` for `scope` once, in the order it was first remembered.
+    public mutating func hold(_ id: String, in scope: String) {
+        if waiting[scope]?.contains(id) != true { waiting[scope, default: []].append(id) }
+    }
+
+    /// What was waiting for `scope`. It is handed over once.
+    public mutating func take(for scope: String) -> [String] { waiting.removeValue(forKey: scope) ?? [] }
+    public func holds(_ scope: String) -> Bool { waiting[scope]?.isEmpty == false }
+}
+
+/// When each repository is next worth asking GitHub about. A repository with checks still running is asked every `pending`
+/// seconds; every other one only every `idle` seconds, so many repositories do not multiply the requests while one pull request builds.
+public struct PollSchedule {
+    public var pending: TimeInterval, idle: TimeInterval
+    private var next: [String: Date] = [:]
+    public init(pending: TimeInterval = 60, idle: TimeInterval = 600) { self.pending = pending; self.idle = idle }
+
+    public func isDue(_ key: String, now: Date = .now) -> Bool { (next[key] ?? .distantPast) <= now }
+    public mutating func record(_ key: String, hasPending: Bool, now: Date = .now) { next[key] = now.addingTimeInterval(hasPending ? pending : idle) }
+    /// For a repository that could not be read: leave it alone for `seconds`.
+    public mutating func postpone(_ key: String, by seconds: TimeInterval, now: Date = .now) { next[key] = now.addingTimeInterval(seconds) }
+    public mutating func keep(only keys: Set<String>) { next = next.filter { keys.contains($0.key) } }
+}

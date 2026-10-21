@@ -62,6 +62,7 @@ final class SpecCenter {
     /// Jobs belong to the repository they started in: two repositories can have a spec with the same id, and a stage that finishes
     /// after you switched repository must not write into the new one.
     private var store = ScopedStore<Job>()
+    private var resume = ResumeQueue()
     private var scope: String { repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key } ?? "" }
     var jobs: [String: Job] { store.all(in: scope) }
     private func change(_ scope: String, _ id: String, _ f: (inout Job) -> Void) { store.modifyExisting(scope, id, f) }
@@ -89,7 +90,10 @@ final class SpecCenter {
 
     // MARK: Loading
 
-    func open(_ r: PRCenter.Repo) async { repo = r; Project.shared.current = r; selected = nil; await refresh() }
+    func open(_ r: PRCenter.Repo) async {
+        repo = r; Project.shared.current = r; selected = nil; await refresh()
+        for id in resume.take(for: scope) { await continueBuilding(id) }
+    }
 
     /// True when the last refresh is recent enough that another would only spend rate limit.
     var fresh: Bool { lastRefresh.map { Date().timeIntervalSince($0) < Self.cooldown } ?? false }
@@ -257,7 +261,7 @@ final class SpecCenter {
         do {
             let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
                                                          title: "\(task.id) \(task.title)", prompt: prompt, focus: focus) { [weak self] session in
-                Task { @MainActor in if self?.scope == s { await self?.taskTurnEnded(id, task.id, session) } }
+                Task { @MainActor in await self?.taskTurnEnded(id, task.id, session, scope: s) }
             }
             taskSessions["\(id)/\(task.id)"] = c.id
             let updated = Specs.updateTask(text, id: task.id, branch: branch)
@@ -266,7 +270,13 @@ final class SpecCenter {
         } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(s, id) { $0.error = message } }
     }
 
-    func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
+    /// A task's turn ended. In another repository than the one showing, the follow-up waits here and runs when you open that repository again.
+    func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController, scope s: String) async {
+        guard s == scope else { resume.hold(id, in: s); return }
+        await continueBuilding(id)
+    }
+
+    private func continueBuilding(_ id: String) async {
         await refresh()
         guard jobs[id]?.autonomy == .hands else { return }
         await implementReady(id)

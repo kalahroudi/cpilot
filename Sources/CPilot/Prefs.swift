@@ -29,6 +29,7 @@ final class Prefs {
     /// Minutes of silence before a tab's agent process is stopped. The session resumes with full context on the next message.
     /// Sessions as tabs across the top, or as a list down the left.
     var tabsOnSide: Bool { didSet { d.set(tabsOnSide, forKey: "tabsOnSide") } }
+    var followSession: Bool { didSet { d.set(followSession, forKey: "followSession") } }
     /// "files" (CPilot notes only) or "engine" (also connect a long-term memory engine over MCP).
     var memoryEngine: String { didSet { d.set(memoryEngine, forKey: "memoryEngine") } }
     var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
@@ -60,7 +61,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -76,6 +77,7 @@ final class Prefs {
         memoryEngine = d.string(forKey: "memoryEngine") ?? "files"
         memoryEngineURL = d.string(forKey: "memoryEngineURL") ?? MemoryEngine.defaultURL
         tabsOnSide = d.bool(forKey: "tabsOnSide")
+        followSession = d.bool(forKey: "followSession")
         cloneFolder = d.string(forKey: "cloneFolder") ?? NSHomeDirectory() + "/code"
         useWorktrees = d.bool(forKey: "useWorktrees")
         captureSendTo = d.string(forKey: "captureSendTo") ?? "active"

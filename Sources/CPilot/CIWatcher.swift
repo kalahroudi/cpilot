@@ -5,14 +5,14 @@ import CPilotKit
 
 /// Tells you when the checks on your own open pull requests finish.
 /// Cost: one `gh pr list` per repository (repositories are deduplicated, sessions in the same repository share it). It looks every minute
-/// while a check is running and every ten minutes otherwise; a repository `gh` cannot read is left alone for an hour.
+/// while a check is running in that repository and every ten minutes otherwise (a repository with nothing running is not asked again while another builds); a repository `gh` cannot read is left alone for an hour.
 @MainActor
 final class CIWatcher {
     static let shared = CIWatcher()
     private var task: Task<Void, Never>?
     private var watches: [String: CIWatch] = [:]
     private var topLevels: [String: String?] = [:]
-    private var retryAfter: [String: Date] = [:]
+    private var schedule = PollSchedule()
 
     func start() {
         task?.cancel(); task = nil
@@ -32,19 +32,21 @@ final class CIWatcher {
         for r in Project.shared.repos() {
             let environment = Workspace.shared.environment(r.environment)
             let key = await Exec.with(environment) { await repoKey(r) }
-            guard let key, done.insert(key).inserted, (retryAfter[key] ?? .distantPast) <= .now else { continue }
+            guard let key, done.insert(key).inserted, schedule.isDue(key) else { continue }
             guard let prs = try? await Exec.with(environment, { try await GitHub.mineWithChecks(in: r.dir) }) else {
-                retryAfter[key] = .now.addingTimeInterval(3600); continue
+                schedule.postpone(key, by: 3600); continue
             }
             var watch = watches[key] ?? CIWatch()
             let first = watches[key] == nil
             let events = watch.observe(prs)
             watches[key] = watch
+            schedule.record(key, hasPending: watch.hasPending)
             if watch.hasPending { running = true }
             if first { continue }
             for e in events { await announce(e, in: key) }
         }
         watches = watches.filter { done.contains($0.key) }
+        schedule.keep(only: done)
         return running
     }
 

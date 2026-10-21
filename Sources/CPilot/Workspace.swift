@@ -540,6 +540,7 @@ final class Workspace {
         if !tabs.contains(id), !Prefs.shared.tabsOnSide { tabs.append(id) }
         controller(id)?.loadIfNeeded()
         controller(id)?.showRecapIfAway()
+        if Prefs.shared.followSession, let m = sessions.first(where: { $0.id == id }) { Project.shared.follow(dir: m.cwd, environment: m.environment) }
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
     }
@@ -703,7 +704,7 @@ final class Workspace {
     }
 
     func session(forBranch branch: String, repo: String, environment: String?) -> SessionMeta? {
-        sessions.first { $0.branch == branch && $0.cwd == repo && $0.environment == environment }
+        sessions.first { $0.branch == branch && RepoRef(dir: repo, environment: environment).contains($0.cwd) && $0.environment == environment }
     }
 
     /// Opens (or creates) a session working on a branch that already exists, in its own worktree when git allows it.
