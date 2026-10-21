@@ -111,14 +111,15 @@ final class SpecCenter {
         coded = Set(stacks.flatMap(\.branches).filter { $0.commits > 0 }.map(\.name))
         unsubmitted = Set(stacks.flatMap(\.unsubmitted).map(\.name))
         // A task whose pull request merged is ticked off.
-        for d in docs { await tickMerged(d) }
+        let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
+        for d in docs { await tickMerged(d, landed: landed) }
         if selected == nil { selected = docs.last?.id }
     }
 
-    private func tickMerged(_ d: SpecDoc) async {
+    private func tickMerged(_ d: SpecDoc, landed: [PullRequest]) async {
         guard let r = repo, var text = d.tasksText else { return }
         var changed = false
-        for t in d.tasks where !t.done && (t.branch.map(merged.contains) ?? false) { text = Specs.updateTask(text, id: t.id, done: true); changed = true }
+        for t in d.tasks where !t.done && ((t.branch.map(merged.contains) ?? false) || landed.contains { Specs.isMergedWork(task: t, spec: d.id, head: $0.headRefName, title: $0.title) }) { text = Specs.updateTask(text, id: t.id, done: true); changed = true }
         guard changed else { return }
         try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(d.id)/tasks.md", text, in: r.dir, tracked: tracked) }
         if let i = docs.firstIndex(where: { $0.id == d.id }) { docs[i].tasksText = text }

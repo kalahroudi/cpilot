@@ -90,4 +90,12 @@ final class SpecTests: XCTestCase {
         XCTAssertEqual(docs[0].status(), .ready)
         XCTAssertEqual(docs[1].status(), .draft); XCTAssertEqual(docs[1].source, "Described by you"); XCTAssertEqual(constitution, "# Rules")
     }
+
+    func testMergedWorkMatchesByIdOrBranch() {
+        let t = SpecTask(id: "T001", title: "Pin favorites first in ChatListFilter.apply", done: false)
+        XCTAssertTrue(Specs.isMergedWork(task: t, spec: "001-pin", head: "spec-001-t001", title: "x"))
+        XCTAssertTrue(Specs.isMergedWork(task: t, spec: "001-pin", head: "pin-favs", title: "T001: Pin favorites"))
+        XCTAssertFalse(Specs.isMergedWork(task: t, spec: "001-pin", head: "spec-002-t001", title: "x"))
+        XCTAssertFalse(Specs.isMergedWork(task: t, spec: "001-pin", head: "other", title: "T0011 unrelated"))
+    }
 }
