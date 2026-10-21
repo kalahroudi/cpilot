@@ -212,6 +212,7 @@ final class SpecCenter {
         guard let r = repo else { return }
         loading = true; defer { loading = false; lastRefresh = Date() }
         let e = env
+        let before = Dictionary(docs.map { ($0.id, status($0)) }, uniquingKeysWith: { $1 })
         let (list, const) = await Exec.with(e) { await Specs.list(in: r.dir) }
         docs = list; constitution = const
         archived = await Exec.with(e) { await Specs.archivedIds(in: r.dir) }
@@ -224,7 +225,21 @@ final class SpecCenter {
         // A task whose pull request merged is ticked off.
         let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
         for d in docs { await tickMerged(d, landed: landed) }
+        await archiveFinished(before: before)
         if selected == nil { selected = docs.last?.id }
+    }
+
+    /// A spec that has just become done (its last task merged since the previous refresh) is archived by itself. Specs that were already done
+    /// when first read, or that you restored, stay where they are.
+    private func archiveFinished(before: [String: SpecDoc.Status]) async {
+        guard let r = repo else { return }
+        for d in docs where status(d) == .done && before[d.id].map({ $0 != .done }) == true && jobs[d.id]?.running != true {
+            guard (try? await Exec.with(env) { try await Specs.archive(d.id, in: r.dir) }) != nil else { continue }
+            jobs[d.id] = nil; dropRun(d.id)
+            docs.removeAll { $0.id == d.id }; archived = (archived + [d.id]).sorted()
+            if selected == d.id { selected = nil }
+            AppModel.shared.show("\(d.title) is done and was archived.", error: false)
+        }
     }
 
     private func tickMerged(_ d: SpecDoc, landed: [PullRequest]) async {
