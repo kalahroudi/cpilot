@@ -9,6 +9,8 @@ import CPilotKit
 final class PRCenter {
     static let shared = PRCenter()
     var repoDir: String?
+    /// The server the repository is on; nil is this Mac.
+    var env: EnvironmentConfig?
     var prs: [PullRequest] = []
     var selected: Int?
     var detail: PullRequest?
@@ -32,24 +34,36 @@ final class PRCenter {
         return MergeGate.evaluate(pr: pr, checks: checks, scan: scan, requireScan: Prefs.shared.securityScanOnPR)
     }
 
-    func repos() -> [String] {
-        var seen = Set<String>(), out: [String] = []
-        for m in Workspace.shared.sessions where !seen.contains(m.cwd) { seen.insert(m.cwd); out.append(m.cwd) }
+    struct Repo: Hashable { var dir: String; var environment: String?
+        @MainActor var name: String { URL(fileURLWithPath: dir).lastPathComponent + (environment.flatMap { Workspace.shared.environment($0)?.name }.map { " · \($0)" } ?? "") } }
+
+    func repos() -> [Repo] {
+        var seen = Set<Repo>(), out: [Repo] = []
+        for m in Workspace.shared.sessions { let r = Repo(dir: m.cwd, environment: m.environment); if seen.insert(r).inserted { out.append(r) } }
         return out
     }
 
-    func open(repo: String) async {
-        repoDir = repo; selected = nil; detail = nil; files = []; error = nil
+    func open(repo: String, environment: String? = nil) async {
+        repoDir = repo; env = Workspace.shared.environment(environment); selected = nil; detail = nil; files = []; error = nil
         await refreshList()
     }
+    func open(_ r: Repo) async { await open(repo: r.dir, environment: r.environment) }
 
     func refreshList() async {
+        await Exec.with(env) { await refreshListImpl() }
+    }
+
+    private func refreshListImpl() async {
         guard let dir = repoDir else { return }
         loading = true; defer { loading = false }
         do { prs = try await GitHub.list(in: dir, state: "open") } catch { self.error = UserError.message(for: error, action: "Load pull requests") }
     }
 
     func select(_ n: Int) async {
+        await Exec.with(env) { await selectImpl(n) }
+    }
+
+    private func selectImpl(_ n: Int) async {
         guard let dir = repoDir else { return }
         selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []
         do {
@@ -64,6 +78,10 @@ final class PRCenter {
     }
 
     func runScan() async {
+        await Exec.with(env) { await runScanImpl() }
+    }
+
+    private func runScanImpl() async {
         guard let dir = repoDir, let pr = detail else { return }
         scanning = true; scanLog = []; defer { scanning = false }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("cpilot-scan-\(pr.number)-\(UUID().uuidString.prefix(6))").path
@@ -79,12 +97,20 @@ final class PRCenter {
     }
 
     func review(_ action: ReviewAction, body: String = "") async {
+        await Exec.with(env) { await reviewImpl(action, body: body) }
+    }
+
+    private func reviewImpl(_ action: ReviewAction, body: String = "") async {
         guard let dir = repoDir, let n = selected else { return }
         do { try await GitHub.review(n, action: action, body: body, in: dir); AppModel.shared.show(action == .approve ? "Approved" : "Review sent"); await select(n) }
         catch { self.error = UserError.message(for: error, action: "Send the review") }
     }
 
     func mergeNow() async {
+        await Exec.with(env) { await mergeNowImpl() }
+    }
+
+    private func mergeNowImpl() async {
         guard let dir = repoDir, let n = selected else { return }
         do {
             try await GitHub.merge(n, method: method, auto: false, in: dir)
@@ -94,6 +120,10 @@ final class PRCenter {
     }
 
     func post(comment: String) async {
+        await Exec.with(env) { await postImpl(comment: comment) }
+    }
+
+    private func postImpl(comment: String) async {
         guard let dir = repoDir, let n = selected else { return }
         do { try await GitHub.comment(n, body: comment, in: dir); AppModel.shared.show("Comment posted") } catch { self.error = UserError.message(for: error, action: "Post the comment") }
     }
@@ -153,6 +183,10 @@ final class PRCenter {
 
     /// Starts a session on the pull request's branch, in its own worktree, asking the agent to review or to fix a finding.
     func startSession(prompt: String, title: String, readOnly: Bool) async {
+        await Exec.with(env) { await startSessionImpl(prompt: prompt, title: title, readOnly: readOnly) }
+    }
+
+    private func startSessionImpl(prompt: String, title: String, readOnly: Bool) async {
         guard let dir = repoDir, let pr = detail else { return }
         let branch = "review-\(pr.number)-\(Int(Date().timeIntervalSince1970) % 100000)"
         let path = AppPaths().root.appendingPathComponent("worktrees/pr-\(pr.number)-\(branch)").path
@@ -181,7 +215,7 @@ struct PullRequestsView: View {
             PaneHeader(title: "Pull requests", subtitle: center.repoDir.map { URL(fileURLWithPath: $0).lastPathComponent }) {
                 HStack(spacing: 8) {
                     Menu {
-                        ForEach(center.repos(), id: \.self) { r in Button(URL(fileURLWithPath: r).lastPathComponent) { Task { await center.open(repo: r) } } }
+                        ForEach(center.repos(), id: \.self) { r in Button(r.name) { Task { await center.open(r) } } }
                     } label: { Label("Repository", systemImage: "folder") }.menuStyle(.borderlessButton).fixedSize()
                     Button { Task { await center.refreshList() } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.plain).help("Refresh").accessibilityLabel("Refresh")
@@ -191,7 +225,7 @@ struct PullRequestsView: View {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
                     Text("Repositories come from your sessions. Start a session in a project first.").font(.system(size: 12.5)).foregroundStyle(.secondary)
-                    if let first = center.repos().first { Button("Open \(URL(fileURLWithPath: first).lastPathComponent)") { Task { await center.open(repo: first) } }.buttonStyle(Pill(kind: .primary)) }
+                    if let first = center.repos().first { Button("Open \(first.name)") { Task { await center.open(first) } }.buttonStyle(Pill(kind: .primary)) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HSplitView {
@@ -202,11 +236,11 @@ struct PullRequestsView: View {
         }
         .background(Theme.pane)
         .onAppear {
-            if center.repoDir == nil, let first = center.repos().first { Task { await center.open(repo: first) } }
+            if center.repoDir == nil, let first = center.repos().first { Task { await center.open(first) } }
         }
         .sheet(isPresented: Bindable(center).showCreate) {
             if let dir = center.repoDir {
-                CreatePRSheet(dir: dir) { n in
+                CreatePRSheet(dir: dir, env: center.env) { n in
                     Task { await center.refreshList(); await center.select(n) }
                 }
             }

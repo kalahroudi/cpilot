@@ -78,7 +78,7 @@ struct SummarizeSheet: View {
         let digest = ContextDigest.build(items: session.items, budget: 12000)
         guard !digest.isEmpty else { working = false; error = "There is nothing to summarize yet."; return }
         let prompt = "From this conversation summary, write a short note for future sessions in this project. Reply with a title on the first line, a blank line, then at most 8 bullet points of durable facts (how to build or test, decisions and reasons, pitfalls). No preamble.\n\n\(digest)"
-        if let out = await ClaudeOneShot.run(prompt, in: session.meta.workingDirectory, timeout: 120) {
+        if let out = await ClaudeOneShot.run(prompt, in: session.env == nil ? session.meta.workingDirectory : NSHomeDirectory(), timeout: 120) {
             let parts = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
             title = (parts.first ?? "").replacingOccurrences(of: "# ", with: "")
             text = parts.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

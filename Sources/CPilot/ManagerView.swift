@@ -5,18 +5,18 @@ import CPilotKit
 
 /// Panes of the Manager window. Named `Pane`, not `Section`: SwiftUI already has a `Section`.
 enum Pane: String, CaseIterable, Identifiable {
-    case sessions, pulls, memory, skills, repo, settings, help
+    case sessions, pulls, memory, skills, repo, remote, settings, help
     var id: String { rawValue }
     var title: String {
         switch self {
         case .sessions: "Sessions"; case .pulls: "Pull requests"; case .memory: "Memory"; case .skills: "Skills"
-        case .repo: "Repo setup"; case .settings: "Settings"; case .help: "Help"
+        case .repo: "Repo setup"; case .remote: "Environments"; case .settings: "Settings"; case .help: "Help"
         }
     }
     var symbol: String {
         switch self {
         case .sessions: "bubble.left.and.text.bubble.right"; case .pulls: "arrow.triangle.pull"; case .memory: "brain"; case .skills: "sparkles"
-        case .repo: "shippingbox"; case .settings: "gearshape"; case .help: "questionmark.circle"
+        case .repo: "shippingbox"; case .remote: "server.rack"; case .settings: "gearshape"; case .help: "questionmark.circle"
         }
     }
 }
@@ -65,6 +65,7 @@ struct ManagerView: View {
             case .memory: MemoryView()
             case .skills: SkillsView()
             case .repo: RepoSetupView()
+            case .remote: EnvironmentsView()
             case .settings: SettingsPane(initialTab: agentsTab ? .agents : .general)
             case .help: HelpPane()
             }
@@ -78,7 +79,7 @@ struct Rail: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach([Pane.sessions, .pulls, .memory, .skills, .repo]) { item($0) }
+            ForEach([Pane.sessions, .pulls, .memory, .skills, .repo, .remote]) { item($0) }
             Spacer()
             ForEach([Pane.settings, .help]) { item($0) }
             Text(AppMemory.footprint.replacingOccurrences(of: " MB", with: "")).font(.system(size: 9)).foregroundStyle(.secondary).help("CPilot memory use, in MB")
@@ -177,7 +178,7 @@ struct SideRow: View {
                 case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
                 case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)
                 }
-                Text((meta.parentId != nil ? "↳ " : "") + meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
+                Text((meta.parentId != nil ? "↳ " : "") + (ws.environment(meta.environment).map { "\($0.name) · " } ?? "") + meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
@@ -226,7 +227,7 @@ struct TabButton: View {
     var body: some View {
         HStack(spacing: 7) {
             dot
-            Text((session.meta.parentId != nil ? "↳ " : "") + session.meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
+            Text((session.meta.parentId != nil ? "↳ " : "") + (session.env.map { "\($0.name) · " } ?? "") + session.meta.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1)
             Button { ws.closeTab(session.id) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).frame(width: 14, height: 14) }
                 .buttonStyle(.plain).foregroundStyle(.secondary).opacity(selected || hover ? 1 : 0).accessibilityLabel("Close tab")
         }

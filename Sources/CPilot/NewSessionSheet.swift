@@ -22,10 +22,13 @@ struct NewSessionSheet: View {
     @State private var cloneQuery = ""
     @State private var repos: [String] = []
     @State private var showClone = false
+    @State private var envId: String? = UserDefaults.standard.string(forKey: "lastEnv").flatMap { Workspace.shared.environment($0) != nil ? $0 : nil }
+    @State private var picking = false
+    private var env: EnvironmentConfig? { ws.environment(envId) }
 
     private var recents: [String] {
         var seen = Set<String>(), out: [String] = []
-        for m in ws.sessions where !seen.contains(m.cwd) { seen.insert(m.cwd); out.append(m.cwd) }
+        for m in ws.sessions where m.environment == envId && !seen.contains(m.cwd) { seen.insert(m.cwd); out.append(m.cwd) }
         return Array(out.prefix(4))
     }
 
@@ -33,13 +36,26 @@ struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("New session").font(.system(size: 17, weight: .semibold))
 
+            if !ws.environments.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionLabel("Environment")
+                    Segmented(options: [(String?.none, "This Mac")] + ws.environments.map { (String?.some($0.id), $0.name) }, selection: $envId)
+                        .onChange(of: envId) { _, _ in
+                            folder = env.map { ($0.folders.first ?? $0.remoteHome).replacingOccurrences(of: "~", with: $0.remoteHome) } ?? (UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory())
+                            worktree = env == nil ? Prefs.shared.useWorktrees : worktree
+                            if env != nil, access == .fullAccess { access = .askFirst }
+                            backend = .claude
+                        }
+                    if env != nil { Text("The agent, files and git run on \(env!.name). Approvals and captures stay on this Mac.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                }
+            }
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel("Working directory")
                 HStack {
-                    Text(folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 12.5, design: .monospaced)).lineLimit(1).truncationMode(.head)
+                    Text(env == nil ? folder.replacingOccurrences(of: NSHomeDirectory(), with: "~") : folder).font(.system(size: 12.5, design: .monospaced)).lineLimit(1).truncationMode(.head)
                     Spacer()
-                    Button("Choose…") { choose() }.buttonStyle(Pill(kind: .plain))
-                    Button("Clone from GitHub…") { showClone = true; Task { repos = await GitHub.repos() } }.buttonStyle(Pill(kind: .plain))
+                    Button("Choose…") { if env != nil { picking = true } else { choose() } }.buttonStyle(Pill(kind: .plain))
+                    if env == nil { Button("Clone from GitHub…") { showClone = true; Task { repos = await GitHub.repos() } }.buttonStyle(Pill(kind: .plain)) }
                 }.padding(10).background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
                 if !recents.isEmpty {
                     FlowLayout(spacing: 6) {
@@ -80,7 +96,7 @@ struct NewSessionSheet: View {
                 }
                 HStack {
                     Text("Access").font(.system(size: 12.5))
-                    Segmented(options: AccessLevel.allCases.map { ($0, $0.label) }, selection: $access)
+                    Segmented(options: AccessLevel.allCases.filter { env == nil || $0 != .fullAccess }.map { ($0, $0.label) }, selection: $access)
                 }
                 Text(access.detail).font(.system(size: 11.5)).foregroundStyle(access == .fullAccess ? Theme.danger : .secondary)
             }
@@ -95,7 +111,8 @@ struct NewSessionSheet: View {
             }
         }
         .padding(20).frame(width: 560)
-        .task(id: folder) { info = await Git.info(folder); if info == nil { worktree = false } }
+        .task(id: "\(envId ?? "")|\(folder)") { info = await Exec.with(env) { await Git.info(folder) }; if info == nil { worktree = false } }
+        .sheet(isPresented: $picking) { if let e = env { RemoteFolderPicker(env: e, path: folder) { folder = $0 } } }
         .sheet(isPresented: $showClone) { cloneSheet }
     }
 
@@ -134,7 +151,8 @@ struct NewSessionSheet: View {
 
     private func start() {
         busy = true; error = nil
-        UserDefaults.standard.set(folder, forKey: "lastFolder")
+        if env == nil { UserDefaults.standard.set(folder, forKey: "lastFolder") }
+        UserDefaults.standard.set(envId, forKey: "lastEnv")
         if access == .fullAccess, ws.policy.requireTouchIDForFullAccess {
             Biometrics.confirm("Start a session that runs without asking") { ok in if ok { create() } else { busy = false } }
         } else { create() }
@@ -144,7 +162,7 @@ struct NewSessionSheet: View {
         let name = branch.trimmingCharacters(in: .whitespaces)
         let n = Workspace.NewSession(folder: folder, backend: backend, model: model.isEmpty ? nil : model, access: access,
                                      branch: info != nil && newBranch ? (name.isEmpty ? Git.slugify(first.isEmpty ? "session" : first) : name) : nil,
-                                     useWorktree: worktree && newBranch, firstMessage: first)
+                                     useWorktree: worktree && newBranch, firstMessage: first, environment: envId)
         Task {
             do { try await ws.create(n); dismiss(); AppDelegate.shared.showManager(pane: .sessions) }
             catch { self.error = UserError.message(for: error, action: "Start the session"); busy = false }

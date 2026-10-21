@@ -59,6 +59,7 @@ struct ChatHeader: View {
                 Text(session.meta.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 6) {
                     Badge(text: backendName, kind: .accent)
+                    if let e = session.env { Badge(text: e.name, kind: .accent).help("Running on \(e.target)") }
                     Badge(text: session.meta.project, kind: .neutral)
                     if let b = session.meta.branch { Badge(text: b, kind: .neutral) }
                     if session.cost > 0 { Text(String(format: "$%.2f", session.cost)).font(.system(size: 11)).foregroundStyle(.secondary) }
@@ -130,6 +131,7 @@ struct ChatHeader: View {
 /// Turning on Full access needs a fingerprint or password, so an agent can never grant itself more.
 @MainActor enum AccessGate {
     static func set(_ level: AccessLevel, for session: SessionController) {
+        if level == .fullAccess, session.env != nil { session.addNotice("Full access is not available on servers. Agents there always ask first."); return }
         guard level == .fullAccess, Workspace.shared.policy.requireTouchIDForFullAccess else { session.setAccess(level); return }
         Biometrics.confirm("Allow \"\(session.meta.title)\" to run without asking") { ok in if ok { session.setAccess(.fullAccess) } }
     }

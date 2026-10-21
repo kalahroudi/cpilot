@@ -38,7 +38,7 @@ enum SnapshotMode {
         func pop(dark: Bool = false) -> Shot {
             Shot(name: "popover\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 800, height: 600)) { AnyView(PopoverShot()) }
         }
-        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.pulls), manager(.pulls, dark: true), manager(.repo),
+        return [pop(), pop(dark: true), manager(.sessions), manager(.sessions, dark: true), side(), manager(.pulls), manager(.pulls, dark: true), manager(.repo), manager(.remote),
                 manager(.memory), manager(.settings), manager(.settings, agents: true), manager(.help)]
     }
 
@@ -98,9 +98,15 @@ struct PopoverShot: View {
         var d = SessionMeta(title: "release-notes", cwd: "/Users/demo/code/shop"); d.updatedAt = .now.addingTimeInterval(-86400)
         var e = SessionMeta(title: "Add regression test", cwd: "/Users/demo/code/shop", branch: "task-add-regression-test"); e.parentId = a.id; e.updatedAt = .now.addingTimeInterval(-60)
         a.recap = "**Latest ask:** The login test fails about one run in five on CI. Find out why and fix it.\n\n**So far:** found the race between the click and the redirect, changed the test to wait for the session response.\n\n**Waiting on you:** approval to edit src/api/session.ts."
-        ws.sessions = [a, b, c, d, e]
-        ws.tabs = [a.id, e.id, b.id, c.id, d.id]; ws.selected = a.id
-        ws.demoControllers([a, b, c, d, e])
+        let build = EnvironmentConfig(id: "build", name: "build-server", routes: ["build.internal", "100.64.2.7"], folders: ["~/projects"], persistent: true, home: "/home/dev")
+        let lab = EnvironmentConfig(id: "lab", name: "home-lab", routes: ["lab.local"], folders: ["~/work"], home: "/home/me")
+        ws.environments = [build, lab]
+        EnvironmentCenter.shared.status = ["build": .ok(EnvironmentReport(connected: true, error: nil, home: "/home/dev", tools: ["claude": "/home/dev/.local/bin/claude", "git": "/usr/bin/git"], gitHubSignedIn: true)), "lab": .failed("Could not reach the server. Check the address and that it is online.")]
+        var f = SessionMeta(title: "migrate-db-schema", cwd: "/home/dev/projects/shop", branch: "migrate-schema"); f.environment = "build"; f.updatedAt = .now.addingTimeInterval(-120)
+        ws.sessions = [a, b, c, d, e, f]
+        ws.tabs = [a.id, e.id, f.id, b.id, c.id, d.id]; ws.selected = a.id
+        ws.demoControllers([a, b, c, d, e, f])
+        ws.controller(f.id)?.state = .reconnecting
         if let s = ws.controller(a.id) {
             s.loaded = true
             s.items = [

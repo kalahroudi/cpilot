@@ -108,7 +108,7 @@ final class SessionController: Identifiable {
         ws.save(meta)
         guard Prefs.shared.recapWithClaude, Shell.find("claude") != nil else { return }
         recapBusy = true
-        let digest = ContextDigest.build(items: items, budget: 8000), dir = meta.workingDirectory, rows = items.count
+        let digest = ContextDigest.build(items: items, budget: 8000), dir = env == nil ? meta.workingDirectory : NSHomeDirectory(), rows = items.count
         Task { @MainActor in
             let out = await ClaudeOneShot.run(Recap.prompt(digest: digest), in: dir)
             recapBusy = false
@@ -298,7 +298,7 @@ final class SessionController: Identifiable {
         guard let id = meta.backend.acpAgent, let cfg = ws.acpAgents.first(where: { $0.id == id }) else {
             throw ShellError.failed(command: "agent", status: 1, stderr: "This agent is no longer configured. Add it again in Settings → Agents.")
         }
-        let client = AcpClient(config: cfg, cwd: URL(fileURLWithPath: meta.workingDirectory)) { [weak self] ev in
+        let client = AcpClient(config: cfg, cwd: URL(fileURLWithPath: meta.workingDirectory), environment: env) { [weak self] ev in
             Task { @MainActor in self?.handle(acp: ev) }
         }
         if Prefs.shared.memoryEngine == "engine" { client.mcpServers = MemoryEngine.acpServers(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }

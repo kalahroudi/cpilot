@@ -28,6 +28,7 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
 - **Access you control.** Read only, Ask first, Edit files or Full access, with per-project rules. Every action that needs approval shows a card: allow once, for the session, or always in this project. Full access needs Touch ID. Every decision is logged.
 - **Nothing lost on a crash.** Messages are written to disk as they complete, streaming replies are checkpointed, drafts are saved as you type, and sessions resume by id with the agent's own context.
 - **Capture.** Press Control-Option-Command-C to grab part of the screen, or add selected text, the front browser page or the clipboard. It lands in the active session's composer.
+- **Servers.** Add a machine over SSH and run sessions there, with its files, git and pull requests. Nothing to install on the server except the agents. Turn on "keep sessions running" and a small helper (one Node.js file, no network port) keeps agents working when your connection drops, then catches you up when you reconnect. Several addresses per server are tried in order. Approvals and captures stay on your Mac, and Full access is not offered on servers.
 - **Pull requests, end to end.** Create, read the diff, review with an agent, run a security scan, and merge automatically when your rules pass. Everything goes through your own GitHub login.
 - **Repo setup in one go.** README, license, GitHub Pages, a protected main branch and a scan on every pull request.
 - **Memory that recalls.** Plain Markdown notes every session starts with, plus a local index (full-text and on-device meaning search, one SQLite file) of your finished messages. A new session starts with the best matches from earlier work. Fork a session or hand it to another agent with a summary, save what a session learned as a note in one click, and see exactly which notes a session loaded. An optional long-term memory engine can also connect over MCP.
@@ -37,12 +38,12 @@ Or by hand: download the latest disk image from [Releases](https://github.com/ka
 
 <p align="center">
   <img src="docs/assets/manager-pulls.png" alt="Pull requests" width="49%">
-  <img src="docs/assets/manager-sessions-side.png" alt="Sessions as a side list" width="49%">
+  <img src="docs/assets/manager-remote.png" alt="Environments" width="49%">
 </p>
 
 ## Requirements
 
-macOS 15 or later on Apple silicon. First launch checks for Git and the Claude command line and offers to install the optional GitHub command line and Node.js.
+macOS 15 or later on Apple silicon. First launch checks for Git and the Claude command line and offers to install the optional GitHub command line and Node.js. For servers: SSH access with a key, and the agents installed there (Node.js 18 or newer only if you want sessions to keep running while you are away).
 
 ## Build from source
 

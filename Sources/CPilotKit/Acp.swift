@@ -123,6 +123,7 @@ public enum AcpError: Error, LocalizedError {
 public final class AcpClient: @unchecked Sendable {
     private let config: AcpAgentConfig
     private let cwd: URL
+    private let environment: EnvironmentConfig?
     private let onEvent: @Sendable (AcpEvent) -> Void
     private let process = Process()
     private let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
@@ -137,18 +138,25 @@ public final class AcpClient: @unchecked Sendable {
     /// MCP servers handed to every session this client opens (for example the memory engine).
     public var mcpServers: [[String: Any]] = []
 
-    public init(config: AcpAgentConfig, cwd: URL, onEvent: @escaping @Sendable (AcpEvent) -> Void) {
-        self.config = config; self.cwd = cwd; self.onEvent = onEvent
+    public init(config: AcpAgentConfig, cwd: URL, environment: EnvironmentConfig? = nil, onEvent: @escaping @Sendable (AcpEvent) -> Void) {
+        self.config = config; self.cwd = cwd; self.environment = environment; self.onEvent = onEvent
     }
 
     public var isRunning: Bool { process.isRunning }
 
     public func start() async throws {
-        guard let path = Shell.find(config.command) else { throw ShellError.toolNotFound(config.command) }
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = config.args
-        process.currentDirectoryURL = cwd
-        process.environment = Shell.environment.merging(config.env) { _, n in n }
+        if let e = environment {
+            // The agent runs on the server and reads its own files there, so CPilot offers no file access of its own.
+            process.executableURL = URL(fileURLWithPath: SSH.executable)
+            process.arguments = SSH.baseArgs(e) + [e.target, SSH.remoteCommand(config.command, config.args, cwd: cwd.path, env: config.env)]
+            process.environment = Shell.environment
+        } else {
+            guard let path = Shell.find(config.command) else { throw ShellError.toolNotFound(config.command) }
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = config.args
+            process.currentDirectoryURL = cwd
+            process.environment = Shell.environment.merging(config.env) { _, n in n }
+        }
         process.standardInput = stdin; process.standardOutput = stdout; process.standardError = stderr
         stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
@@ -164,7 +172,7 @@ public final class AcpClient: @unchecked Sendable {
         try process.run()
         let res = try await request("initialize", [
             "protocolVersion": 1,
-            "clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true], "terminal": false],
+            "clientCapabilities": ["fs": ["readTextFile": environment == nil, "writeTextFile": environment == nil], "terminal": false],
             "clientInfo": ["name": "CPilot", "version": BuildInfo.current.version],
         ])
         canLoadSession = ((res["agentCapabilities"] as? [String: Any])?["loadSession"] as? Bool) ?? false

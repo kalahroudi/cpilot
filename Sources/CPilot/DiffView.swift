@@ -66,6 +66,7 @@ struct DiffFileView: View {
 /// Create a pull request from a folder's current branch: push it, draft the text with Claude if you like, open the PR.
 struct CreatePRSheet: View {
     let dir: String
+    var env: EnvironmentConfig?
     var onCreated: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
@@ -100,13 +101,19 @@ struct CreatePRSheet: View {
         }
         .padding(20).frame(width: 520)
         .task {
-            branch = await Git.info(dir)?.branch ?? ""
-            base = await Git.defaultBranch(dir)
-            title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            await Exec.with(env) {
+                branch = await Git.info(dir)?.branch ?? ""
+                base = await Git.defaultBranch(dir)
+                title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
     }
 
     private func writeWithClaude() async {
+        await Exec.with(env) { await writeWithClaudeImpl() }
+    }
+
+    private func writeWithClaudeImpl() async {
         drafting = true; defer { drafting = false }
         let diff = String((await Git.diff(dir, base: "origin/\(base)")).prefix(30000))
         let prompt = "Write a pull request title (one line, under 70 characters) and a short description for this diff. Reply with the title on the first line, then a blank line, then the description in plain Markdown. No preamble.\n\n\(diff)"
@@ -117,6 +124,10 @@ struct CreatePRSheet: View {
     }
 
     private func create() async {
+        await Exec.with(env) { await createImpl() }
+    }
+
+    private func createImpl() async {
         busy = true; error = nil; defer { busy = false }
         do {
             try await Git.push(dir, branch: branch)
@@ -144,19 +155,19 @@ struct SessionPRBar: View {
             }
             Spacer()
             if let pr {
-                Button("Review & merge") { Task { await PRCenter.shared.open(repo: session.meta.cwd); await PRCenter.shared.select(pr.number); AppDelegate.shared.showManager(pane: .pulls) } }.buttonStyle(Pill(kind: .primary))
+                Button("Review & merge") { Task { await PRCenter.shared.open(repo: session.meta.cwd, environment: session.meta.environment); await PRCenter.shared.select(pr.number); AppDelegate.shared.showManager(pane: .pulls) } }.buttonStyle(Pill(kind: .primary))
             } else {
                 Button("Create PR") { showCreate = true }.buttonStyle(Pill(kind: .plain))
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 7).background(Theme.sidebar.opacity(0.6))
         .task(id: session.meta.branch) { await load() }
-        .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory) { _ in Task { await load() } } }
+        .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory, env: session.env) { _ in Task { await load() } } }
     }
 
     private func load() async {
         guard let b = session.meta.branch else { return }
-        let out = try? await Shell.check("gh", ["pr", "list", "--head", b, "--state", "open", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd))
+        let out = try? await Exec.with(session.env) { try await Shell.check("gh", ["pr", "list", "--head", b, "--state", "open", "--json", PullRequest.listFields], cwd: URL(fileURLWithPath: session.meta.cwd)) }
         pr = out.flatMap { try? JSONDecoder().decode([PullRequest].self, from: Data($0.utf8)).first }
     }
 }

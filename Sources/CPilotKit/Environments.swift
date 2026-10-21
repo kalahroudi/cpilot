@@ -95,6 +95,9 @@ public struct EnvironmentReport: Equatable, Sendable {
     public var home: String?
     public var tools: [String: String] = [:]
     public var gitHubSignedIn = false
+    public init(connected: Bool = false, error: String? = nil, home: String? = nil, tools: [String: String] = [:], gitHubSignedIn: Bool = false) {
+        self.connected = connected; self.error = error; self.home = home; self.tools = tools; self.gitHubSignedIn = gitHubSignedIn
+    }
     public func has(_ t: String) -> Bool { tools[t] != nil }
 }
 
