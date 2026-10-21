@@ -58,6 +58,10 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var recapHeadline: String?
     /// The session this task was spun off from.
     public var parentId: String?
+    /// The environment this session runs in; nil is this Mac.
+    public var environment: String?
+    /// How much of a server-held agent's output CPilot has already seen.
+    public var remoteLines: Int?
     public var createdAt: Date
     public var updatedAt: Date
 

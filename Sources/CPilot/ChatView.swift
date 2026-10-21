@@ -102,6 +102,7 @@ struct ChatHeader: View {
         switch session.state {
         case .running: HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Working").font(.system(size: 12)).foregroundStyle(.secondary) }
         case .waiting: Badge(text: "Needs approval", kind: .warn)
+        case .reconnecting: Badge(text: "Reconnecting…", kind: .warn)
         case .failed: Badge(text: "Stopped", kind: .danger)
         case .asleep: Text("Asleep · resumes on your next message").font(.system(size: 11.5)).foregroundStyle(.secondary)
         case .idle: EmptyView()

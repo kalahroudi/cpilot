@@ -9,7 +9,7 @@ import CPilotKit
 /// A tab that is not selected keeps no rows in memory, and an idle tab stops its process; both come back on demand.
 @MainActor @Observable
 final class SessionController: Identifiable {
-    enum RunState: Equatable { case asleep, idle, running, waiting, failed(String) }
+    enum RunState: Equatable { case asleep, idle, running, waiting, reconnecting, failed(String) }
     enum GrantScope { case once, session, project }
     struct Pending: Identifiable {
         enum Source { case claude(PermissionRequest), acp(AcpPermission) }
@@ -42,7 +42,9 @@ final class SessionController: Identifiable {
 
     init(meta: SessionMeta, workspace: Workspace) { self.meta = meta; self.id = meta.id; self.ws = workspace }
 
-    var isBusy: Bool { state == .running || state == .waiting }
+    var isBusy: Bool { state == .running || state == .waiting || state == .reconnecting }
+    /// The server this session runs on, or nil for this Mac.
+    var env: EnvironmentConfig? { ws.environment(meta.environment) }
     var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
 
     // MARK: Loading
@@ -84,7 +86,8 @@ final class SessionController: Identifiable {
     /// Writes everything that is only in memory: the draft and the session record.
     func flush() {
         let text = draft.isEmpty ? nil : draft
-        if meta.draft != text { meta.draft = text; ws.save(meta) }
+        let lines = runner?.linesReceived
+        if meta.draft != text || (lines != nil && meta.remoteLines != lines) { meta.draft = text; if let lines { meta.remoteLines = lines }; ws.save(meta) }
     }
 
     /// Frees the rows of a tab nobody is looking at.
@@ -145,7 +148,7 @@ final class SessionController: Identifiable {
                 items.append(note); ws.store.append(note, to: id)
             }
             switch meta.backend.kind {
-            case .claude: sendClaude(body, composed.images)
+            case .claude: await sendClaude(body, composed.images)
             case .acp: sendAcp(body, composed.images)
             }
         }
@@ -161,7 +164,7 @@ final class SessionController: Identifiable {
 
     // MARK: Claude
 
-    private func ensureRunner() throws -> ClaudeRunner {
+    private func ensureRunner(attachFrom: Int? = nil) async throws -> ClaudeRunner {
         if let r = runner, r.isRunning { return r }
         var c = ClaudeRunner.Config(cwd: meta.workingDirectory)
         c.resumeId = meta.remoteId
@@ -169,7 +172,16 @@ final class SessionController: Identifiable {
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
         c.appendSystemPrompt = ws.memory.context(forProject: meta.cwd)
-        if Prefs.shared.memoryEngine == "engine" { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
+        if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
+        if let env {
+            // On a server. A server-held agent that is still running is joined, not started again.
+            if env.persistent {
+                var attach = attachFrom != nil, from = attachFrom ?? 0
+                if attachFrom == nil, await Exec.with(env, { await RemoteHost.status(id: meta.id) })?.running == true { attach = true; from = meta.remoteLines ?? 0 }
+                if !attach { meta.remoteLines = 0 }
+                c.transport = .daemon(env, key: meta.id, attachOnly: attach, fromLine: from)
+            } else { c.transport = .ssh(env) }
+        }
         let r = ClaudeRunner(config: c, onLine: { [weak self] line in
             Task { @MainActor in self?.handle(line: line) }
         }, onExit: { [weak self] status in
@@ -177,14 +189,14 @@ final class SessionController: Identifiable {
         })
         parser = ClaudeStreamParser()
         stoppedOnPurpose = false
-        try r.start()
+        try await r.start()
         runner = r
         return r
     }
 
-    private func sendClaude(_ text: String, _ images: [(mediaType: String, data: Data)]) {
+    private func sendClaude(_ text: String, _ images: [(mediaType: String, data: Data)]) async {
         do {
-            let r = try ensureRunner()
+            let r = try await ensureRunner()
             r.send(ClaudeWire.userMessage(text: takeHandoff() + text, images: images))
         } catch {
             fail(UserError.message(for: error, action: "Start Claude"))
@@ -203,6 +215,7 @@ final class SessionController: Identifiable {
                 handlePermission(PermissionRequestEnvelope(source: .claude(req), request: req))
             case .turnEnded(let isError, let text, let cost):
                 if let c = cost { self.cost += c }
+                if let n = runner?.linesReceived { meta.remoteLines = n }
                 if isError, let t = text, !t.isEmpty { addNotice(t, error: true) }
                 finishTurn()
             }
@@ -211,12 +224,48 @@ final class SessionController: Identifiable {
 
     private func runnerExited(_ status: Int32) {
         let tail = runner?.stderrTail.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let seen = runner?.linesReceived ?? meta.remoteLines ?? 0
         runner = nil
         if stoppedOnPurpose { state = .asleep; return }
+        // A server-held agent outlives the connection: find out whether it is still there and join it again.
+        if let env, env.persistent { Task { await reconnect(env, seen: seen) }; return }
         if state == .running || state == .waiting {
-            fail(tail.isEmpty ? "Claude stopped unexpectedly (status \(status))." : tail)
+            let hint = env != nil ? " The session is saved; send a message to resume it." : ""
+            fail((tail.isEmpty ? "Claude stopped unexpectedly (status \(status))." : tail) + hint)
         } else { state = .asleep }
         pending.removeAll()
+    }
+
+    private var announcedReconnect = false
+
+    /// Joins the agent on the server again, with backoff, and catches up on anything it did while we were away.
+    private func reconnect(_ env: EnvironmentConfig, seen: Int) async {
+        meta.remoteLines = seen
+        var delay = 2.0
+        for _ in 0..<14 {
+            if stoppedOnPurpose { return }
+            let st = await Exec.with(env) { await RemoteHost.status(id: meta.id) }
+            if let st {
+                if st.running || (st.lines ?? 0) > (meta.remoteLines ?? 0) {
+                    if state != .reconnecting, st.running { state = .reconnecting }
+                    if !announcedReconnect, st.running { announcedReconnect = true; addNotice("The connection dropped. Reconnecting to the agent on \(env.name)…") }
+                    do {
+                        _ = try await ensureRunner(attachFrom: meta.remoteLines ?? 0)
+                        announcedReconnect = false
+                        if st.running { state = pending.isEmpty ? .running : .waiting }
+                        return
+                    } catch { /* try again below */ }
+                } else {
+                    // Finished while we were away and everything was already replayed.
+                    pending.removeAll()
+                    if st.exit == nil || st.exit == 0, st.error == nil { state = .asleep } else { fail(st.error ?? "The agent stopped on \(env.name) (exit \(st.exit ?? -1)).") }
+                    return
+                }
+            }
+            state = .reconnecting
+            try? await Task.sleep(for: .seconds(delay)); delay = min(delay * 2, 60)
+        }
+        fail("Lost the connection to \(env.name). Your session is safe; send a message to reconnect.")
     }
 
     /// The summary of earlier work, used once, before the first message of a session that continues something.
@@ -379,7 +428,11 @@ final class SessionController: Identifiable {
     /// Hands the session to Terminal: the same session id, so the conversation continues there with full context.
     func openInTerminal() {
         guard meta.backend.kind == .claude, let rid = meta.remoteId else { return }
-        let cmd = "cd \(shellQuote(meta.workingDirectory)) && claude --resume \(rid)"
+        var cmd = "cd \(shellQuote(meta.workingDirectory)) && claude --resume \(rid)"
+        if let e = env {
+            cmd = "ssh -t " + (e.port.map { "-p \($0) " } ?? "") + e.target + " " + shellQuote("cd \(shellQuote(meta.workingDirectory)) && claude --resume \(rid)")
+            if e.persistent { Task { await Exec.with(e) { await RemoteHost.stop(id: meta.id) } } }   // two Claudes on one session would clash
+        }
         sleep()
         let script = "tell application \"Terminal\" to do script \"\(cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"\ntell application \"Terminal\" to activate"
         Task { _ = try? await Shell.run("/usr/bin/osascript", ["-e", script]) }
@@ -387,10 +440,12 @@ final class SessionController: Identifiable {
 
     private func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+    /// Closing a tab stops an idle agent. An agent that is busy on a server is left running, so the work is not lost.
     func close() {
         flush()
         stoppedOnPurpose = true
-        runner?.stop(); acp?.stop(); sleepTask?.cancel()
+        if isBusy, env?.persistent == true { runner?.detach() } else { runner?.stop() }
+        acp?.stop(); sleepTask?.cancel()
     }
 }
 
@@ -405,6 +460,7 @@ final class Workspace {
     let audit = AuditLog()
     var policy = AccessPolicy.load()
     var acpAgents = AcpAgentConfig.load()
+    var environments = EnvironmentConfig.load()
     var sessions: [SessionMeta] = []
     var tabs: [String] = []
     var selected: String?
@@ -493,7 +549,7 @@ final class Workspace {
 
     func delete(_ id: String) {
         closeTab(id)
-        if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree { Task { await Git.removeWorktree(repo: m.cwd, path: wt) } }
+        if let m = sessions.first(where: { $0.id == id }), let wt = m.worktree { let e = environment(m.environment); Task { await Exec.with(e) { await Git.removeWorktree(repo: m.cwd, path: wt) } } }
         store.delete(id); index.remove(ref: id)
         sessions.removeAll { $0.id == id }
     }
@@ -521,21 +577,26 @@ final class Workspace {
         var firstMessage = ""
         var parentId: String?
         var handoff: String?
+        var environment: String?
     }
 
     @discardableResult
     func create(_ n: NewSession) async throws -> SessionController {
         var meta = SessionMeta(title: "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
-        meta.parentId = n.parentId; meta.handoff = n.handoff
-        if let branch = n.branch, !branch.isEmpty, await Git.isRepo(n.folder) {
+        meta.parentId = n.parentId; meta.handoff = n.handoff; meta.environment = n.environment
+        let remote = environment(n.environment)
+        let isRepo = await Exec.with(remote) { await Git.isRepo(n.folder) }
+        if let branch = n.branch, !branch.isEmpty, isRepo {
             if n.useWorktree {
-                let path = AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
-                try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-                try await Git.addWorktree(repo: n.folder, branch: branch, base: await Git.defaultBranch(n.folder), to: path)
+                let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
+                try await Exec.with(remote) {
+                    _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
+                    try await Git.addWorktree(repo: n.folder, branch: branch, base: await Git.defaultBranch(n.folder), to: path)
+                }
                 meta.worktree = path
             } else {
-                let current = await Git.info(n.folder)?.branch
-                if current != branch { _ = try? await Shell.run("git", ["checkout", "-b", branch], cwd: URL(fileURLWithPath: n.folder)) }
+                let current = await Exec.with(remote) { await Git.info(n.folder)?.branch }
+                if current != branch { _ = try? await Exec.with(remote) { try await Shell.run("git", ["checkout", "-b", branch], cwd: URL(fileURLWithPath: n.folder)) } }
             }
             meta.branch = branch
         }
@@ -614,6 +675,9 @@ final class Workspace {
     }
 
     func saveAgents() { AcpAgentConfig.save(acpAgents) }
+
+    func environment(_ id: String?) -> EnvironmentConfig? { id.flatMap { id in environments.first { $0.id == id } } }
+    func saveEnvironments() { EnvironmentConfig.save(environments) }
 
     // MARK: Notifications
 

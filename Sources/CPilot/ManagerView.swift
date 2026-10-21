@@ -172,7 +172,7 @@ struct SideRow: View {
             HStack(spacing: 8) {
                 switch c?.state ?? .asleep {
                 case .running: ProgressView().controlSize(.mini).frame(width: 8, height: 8)
-                case .waiting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
+                case .waiting, .reconnecting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
                 case .failed: Circle().fill(Theme.danger).frame(width: 8, height: 8)
                 case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
                 case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)
@@ -249,7 +249,7 @@ struct TabButton: View {
     @ViewBuilder private var dot: some View {
         switch session.state {
         case .running: ProgressView().controlSize(.mini).frame(width: 8, height: 8)
-        case .waiting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
+        case .waiting, .reconnecting: Circle().fill(Theme.warn).frame(width: 8, height: 8)
         case .failed: Circle().fill(Theme.danger).frame(width: 8, height: 8)
         case .idle: Circle().fill(Theme.ok).frame(width: 8, height: 8)
         case .asleep: Circle().stroke(Color.secondary, lineWidth: 1.5).frame(width: 8, height: 8)

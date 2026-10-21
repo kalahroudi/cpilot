@@ -34,7 +34,7 @@ final class LiveClaudeTests: XCTestCase {
         var cfg = ClaudeRunner.Config(cwd: dir.path); cfg.model = "haiku"; cfg.resumeId = resume
         let r = ClaudeRunner(config: cfg, onLine: { box.feed($0) }, onExit: { _ in })
         box.runner = r
-        try r.start()
+        try await r.start()
         r.send(ClaudeWire.userMessage(text: prompt))
         for _ in 0..<240 { if box.ended { break }; try await Task.sleep(for: .milliseconds(250)) }
         r.stop()
@@ -61,7 +61,7 @@ final class LiveClaudeTests: XCTestCase {
         let fbox = Box()
         let fr = ClaudeRunner(config: cfg, onLine: { fbox.feed($0) }, onExit: { _ in })
         fbox.runner = fr
-        try fr.start()
+        try await fr.start()
         fr.send(ClaudeWire.userMessage(text: "What was the secret word? Reply with only the word."))
         for _ in 0..<240 { if fbox.ended { break }; try await Task.sleep(for: .milliseconds(250)) }
         fr.stop()
@@ -77,5 +77,70 @@ final class LiveClaudeTests: XCTestCase {
         let d = try await run("Run the shell command: echo no > denied.txt", allow: false, dir: dir)
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("denied.txt").path), "denied command ran anyway")
         _ = d
+    }
+}
+
+/// The whole remote path with the real Claude command line: a server-held agent that survives a dropped connection.
+final class LiveRemoteTests: XCTestCase {
+    func session(_ dir: URL, env: EnvironmentConfig, key: String, attachOnly: Bool, from: Int, access: AccessLevel = .askFirst) async throws -> (LiveClaudeTests.Box, ClaudeRunner) {
+        let box = LiveClaudeTests.Box()
+        var cfg = ClaudeRunner.Config(cwd: dir.path); cfg.model = "haiku"; cfg.access = access
+        cfg.transport = .daemon(env, key: key, attachOnly: attachOnly, fromLine: from)
+        let r = ClaudeRunner(config: cfg, onLine: { box.feed($0) }, onExit: { _ in })
+        box.runner = r
+        try await r.start()
+        return (box, r)
+    }
+
+    func waitEnded(_ box: LiveClaudeTests.Box) async throws {
+        for _ in 0..<160 { if box.ended { return }; try await Task.sleep(for: .milliseconds(250)) }
+    }
+
+    func testLiveServerHeldAgentSurvivesDetach() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CPILOT_LIVE"] == "1", "live test")
+        try XCTSkipIf(Shell.find("node") == nil, "node is not installed")
+        FakeSSH.use()
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("cpilotd-live-\(UUID().uuidString.prefix(8))")
+        let dir = home.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        setenv("CPILOTD_HOME", home.appendingPathComponent("sessions").path, 1)
+        RemoteHost.scriptLocation = home.appendingPathComponent("cpilotd.mjs").path
+        defer { unsetenv("CPILOTD_HOME"); RemoteHost.scriptLocation = "$HOME/.cpilot/cpilotd.mjs" }
+        let env = EnvironmentConfig(name: "t", routes: ["good"], persistent: true)
+        try await Exec.with(env) { try await RemoteHost.install() }
+
+        // 1. A turn through the server-held agent.
+        let (a, ra) = try await session(dir, env: env, key: "k1", attachOnly: false, from: 0)
+        ra.send(ClaudeWire.userMessage(text: "Remember the secret word mango. Reply with only: ok"))
+        try await waitEnded(a)
+        XCTAssertTrue(a.ended, "first turn did not end")
+        let seen = ra.linesReceived
+        ra.detach()                                    // the connection drops
+
+        // 2. The agent is still there with its context. Attach again from where we left off.
+        let status = await Exec.with(env) { await RemoteHost.status(id: "k1") }
+        XCTAssertEqual(status?.running, true)
+        let (b, rb) = try await session(dir, env: env, key: "k1", attachOnly: true, from: seen)
+        rb.send(ClaudeWire.userMessage(text: "What was the secret word? Reply with only the word."))
+        try await waitEnded(b)
+        XCTAssertTrue(b.items.contains { $0.kind == .assistant && $0.text.lowercased().contains("mango") }, "context lost: \(b.items.map(\.text))")
+        let seen2 = rb.linesReceived
+        rb.detach()
+        await Exec.with(env) { await RemoteHost.stop(id: "k1") }
+
+        // 3. Work that finishes while nobody is connected, and is waiting when we come back.
+        let (c, rc) = try await session(dir, env: env, key: "k2", attachOnly: false, from: 0, access: .fullAccess)
+        rc.send(ClaudeWire.userMessage(text: "Run the shell command: sleep 4 && echo finished > away.txt   Then reply with only: done"))
+        try await Task.sleep(for: .milliseconds(1500))
+        let before = rc.linesReceived
+        rc.detach()                                    // leave before it is finished
+        try await Task.sleep(for: .seconds(14))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("away.txt").path), "the agent did not keep working while disconnected")
+        let (d, rd) = try await session(dir, env: env, key: "k2", attachOnly: true, from: before, access: .fullAccess)
+        try await waitEnded(d)
+        XCTAssertTrue(d.ended, "the finished turn was not replayed after reattaching")
+        rd.detach()
+        await Exec.with(env) { await RemoteHost.stop(id: "k2") }
+        _ = (c, seen2)
     }
 }

@@ -208,6 +208,17 @@ public enum ClaudeWire {
 
 // MARK: Process
 
+/// Where a session's agent runs and how CPilot reaches it.
+public enum Transport: Sendable {
+    /// On this Mac.
+    case local
+    /// On a server, through one SSH connection. If the connection drops, the agent stops, and the session resumes by id.
+    case ssh(EnvironmentConfig)
+    /// On a server, under `cpilotd`: the agent keeps running if the connection drops, and CPilot attaches again.
+    /// `attachOnly` joins an agent that is already running; `fromLine` is how much of its output was already seen.
+    case daemon(EnvironmentConfig, key: String, attachOnly: Bool, fromLine: Int)
+}
+
 /// One running `claude` process. It stays alive between turns so replies are fast; the app stops it when the tab sleeps
 /// and starts it again with `--resume`, which restores the full context.
 public final class ClaudeRunner: @unchecked Sendable {
@@ -222,6 +233,7 @@ public final class ClaudeRunner: @unchecked Sendable {
         public var addDirs: [String] = []
         /// A path to an MCP config file, or the JSON itself; the command line accepts either.
         public var mcpConfigPath: String?
+        public var transport: Transport = .local
         public init(cwd: String) { self.cwd = cwd }
     }
 
@@ -234,9 +246,11 @@ public final class ClaudeRunner: @unchecked Sendable {
     private let lock = NSLock()
     private var carry = ""
     private var errTail = ""
+    private var lineCount: Int
 
     public init(config: Config, onLine: @escaping @Sendable (String) -> Void, onExit: @escaping @Sendable (Int32) -> Void) {
         self.config = config; self.onLine = onLine; self.onExit = onExit
+        if case .daemon(_, _, _, let from) = config.transport { lineCount = from } else { lineCount = 0 }
     }
 
     public static func arguments(_ c: Config) -> [String] {
@@ -251,13 +265,29 @@ public final class ClaudeRunner: @unchecked Sendable {
         return a
     }
 
-    public func start() throws {
-        guard let path = Shell.find("claude") else { throw ShellError.toolNotFound("claude") }
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = Self.arguments(config)
-        process.currentDirectoryURL = URL(fileURLWithPath: config.cwd)
+    /// How much of a server-held agent's output has been received, so a reconnect can ask for only what is new.
+    public var linesReceived: Int { lock.lock(); defer { lock.unlock() }; return lineCount }
+
+    public func start() async throws {
         var env = Shell.environment
         env.removeValue(forKey: "CLAUDECODE")
+        let exe: String, args: [String]
+        switch config.transport {
+        case .local:
+            guard let path = Shell.find("claude") else { throw ShellError.toolNotFound("claude") }
+            exe = path; args = Self.arguments(config)
+            process.currentDirectoryURL = URL(fileURLWithPath: config.cwd)
+        case .ssh(let e):
+            exe = SSH.executable
+            args = SSH.baseArgs(e) + [e.target, SSH.remoteCommand("claude", Self.arguments(config), cwd: config.cwd)]
+        case .daemon(let e, let key, let attachOnly, let from):
+            if !attachOnly { try await Exec.with(e) { try await RemoteHost.start(id: key, cwd: config.cwd, command: "claude", args: Self.arguments(config)) } }
+            let c = RemoteHost.command(["attach", key, "--from", String(from)])
+            exe = SSH.executable
+            args = SSH.baseArgs(e) + [e.target, SSH.remoteCommand(c.tool, c.args, cwd: nil)]
+        }
+        process.executableURL = URL(fileURLWithPath: exe)
+        process.arguments = args
         process.environment = env
         process.standardInput = stdin; process.standardOutput = stdout; process.standardError = stderr
         stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
@@ -286,6 +316,7 @@ public final class ClaudeRunner: @unchecked Sendable {
         while let nl = carry.firstIndex(of: "\n") {
             lines.append(String(carry[..<nl])); carry.removeSubrange(...nl)
         }
+        lineCount += lines.count
         lock.unlock()
         for l in lines where !l.isEmpty { onLine(l) }
     }
@@ -299,8 +330,15 @@ public final class ClaudeRunner: @unchecked Sendable {
         }
     }
 
-    public func stop() {
+    /// Let go of the connection. A server-held agent keeps running; anything else stops with it.
+    public func detach() {
         try? stdin.fileHandleForWriting.close()
         if process.isRunning { process.terminate() }
+    }
+
+    /// Stop the agent itself, wherever it runs.
+    public func stop() {
+        if case .daemon(let e, let key, _, _) = config.transport { Task { await Exec.with(e) { await RemoteHost.stop(id: key) } } }
+        detach()
     }
 }
