@@ -23,6 +23,32 @@ public struct SecurityResult: Equatable, Sendable {
     public var blocksMerge: Bool { !confirmed.isEmpty }
 }
 
+/// Finished scans, kept on disk so a result is still there after the app restarts. The key names the repository, the pull
+/// request and its head commit, so pushing new commits makes the old result stop applying. The report text is stored and re-parsed.
+public struct ScanStore: Sendable {
+    struct Entry: Codable { var report: String; var at: Date }
+    public let url: URL
+    static let limit = 100
+    public init(url: URL = AppPaths().root.appendingPathComponent("scans.json")) { self.url = url }
+
+    public func result(for key: String) -> SecurityResult? {
+        load()[key].map { SecurityCage.parse(report: $0.report) }
+    }
+
+    public func save(_ result: SecurityResult, for key: String) {
+        var all = load()
+        all[key] = Entry(report: result.report, at: Date())
+        if all.count > Self.limit { for k in all.sorted(by: { $0.value.at < $1.value.at }).prefix(all.count - Self.limit).map(\.key) { all[k] = nil } }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+    }
+
+    private func load() -> [String: Entry] {
+        guard let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: Entry].self, from: data)) ?? [:]
+    }
+}
+
 /// Runs SecurityCage on a checkout and reads the report it writes. It scans code as data, offline, and proves findings in Docker.
 public enum SecurityCage {
     /// "## Fix these" lists problems that were proven; "## We couldn't confirm these" lists leads.

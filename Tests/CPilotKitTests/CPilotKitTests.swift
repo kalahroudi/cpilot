@@ -29,6 +29,17 @@ final class KitTests: XCTestCase {
         XCTAssertTrue(UserError.message(for: err, action: "Send the review").contains("approve your own pull request"))
     }
 
+    func testScanResultsSurviveRestart() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("scans-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let clean = SecurityResult(findings: [], report: "# Report\n\nNothing found.\n")
+        ScanStore(url: url).save(clean, for: "repo#1#abc")
+        let again = ScanStore(url: url)        // a new instance, as after a relaunch
+        XCTAssertEqual(again.result(for: "repo#1#abc")?.findings.count, 0)
+        XCTAssertNotNil(again.result(for: "repo#1#abc"))
+        XCTAssertNil(again.result(for: "repo#1#def"), "a new head commit must not reuse the old scan")
+    }
+
     func testChecksumLookup() {
         let sums = "abc123  CPilot-0.1.0.dmg\ndef456 *other.dmg\n"
         XCTAssertEqual(UpdateChecker.checksum(in: sums, for: "CPilot-0.1.0.dmg"), "abc123")

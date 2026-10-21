@@ -18,6 +18,8 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public var state: String                    // OPEN, MERGED, CLOSED
     public var isDraft: Bool
     public var headRefName: String
+    /// The head commit. A scan is only valid for the commit it ran on.
+    public var headRefOid: String?
     public var baseRefName: String
     public var author: Author?
     public var url: String
@@ -30,17 +32,17 @@ public struct PullRequest: Codable, Identifiable, Equatable, Sendable {
     public struct AutoMerge: Codable, Equatable, Sendable { public var mergeMethod: String?; public init(mergeMethod: String?) { self.mergeMethod = mergeMethod } }
     public init(number: Int, title: String, state: String, isDraft: Bool, headRefName: String, baseRefName: String, author: Author?, url: String,
                 body: String? = nil, additions: Int? = nil, deletions: Int? = nil, reviewDecision: String? = nil, mergeable: String? = nil,
-                autoMergeRequest: AutoMerge? = nil) {
+                autoMergeRequest: AutoMerge? = nil, headRefOid: String? = nil) {
         self.number = number; self.title = title; self.state = state; self.isDraft = isDraft; self.headRefName = headRefName
         self.baseRefName = baseRefName; self.author = author; self.url = url; self.body = body; self.additions = additions
-        self.deletions = deletions; self.reviewDecision = reviewDecision; self.mergeable = mergeable; self.autoMergeRequest = autoMergeRequest
+        self.deletions = deletions; self.reviewDecision = reviewDecision; self.mergeable = mergeable; self.autoMergeRequest = autoMergeRequest; self.headRefOid = headRefOid
     }
     public var id: Int { number }
     public var isOpen: Bool { state == "OPEN" }
     public var autoMerge: Bool { autoMergeRequest != nil }
 
     public static let listFields = "number,title,state,isDraft,headRefName,baseRefName,author,url,autoMergeRequest,reviewDecision"
-    public static let viewFields = listFields + ",body,additions,deletions,mergeable"
+    public static let viewFields = listFields + ",body,additions,deletions,mergeable,headRefOid"
 }
 
 public enum MergeMethod: String, CaseIterable, Sendable { case squash, merge, rebase }

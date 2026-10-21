@@ -158,8 +158,9 @@ struct SettingRow<Control: View>: View {
     let title: String
     let detail: String?
     var error: String?
+    var separator = true
     @ViewBuilder var control: Control
-    init(_ title: String, _ detail: String?, error: String? = nil, @ViewBuilder _ control: () -> Control) { self.title = title; self.detail = detail; self.error = error; self.control = control() }
+    init(_ title: String, _ detail: String?, error: String? = nil, separator: Bool = true, @ViewBuilder _ control: () -> Control) { self.title = title; self.detail = detail; self.error = error; self.separator = separator; self.control = control() }
     private var label: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.system(size: 13))
@@ -178,6 +179,6 @@ struct SettingRow<Control: View>: View {
             }
             VStack(alignment: .leading, spacing: 8) { label.frame(maxWidth: .infinity, alignment: .leading); control }
         }
-        .padding(.vertical, 10).overlay(alignment: .top) { Divider().opacity(0.6) }
+        .padding(.vertical, 10).overlay(alignment: .top) { if separator { Divider().opacity(0.6) } }
     }
 }

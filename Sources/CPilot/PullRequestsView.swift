@@ -26,7 +26,8 @@ final class PRCenter {
     var showInbox = false
     /// Pull requests CPilot merges by itself the moment every rule passes: "owner/repo#number" -> repo folder.
     var armed: [String: String] = UserDefaults.standard.dictionary(forKey: "armedMerges") as? [String: String] ?? [:]
-    private var scans: [String: SecurityResult] = [:]     // by head branch + number, so a re-open does not rescan
+    private let scanStore = ScanStore()                  // on disk, by repository + number + head commit, so a re-open or a restart does not rescan
+    private func scanKey(_ dir: String, _ pr: PullRequest) -> String { "\(dir)#\(pr.number)#\(pr.headRefOid ?? pr.headRefName)" }
     private var watcher: Task<Void, Never>?
     /// Open pull requests per repository, so the screen shows something at once and refreshes behind it.
     private var cache: [String: (prs: [PullRequest], at: Date)] = [:]
@@ -101,7 +102,7 @@ final class PRCenter {
             let (p, d, c) = try await (pr, diff, chk)
             guard selected == n else { return }
             detail = p; files = DiffParser.parse(d); checks = c
-            scan = scans["\(dir)#\(n)#\(p.headRefName)"]
+            scan = scanStore.result(for: scanKey(dir, p))
         } catch { AppModel.shared.failQuietly(error, action: "Load the pull request") }
     }
 
@@ -119,7 +120,7 @@ final class PRCenter {
             let mode = await SecurityCage.chooseMode(baseURL: Prefs.shared.localModelURL)
             scanLog.append(mode.note)
             let result = try await SecurityCage.scan(folder: tmp, deep: mode.deep, environment: mode.environment, configured: Prefs.shared.securityCagePath) { [weak self] line in Task { @MainActor in self?.scanLog.append(line) } }
-            scan = result; scans["\(dir)#\(pr.number)#\(pr.headRefName)"] = result
+            scan = result; scanStore.save(result, for: scanKey(dir, pr))
         } catch { AppModel.shared.fail(error, action: "Run the security scan") }
         await Git.removeWorktree(repo: dir, path: tmp)
     }
@@ -186,8 +187,9 @@ final class PRCenter {
             guard let pr = try? await GitHub.view(n, in: dir) else { continue }
             if !pr.isOpen { armed[k] = nil; persistArmed(); continue }
             let chk = await GitHub.checks(n, in: dir)
-            var result = scans["\(dir)#\(n)#\(pr.headRefName)"]
-            if result == nil, Prefs.shared.securityScanOnPR, let r = await scanQuietly(pr, dir: dir) { result = r; scans["\(dir)#\(n)#\(pr.headRefName)"] = r }
+            let key = scanKey(dir, pr)
+            var result = scanStore.result(for: key)
+            if result == nil, Prefs.shared.securityScanOnPR, let r = await scanQuietly(pr, dir: dir) { result = r; scanStore.save(r, for: key) }
             let gate = MergeGate.evaluate(pr: pr, checks: chk, scan: result, requireScan: Prefs.shared.securityScanOnPR)
             if gate.ready {
                 do {
@@ -206,9 +208,9 @@ final class PRCenter {
     func gateFor(_ n: Int, dir: String) async -> MergeGate {
         guard let pr = try? await GitHub.view(n, in: dir) else { return MergeGate(ready: false, reasons: ["Could not read the pull request."]) }
         let chk = await GitHub.checks(n, in: dir)
-        let key = "\(dir)#\(n)#\(pr.headRefName)"
-        var result = scans[key]
-        if result == nil, Prefs.shared.securityScanOnPR, let r = await scanQuietly(pr, dir: dir) { result = r; scans[key] = r }
+        let key = scanKey(dir, pr)
+        var result = scanStore.result(for: key)
+        if result == nil, Prefs.shared.securityScanOnPR, let r = await scanQuietly(pr, dir: dir) { result = r; scanStore.save(r, for: key) }
         return MergeGate.evaluate(pr: pr, checks: chk, scan: result, requireScan: Prefs.shared.securityScanOnPR)
     }
 
@@ -454,7 +456,7 @@ struct ReviewAndMerge: View {
     }
 
     private var review: some View {
-        SettingRow("Review", "Ask an agent to read the change in a fresh read-only session, or review it yourself.") {
+        SettingRow("Review", "Ask an agent to read the change in a fresh read-only session, or review it yourself.", separator: false) {
             HStack(spacing: 6) {
                 Button("Review with Claude") {
                     Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: true) }
@@ -493,8 +495,14 @@ struct ReviewAndMerge: View {
                             ForEach(Self.styles, id: \.0) { m, title in
                                 Button { center.method = m } label: { if center.method == m { Label(title, systemImage: "checkmark") } else { Text(title) } }
                             }
-                        } label: { Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)) }
-                            .menuStyle(.button).buttonStyle(MergeSplit(position: .trailing, ready: ready)).menuIndicator(.hidden).fixedSize()
+                        } label: {
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(ready ? Theme.onAccent : Color.secondary.opacity(0.75))
+                                .frame(width: 32, height: 32)   // same height as the main button
+                                .background(ready ? Theme.ok : Theme.fill, in: MergeSplit.shape(.trailing))
+                                .overlay(alignment: .leading) { Rectangle().fill(Color.black.opacity(0.2)).frame(width: 1) }
+                        }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     }
                     Text(Self.blurb(center.method, base: pr.baseRefName)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Toggle(isOn: Binding(get: { armed }, set: { center.setArmed($0, pr.number) })) {
@@ -527,15 +535,18 @@ private struct MergeSplit: ButtonStyle {
     let position: Position
     let ready: Bool
 
+    static func shape(_ position: Position) -> UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: position == .leading ? 8 : 0, bottomLeadingRadius: position == .leading ? 8 : 0,
+                               bottomTrailingRadius: position == .trailing ? 8 : 0, topTrailingRadius: position == .trailing ? 8 : 0)
+    }
+
     func makeBody(configuration: Configuration) -> some View {
         let on = ready
-        let shape = UnevenRoundedRectangle(topLeadingRadius: position == .leading ? 8 : 0, bottomLeadingRadius: position == .leading ? 8 : 0,
-                                           bottomTrailingRadius: position == .trailing ? 8 : 0, topTrailingRadius: position == .trailing ? 8 : 0)
+        let shape = Self.shape(position)
         return configuration.label.font(.system(size: 12.5, weight: .semibold))
-            .padding(.horizontal, position == .leading ? 14 : 9).padding(.vertical, 7)
+            .padding(.horizontal, position == .leading ? 14 : 10).frame(height: 32)
             .foregroundStyle(on ? Theme.onAccent : Color.secondary.opacity(0.75))
             .background(on ? Theme.ok.opacity(configuration.isPressed ? 0.8 : 1) : Theme.fill, in: shape)
-            .overlay(alignment: .leading) { if position == .trailing { Rectangle().fill(Color.black.opacity(0.2)).frame(width: 1) } }
     }
 }
 
