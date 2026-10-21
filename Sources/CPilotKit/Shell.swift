@@ -66,8 +66,8 @@ public enum Shell {
 
     /// Run to completion and collect output. Does not throw on non-zero exit; check `ok`.
     @discardableResult
-    public static func run(_ tool: String, _ args: [String], timeout: TimeInterval? = 60) async throws -> ShellResult {
-        let process = try makeProcess(tool, args)
+    public static func run(_ tool: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval? = 60) async throws -> ShellResult {
+        let process = try makeProcess(tool, args, cwd: cwd)
         let out = Buffer(), err = Buffer()
         let outPipe = Pipe(), errPipe = Pipe()
         process.standardOutput = outPipe
@@ -98,8 +98,8 @@ public enum Shell {
 
     /// Run and throw if the exit status is not zero. Returns trimmed stdout.
     @discardableResult
-    public static func check(_ tool: String, _ args: [String], timeout: TimeInterval? = 60) async throws -> String {
-        let r = try await run(tool, args, timeout: timeout)
+    public static func check(_ tool: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval? = 60) async throws -> String {
+        let r = try await run(tool, args, cwd: cwd, timeout: timeout)
         guard r.ok else { throw ShellError.failed(command: ([tool] + args).joined(separator: " "), status: r.status, stderr: r.stderr.isEmpty ? r.stdout : r.stderr) }
         return r.stdout
     }
