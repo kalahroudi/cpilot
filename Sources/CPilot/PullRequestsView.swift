@@ -22,6 +22,9 @@ final class PRCenter {
     var loading = false
     var method: MergeMethod = .squash
     var fileFilter = ""
+    /// Titles this pull request would add to its base branch that the base already has (the same change landing twice).
+    var duplicates: [Git.Duplicate] = []
+    var titleDraft = ""
     var showCreate = false
     var showInbox = false
     /// Pull requests CPilot merges by itself the moment every rule passes: "owner/repo#number" -> repo folder.
@@ -94,7 +97,7 @@ final class PRCenter {
 
     private func selectImpl(_ n: Int) async {
         guard let dir = repoDir else { return }
-        selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []
+        selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []; duplicates = []
         do {
             async let pr = GitHub.view(n, in: dir)
             async let diff = GitHub.diff(n, in: dir)
@@ -103,7 +106,37 @@ final class PRCenter {
             guard selected == n else { return }
             detail = p; files = DiffParser.parse(d); checks = c
             scan = scanStore.result(for: scanKey(dir, p))
+            titleDraft = p.title
+            if p.isOpen { await findDuplicates(p, dir: dir) }
         } catch { AppModel.shared.failQuietly(error, action: "Load the pull request") }
+    }
+
+    private func findDuplicates(_ p: PullRequest, dir: String) async {
+        let commits = await GitHub.commits(p.number, in: dir)
+        let log = await Git.baseLog(dir, base: p.baseRefName)
+        guard selected == p.number else { return }
+        duplicates = Git.findDuplicates([("title", p.title)] + commits.map { ($0.sha, $0.subject) }, baseLog: log)
+    }
+
+    func retitle(_ title: String) async {
+        await Exec.with(env) {
+            guard let dir = repoDir, let n = selected else { return }
+            let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return }
+            do { try await GitHub.retitle(n, to: t, in: dir); AppModel.shared.show("Title updated"); await selectImpl(n) }
+            catch { AppModel.shared.fail(error, action: "Rename the pull request") }
+        }
+    }
+
+    /// A title for the whole pull request, not just its first commit.
+    func suggestTitle() async {
+        await Exec.with(env) {
+            guard let dir = repoDir, let p = detail else { return }
+            let list = await GitHub.commits(p.number, in: dir).map { "- " + $0.subject }.joined(separator: "\n")
+            let prompt = "Write one commit title (under 70 characters, no quotes, no trailing period) that describes everything this pull request does, not only its first commit. Reply with the title only.\n\nCurrent title: \(p.title)\nCommits:\n\(list)\n\nDescription:\n\((p.body ?? "").prefix(1500))"
+            if let out = await ClaudeOneShot.run(prompt, in: dir, timeout: 90) { titleDraft = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").first ?? out }
+            else { AppModel.shared.show("Claude could not suggest a title. Write one yourself.", error: true) }
+        }
     }
 
     func runScan() async {
@@ -531,6 +564,7 @@ struct ReviewAndMerge: View {
                         .popover(isPresented: $choosing, arrowEdge: .bottom) { styleList }
                     }
                     Text(Self.blurb(center.method, base: pr.baseRefName)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if !center.duplicates.isEmpty { duplicateWarning(base: pr.baseRefName) }
                     Toggle(isOn: Binding(get: { armed }, set: { center.setArmed($0, pr.number) })) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Merge automatically when ready").font(.system(size: 12.5))
@@ -543,6 +577,26 @@ struct ReviewAndMerge: View {
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(ready ? Theme.ok.opacity(0.5) : Theme.hairline))
         }
+    }
+
+    /// The same change would land on the base branch twice under one name: say so, and make the fix one step away.
+    private func duplicateWarning(base: String) -> some View {
+        @Bindable var c = center
+        return VStack(alignment: .leading, spacing: 8) {
+            Label("\(base) already has a commit with this title", systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.warn)
+            ForEach(center.duplicates.prefix(3)) { d in
+                Text("\(d.onBase)  \(d.subject)  ←  \(d.mine == "title" ? "this pull request's title" : "commit \(d.mine)")")
+                    .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Text("It may be the same change committed twice. If the pull request has grown since it was opened, give it a title that describes all of it, so \(base) does not end up with two commits of one name.")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                TextField("Pull request title", text: $c.titleDraft).textFieldStyle(CPField())
+                AsyncButton("Suggest") { await center.suggestTitle() }.buttonStyle(Pill(kind: .plain))
+                AsyncButton("Update title") { await center.retitle(center.titleDraft) }.buttonStyle(Pill(kind: .primary))
+                    .disabled(center.titleDraft.trimmingCharacters(in: .whitespaces).isEmpty || center.titleDraft == pr.title)
+            }
+        }.padding(10).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 9)).overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.warn.opacity(0.4)))
     }
 
     static func label(_ m: MergeMethod) -> String { styles.first { $0.0 == m }?.1 ?? "Merge" }

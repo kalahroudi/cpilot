@@ -244,3 +244,16 @@ final class TailscaleLinkTests: XCTestCase {
         XCTAssertTrue(EnvironmentProbe.describe("# Tailscale SSH requires an additional check.").contains("approve"))
     }
 }
+
+final class DuplicateTitleTests: XCTestCase {
+    func testSameTitleAlreadyOnBaseIsFound() {
+        let base = [Git.Commit(sha: "8709ae1", subject: "Something else (#1)", when: ""), Git.Commit(sha: "40da634", subject: "Friendly, logged update failures; stop ControlServer cleanly", when: "")]
+        let d = Git.findDuplicates([("title", "Friendly, logged update failures; stop ControlServer cleanly"), ("7091fff", "friendly, logged update failures; stop controlserver cleanly"), ("5cfd54e", "Capture every app error")], baseLog: base)
+        XCTAssertEqual(d.map(\.onBase), ["40da634"])   // reported once, even though two of mine match it
+        XCTAssertEqual(d.first?.mine, "title")
+    }
+    func testSquashSuffixIsIgnored() {
+        let d = Git.findDuplicates([("title", "Something else")], baseLog: [Git.Commit(sha: "8709ae1", subject: "Something else (#1)", when: "")])
+        XCTAssertEqual(d.count, 1)
+    }
+}

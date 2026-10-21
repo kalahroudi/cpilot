@@ -127,6 +127,10 @@ public enum GitHub {
         try await Shell.check("gh", a, cwd: url(dir))
     }
 
+    public static func retitle(_ n: Int, to title: String, in dir: String) async throws {
+        try await Shell.check("gh", ["pr", "edit", String(n), "--title", title], cwd: url(dir))
+    }
+
     public static func comment(_ n: Int, body: String, in dir: String) async throws {
         try await Shell.check("gh", ["pr", "comment", String(n), "--body", body], cwd: url(dir))
     }

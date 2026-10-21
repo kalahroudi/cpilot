@@ -117,4 +117,38 @@ public enum Git {
     public static func deleteBranch(repo: String, branch: String) async {
         _ = try? await Shell.run("git", ["branch", "-D", branch], cwd: url(repo))
     }
+
+    /// A title the pull request would add to the base branch that the base branch already has.
+    public struct Duplicate: Equatable, Identifiable, Sendable {
+        public var subject: String
+        /// What carries the title here: a commit's short sha, or "title" for the pull request's own title.
+        public var mine: String
+        public var onBase: String
+        public var id: String { mine + onBase }
+    }
+
+    /// "Fix the thing (#12)" and "fix the thing" are the same title.
+    static func normalizeSubject(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespaces).lowercased()
+        if let r = t.range(of: #" \(#\d+\)$"#, options: .regularExpression) { t.removeSubrange(r) }
+        return t
+    }
+
+    /// Which of `mine` (label, subject) already appear as titles in `baseLog`. This is how the same change ends up on main twice.
+    public static func findDuplicates(_ mine: [(label: String, subject: String)], baseLog: [Commit]) -> [Duplicate] {
+        var seen = Set<String>(), out: [Duplicate] = []
+        for m in mine {
+            let key = normalizeSubject(m.subject)
+            guard !key.isEmpty, let hit = baseLog.first(where: { normalizeSubject($0.subject) == key }), seen.insert(hit.sha).inserted else { continue }
+            out.append(Duplicate(subject: hit.subject, mine: m.label, onBase: hit.sha))
+        }
+        return out
+    }
+
+    /// Recent titles on the remote base branch. Fetches that one branch first, so it is not judged against a stale copy.
+    public static func baseLog(_ dir: String, base: String, limit: Int = 400) async -> [Commit] {
+        _ = try? await Shell.run("git", ["fetch", "origin", base], cwd: url(dir), timeout: 60)
+        let out = (try? await Shell.check("git", ["log", "--format=%h%x09%s%x09%cr", "-\(limit)", "origin/\(base)"], cwd: url(dir))) ?? ""
+        return parseCommits(out)
+    }
 }
