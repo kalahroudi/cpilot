@@ -9,8 +9,10 @@ public struct AcpAgentConfig: Codable, Identifiable, Equatable, Sendable {
     public var command: String
     public var args: [String]
     public var env: [String: String]
-    public init(id: String, name: String, command: String, args: [String] = [], env: [String: String] = [:]) {
-        self.id = id; self.name = name; self.command = command; self.args = args; self.env = env
+    /// The sign-in method to use when the agent asks you to sign in (one of the ids it lists). Empty: CPilot picks.
+    public var authMethod: String?
+    public init(id: String, name: String, command: String, args: [String] = [], env: [String: String] = [:], authMethod: String? = nil) {
+        self.id = id; self.name = name; self.command = command; self.args = args; self.env = env; self.authMethod = authMethod
     }
 
     public static func load(from url: URL = AppPaths().agentsFile) -> [AcpAgentConfig] {
@@ -111,10 +113,52 @@ public struct AcpUpdateReducer: Sendable {
     }
 }
 
-public enum AcpError: Error, LocalizedError {
+public enum AcpError: Error, LocalizedError, Equatable {
     case notRunning, server(String), badResponse
+    /// The agent wants you signed in first. Carries what it said.
+    case authRequired(String)
     public var errorDescription: String? {
-        switch self { case .notRunning: "The agent is not running."; case .server(let m): m; case .badResponse: "The agent sent an unexpected reply." }
+        switch self {
+        case .notRunning: "The agent is not running."
+        case .server(let m): m
+        case .badResponse: "The agent sent an unexpected reply."
+        case .authRequired(let m): m
+        }
+    }
+}
+
+/// A way the agent offers to sign in, from its `initialize` reply.
+public struct AcpAuthMethod: Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public init(id: String, name: String) { self.id = id; self.name = name }
+}
+
+public enum AcpAuth {
+    /// Whether a server error means "sign in first". ACP uses code -32000 for it; some agents only say so in the message.
+    public static func isAuthRequired(code: Int?, message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("authentication required") || m.contains("auth_required") || m.contains("not authenticated") || (code == -32000 && m.contains("sign in"))
+    }
+
+    /// Which sign-in to use without asking you: the one you chose for this agent; else a method that needs only a key
+    /// that is already in the environment; else the first interactive login (a browser sign-in); else the first listed.
+    public static func choose(from methods: [AcpAuthMethod], preferred: String?, env: [String: String]) -> AcpAuthMethod? {
+        if let p = preferred, let m = methods.first(where: { $0.id == p }) { return m }
+        func has(_ names: [String]) -> Bool { names.contains { !(env[$0] ?? "").isEmpty } }
+        func keyNames(_ id: String) -> [String]? {
+            let lower = id.lowercased()
+            if lower.contains("vertex") || lower.contains("agent-platform") { return ["GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT"] }
+            if lower.contains("api-key") || lower.contains("api_key") || lower.contains("apikey") {
+                let vendor = lower.split(whereSeparator: { "-_".contains($0) }).first.map { $0.uppercased() } ?? ""
+                return ["\(vendor)_API_KEY"]
+            }
+            return nil
+        }
+        if let m = methods.first(where: { keyNames($0.id).map(has) == true }) { return m }
+        let notInteractive = ["key", "platform", "vertex", "business", "enterprise", "gateway"]
+        if let m = methods.first(where: { m in !notInteractive.contains { m.id.lowercased().contains($0) } }) { return m }
+        return methods.first
     }
 }
 
@@ -135,6 +179,9 @@ public final class AcpClient: @unchecked Sendable {
     private var permissionIds: [String: Any] = [:]       // string key -> original JSON-RPC id
     private var reducer = AcpUpdateReducer()
     public private(set) var canLoadSession = false
+    public private(set) var authMethods: [AcpAuthMethod] = []
+    /// How long a sign-in may wait for you.
+    public static var signInTimeout: TimeInterval = 300
     /// MCP servers handed to every session this client opens (for example the memory engine).
     public var mcpServers: [[String: Any]] = []
 
@@ -176,20 +223,37 @@ public final class AcpClient: @unchecked Sendable {
             "clientInfo": ["name": "CPilot", "version": BuildInfo.current.version],
         ])
         canLoadSession = ((res["agentCapabilities"] as? [String: Any])?["loadSession"] as? Bool) ?? false
+        authMethods = ((res["authMethods"] as? [[String: Any]]) ?? []).compactMap { m in
+            (m["id"] as? String).map { AcpAuthMethod(id: $0, name: (m["name"] as? String) ?? $0) }
+        }
     }
 
     // MARK: Calls
 
     public func newSession() async throws -> String {
-        let r = try await request("session/new", ["cwd": cwd.path, "mcpServers": mcpServers])
+        let r = try await signedIn { try await self.request("session/new", ["cwd": self.cwd.path, "mcpServers": self.mcpServers]) }
         guard let id = r["sessionId"] as? String else { throw AcpError.badResponse }
         return id
+    }
+
+    /// Runs a call; when the agent says to sign in first, signs in (a key already in the environment, or the agent's own browser login)
+    /// and runs it once more.
+    private func signedIn(_ call: () async throws -> [String: Any]) async throws -> [String: Any] {
+        do { return try await call() }
+        catch AcpError.authRequired(let said) {
+            let env = ProcessInfo.processInfo.environment.merging(config.env) { _, n in n }
+            guard let method = AcpAuth.choose(from: authMethods, preferred: config.authMethod, env: env) else { throw AcpError.authRequired(said) }
+            onEvent(.items([ChatItem(id: "acp-auth", kind: .notice, text: "\(config.name) needs you signed in. Using “\(method.name)”. If a browser opens, finish signing in there.", status: .running)]))
+            do { _ = try await request("authenticate", ["methodId": method.id], timeout: AcpClient.signInTimeout) }
+            catch { throw AcpError.authRequired("Signing in with “\(method.name)” did not work: \(error.localizedDescription)") }
+            return try await call()
+        }
     }
 
     /// Restores a session with its context. Falls back to a new session when the agent cannot load.
     public func loadSession(_ id: String) async throws -> String {
         guard canLoadSession else { return try await newSession() }
-        _ = try await request("session/load", ["sessionId": id, "cwd": cwd.path, "mcpServers": mcpServers])
+        _ = try await signedIn { try await self.request("session/load", ["sessionId": id, "cwd": self.cwd.path, "mcpServers": self.mcpServers]) }
         return id
     }
 
@@ -222,11 +286,20 @@ public final class AcpClient: @unchecked Sendable {
 
     // MARK: Transport
 
-    private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+    /// `timeout` is for calls that wait on you (a browser sign-in); the others end when the agent answers or exits.
+    private func request(_ method: String, _ params: [String: Any], timeout: TimeInterval? = nil) async throws -> [String: Any] {
         guard process.isRunning else { throw AcpError.notRunning }
         return try await withCheckedThrowingContinuation { cont in
             lock.lock(); let id = nextId; nextId += 1; pending[id] = cont; lock.unlock()
             write(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+            if let timeout {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(timeout))
+                    guard let self else { return }
+                    self.lock.lock(); let c = self.pending.removeValue(forKey: id); self.lock.unlock()
+                    c?.resume(throwing: AcpError.server("Timed out after \(Int(timeout / 60)) minutes waiting for you to sign in."))
+                }
+            }
         }
     }
 
@@ -260,7 +333,10 @@ public final class AcpClient: @unchecked Sendable {
         }
         guard let id = msg["id"] as? Int else { return }
         lock.lock(); let cont = pending.removeValue(forKey: id); lock.unlock()
-        if let err = msg["error"] as? [String: Any] { cont?.resume(throwing: AcpError.server((err["message"] as? String) ?? "Agent error")) }
+        if let err = msg["error"] as? [String: Any] {
+            let text = (err["message"] as? String) ?? "Agent error"
+            cont?.resume(throwing: AcpAuth.isAuthRequired(code: err["code"] as? Int, message: text) ? AcpError.authRequired(text) : AcpError.server(text))
+        }
         else { cont?.resume(returning: (msg["result"] as? [String: Any]) ?? [:]) }
     }
 
