@@ -18,6 +18,15 @@ public enum Git {
         (try? await Shell.run("git", ["rev-parse", "--is-inside-work-tree"], cwd: url(dir)))?.stdout.hasPrefix("true") ?? false
     }
 
+    /// The main repository's folder for `dir`. A linked worktree reports its own folder as the top level, so this follows the shared
+    /// git directory back to the checkout that owns it. Nil when `dir` is not in a repository.
+    public static func mainRoot(_ dir: String) async -> String? {
+        guard let common = (try? await Shell.check("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd: url(dir)))?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !common.isEmpty else { return nil }
+        if common.hasSuffix("/.git") { return String(common.dropLast(5)) }
+        return (try? await Shell.check("git", ["rev-parse", "--show-toplevel"], cwd: url(dir)))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public static func info(_ dir: String) async -> RepoInfo? {
         guard await isRepo(dir) else { return nil }
         let root = (try? await Shell.check("git", ["rev-parse", "--show-toplevel"], cwd: url(dir)))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? dir
