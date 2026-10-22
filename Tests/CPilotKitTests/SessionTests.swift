@@ -66,6 +66,19 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(store.list().first?.project, "shop")
     }
 
+    func testSpecFullAccessRepos() throws {
+        var pol = AccessPolicy()
+        XCTAssertFalse(pol.specSessionsHaveFullAccess("/code/shop"))
+        pol.setSpecFullAccess(true, repo: "/code/shop")
+        XCTAssertTrue(pol.specSessionsHaveFullAccess("/code/shop"))
+        XCTAssertFalse(pol.specSessionsHaveFullAccess("/code/other"))
+        pol.setSpecFullAccess(false, repo: "/code/shop")
+        XCTAssertNil(pol.specFullAccessRepos)
+        // An older policy file without the key still loads.
+        let old = try JSONDecoder().decode(AccessPolicy.self, from: JSONEncoder().encode(AccessPolicy()))
+        XCTAssertNil(old.specFullAccessRepos)
+    }
+
     func testPolicy() {
         var pol = AccessPolicy()
         pol.rules = [AccessRule(path: "/code/shop", allowCommands: ["npm test", "git status"])]

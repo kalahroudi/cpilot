@@ -62,6 +62,15 @@ struct AccessSettings: View {
                     }.buttonStyle(Pill(kind: .plain))
                 }
             }
+            if let repos = w.policy.specFullAccessRepos {
+                SettingsGroup("Spec sessions with Full access") {
+                    ForEach(repos, id: \.self) { r in
+                        SettingRow(r.replacingOccurrences(of: NSHomeDirectory(), with: "~"), "Task sessions started from specs here begin with no approval prompts. Each session can still be changed from its own header.") {
+                            Button("Turn off") { w.setSpecFullAccess(false, repo: r) }.buttonStyle(Pill(kind: .danger))
+                        }
+                    }
+                }
+            }
             SettingsGroup("Approvals") {
                 if log.isEmpty { SettingRow("Nothing yet", "Every approval and denial is listed here.") { EmptyView() } }
                 ForEach(log.prefix(showAllApprovals ? 40 : 5)) { e in ApprovalRow(entry: e) }

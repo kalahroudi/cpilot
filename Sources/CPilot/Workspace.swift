@@ -779,7 +779,9 @@ final class Workspace {
     func startTask(repo: String, environment: String?, branch: String, parent: String, title: String, prompt: String, focus: Bool,
                    onTurnEnd: @escaping (SessionController) -> Void) async throws -> SessionController {
         let remote = self.environment(environment)
-        let level: AccessLevel = policy.defaultLevel == .readOnly ? .editFiles : (policy.defaultLevel == .fullAccess ? .editFiles : policy.defaultLevel)
+        var level: AccessLevel = policy.defaultLevel == .readOnly ? .editFiles : (policy.defaultLevel == .fullAccess ? .editFiles : policy.defaultLevel)
+        // Approved once for this repository; only the starting level, so each session can still be changed from its own header. Servers never get Full access.
+        if remote == nil, policy.specSessionsHaveFullAccess(repo) { level = .fullAccess }
         var meta = SessionMeta(title: title, cwd: repo, access: level, branch: branch)
         meta.environment = environment
         let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
@@ -829,6 +831,9 @@ final class Workspace {
     // MARK: Policy and agents
 
     func savePolicy() { policy.save() }
+
+    /// One approval for a repository: sessions its specs start begin with Full access. The caller has already asked for Touch ID.
+    func setSpecFullAccess(_ on: Bool, repo: String) { policy.setSpecFullAccess(on, repo: repo); savePolicy() }
 
     func addProjectCommand(_ prefix: String, for folder: String) {
         if let i = policy.rules.firstIndex(where: { $0.path == folder }) {

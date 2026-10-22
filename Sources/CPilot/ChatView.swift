@@ -10,7 +10,9 @@ import CPilotKit
 struct ChatView: View {
     let session: SessionController
     let ws = Workspace.shared
+    /// Follows new messages while you are at the bottom; scrolling up lets go until you jump back.
     @State private var stickToBottom = true
+    @State private var userScrolling = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,13 +42,28 @@ struct ChatView: View {
                 .frame(maxWidth: 820, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
+            .onScrollPhaseChange { _, phase in userScrolling = phase == .interacting || phase == .decelerating }
+            .onScrollGeometryChange(for: CGFloat.self) { max(0, $0.contentSize.height - $0.contentOffset.y - $0.containerSize.height) } action: { _, fromBottom in
+                // Content growing under a following view is not you scrolling away.
+                if userScrolling { stickToBottom = fromBottom < 40 } else if fromBottom < 4 { stickToBottom = true }
+            }
             .onChange(of: session.items.count) { _, _ in scroll(proxy) }
             .onChange(of: session.items.last?.text) { _, _ in scroll(proxy) }
+            .onChange(of: session.items.last(where: { $0.kind == .user })?.id) { _, _ in stickToBottom = true; scroll(proxy) }
             .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .overlay(alignment: .bottom) {
+                if !stickToBottom {
+                    Button { stickToBottom = true; scroll(proxy) } label: { Label("Jump to latest", systemImage: "arrow.down") }
+                        .buttonStyle(Pill(kind: .primary)).padding(.bottom, 10).shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: stickToBottom)
         }
     }
 
     private func scroll(_ proxy: ScrollViewProxy) {
+        guard stickToBottom else { return }
         withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 }
