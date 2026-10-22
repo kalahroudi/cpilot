@@ -765,7 +765,12 @@ final class Workspace {
         try await Exec.with(remote) {
             _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
             let tip = try await Shell.check("git", ["rev-parse", parent], cwd: URL(fileURLWithPath: repo)).trimmingCharacters(in: .whitespacesAndNewlines)
-            try await Git.addWorktree(repo: repo, branch: branch, base: parent, to: path)
+            // The branch name is fixed per task, so a restart finds the earlier branch: pick it up instead of failing.
+            if await Git.branchExists(branch, in: repo) {
+                try await Git.addWorktreeOnExisting(repo: repo, branch: branch, to: path)
+            } else {
+                try await Git.addWorktree(repo: repo, branch: branch, base: parent, to: path)
+            }
             try await Stacks.setParent(branch, to: parent, base: tip, in: repo)
         }
         meta.worktree = path

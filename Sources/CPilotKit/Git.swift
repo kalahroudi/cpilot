@@ -81,6 +81,16 @@ public enum Git {
         try await Shell.check("git", ["worktree", "add", "--no-track", "-b", branch, path, base], cwd: url(repo))
     }
 
+    /// A copy of the files on a branch that already exists (a task started before), keeping its commits. Stale worktree records are cleared first so a deleted copy does not hold the branch.
+    public static func addWorktreeOnExisting(repo: String, branch: String, to path: String) async throws {
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: url(repo))
+        try await Shell.check("git", ["worktree", "add", path, branch], cwd: url(repo))
+    }
+
+    public static func branchExists(_ name: String, in dir: String) async -> Bool {
+        (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], cwd: url(dir)))?.ok == true
+    }
+
     public static func removeWorktree(repo: String, path: String) async {
         _ = try? await Shell.run("git", ["worktree", "remove", "--force", path], cwd: url(repo))
     }
