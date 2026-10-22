@@ -224,6 +224,7 @@ final class SpecCenter {
         unsubmitted = Set(stacks.flatMap(\.unsubmitted).map(\.name))
         // A task whose pull request merged is ticked off.
         let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
+        for d in docs { await adoptBranches(d) }
         for d in docs { await tickMerged(d, landed: landed) }
         await archiveFinished(before: before)
         if selected == nil { selected = docs.last?.id }
@@ -240,6 +241,19 @@ final class SpecCenter {
             if selected == d.id { selected = nil }
             AppModel.shared.show("\(d.title) is done and was archived.", error: false)
         }
+    }
+
+    /// A task whose own branch exists but whose line in tasks.md has no `branch:` (the file was rewritten) gets it back, so finished work is not started again.
+    private func adoptBranches(_ d: SpecDoc) async {
+        guard let r = repo, var text = d.tasksText else { return }
+        var changed = false
+        for t in d.tasks where !t.done && t.branch == nil {
+            let b = Specs.taskBranch(spec: d.id, task: t)
+            if started.contains(b) { text = Specs.updateTask(text, id: t.id, branch: b); changed = true }
+        }
+        guard changed else { return }
+        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(d.id)/tasks.md", text, in: r.dir, tracked: tracked) }
+        if let i = docs.firstIndex(where: { $0.id == d.id }) { docs[i].tasksText = text; docs[i].tasks = Specs.parseTasks(text) }
     }
 
     private func tickMerged(_ d: SpecDoc, landed: [PullRequest]) async {
