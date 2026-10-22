@@ -193,7 +193,7 @@ final class PRCenter {
         await Exec.with(env) {
             guard let dir = repoDir, let p = detail else { return }
             let list = await GitHub.commits(p.number, in: dir).map { "- " + $0.subject }.joined(separator: "\n")
-            let prompt = "Write one commit title (under 70 characters, no quotes, no trailing period) that describes everything this pull request does, not only its first commit. Reply with the title only.\n\nCurrent title: \(p.title)\nCommits:\n\(list)\n\nDescription:\n\((p.body ?? "").prefix(1500))"
+            let prompt = "Write one commit title (under 70 characters, no quotes, no trailing period) that describes everything this pull request does, not only its first commit. Reply with the title only.\n\nCurrent title: \(p.title)\nCommits:\n\(list)\n\nDescription:\n\(Stacks.withoutFooter(p.body ?? "").prefix(1500))"
             if let out = await ClaudeOneShot.run(prompt, in: dir, timeout: 90) { titleDraft = out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").first ?? out }
             else { AppModel.shared.show("Claude could not suggest a title. Write one yourself.", error: true) }
         }
@@ -460,7 +460,7 @@ struct PRDetail: View {
                     header(pr)
                     steps(pr)
                     ReviewAndMerge(pr: pr)
-                    if let b = pr.body, !b.isEmpty { Text(b).font(.system(size: 12.5)).foregroundStyle(.secondary).card() }
+                    if let b = pr.body.map(Stacks.withoutFooter), !b.isEmpty { Text(b).font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).card() }
                     SecurityPanel()
                     ChecksRow()
                     DiffList()

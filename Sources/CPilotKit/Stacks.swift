@@ -306,6 +306,12 @@ public enum Stacks {
         return s
     }
 
+    /// The description as a person wrote it, without the stack list CPilot appends.
+    public static func withoutFooter(_ body: String) -> String {
+        guard let r = body.range(of: "<!-- cpilot-stack -->") else { return body }
+        return String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Pushes every branch, creates or updates its pull request on top of its parent's, and writes the stack list into each.
     @discardableResult
     public static func submit(_ stack: Stack, in dir: String, host: StackHost, draft: Bool = false) async throws -> [String: Int] {
