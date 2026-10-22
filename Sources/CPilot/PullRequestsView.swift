@@ -24,6 +24,7 @@ final class PRCenter {
     var fileFilter = ""
     /// Titles this pull request would add to its base branch that the base already has (the same change landing twice).
     var duplicates: [Git.Duplicate] = []
+    var restacking = false
     var titleDraft = ""
     /// Merge styles the repository allows, and a suggestion with its reason.
     var allowed: Set<MergeMethod> = Set(MergeMethod.allCases)
@@ -155,6 +156,26 @@ final class PRCenter {
             guard !t.isEmpty else { return }
             do { try await GitHub.retitle(n, to: t, in: dir); AppModel.shared.show("Title updated"); await selectImpl(n) }
             catch { AppModel.shared.fail(error, action: "Rename the pull request") }
+        }
+    }
+
+    /// A pull request stacked on one that has since been merged still carries that one's commit until it is rebased onto the base.
+    /// Renaming cannot fix that: this puts the stack back on top of the base and pushes it, so only this pull request's own commits are left.
+    func restackAndPush() async {
+        await Exec.with(env) {
+            guard let dir = repoDir, let p = detail else { return }
+            restacking = true; defer { restacking = false }
+            do {
+                let host = LiveStackHost(dir: dir)
+                _ = try await Stacks.sync(in: dir, host: host)
+                if let stack = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.name == p.headRefName } }) {
+                    _ = try await Stacks.submit(stack, in: dir, host: host)
+                }
+                AppModel.shared.show("Restacked onto \(p.baseRefName) and pushed")
+                await selectImpl(p.number)
+            } catch let e as StackError {
+                if case .conflict = e { AppModel.shared.show("Restacking hit a conflict. Resolve it in Stacks.", error: true) } else { AppModel.shared.fail(e, action: "Restack") }
+            } catch { AppModel.shared.fail(error, action: "Restack") }
         }
     }
 
@@ -644,8 +665,16 @@ struct ReviewAndMerge: View {
                                   : "\(d.onBase)  \(d.subject)  ←  \(d.mine == "title" ? "this pull request's title" : "commit \(d.mine)")")
                     .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
             }
-            Text("It may be the same change committed twice. If the pull request has grown since it was opened, give it a title that describes all of it, so \(base) does not end up with two commits of one name.")
-                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let commit = center.duplicates.first(where: { $0.mine != "title" }) {
+                Text("This pull request still carries commit \(commit.mine), which \(base) already has. That usually means a pull request below it in the stack was merged and this one was not rebased since. A new title will not fix that; restacking drops the commit that is already merged.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                AsyncButton { await center.restackAndPush() } label: { BusyLabel(title: "Restack onto \(base) and push", busyTitle: "Restacking…", busy: center.restacking) }
+                    .buttonStyle(Pill(kind: .primary)).disabled(center.restacking)
+                Text("Or, if the pull request really has grown, give it a title that describes all of it.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            } else {
+                Text("The title is the same as a commit already on \(base). Give it a title that describes this change, so \(base) does not end up with two commits of one name.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
                 TextField("Pull request title", text: $c.titleDraft).textFieldStyle(CPField())
                 AsyncButton("Suggest") { await center.suggestTitle() }.buttonStyle(Pill(kind: .plain))
