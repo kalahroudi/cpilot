@@ -179,20 +179,52 @@ final class StackCenter {
     /// `admin` merges past the repository's rules; the card only offers it after a warning the user confirms.
     func mergeBottom(_ s: Stack, admin: Bool = false) async {
         await run("Merging") { [method] dir, host in
-            guard let bottom = s.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("Submit the stack first. There is no open pull request to merge.") }
-            let gate = await PRCenter.shared.gateFor(n, dir: dir)
-            guard gate.ready else { throw StackError.message("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
-            do { _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method, admin: admin) }
-            catch where GitHub.isPolicyBlocked(error) {
-                self.policyBlocked.insert(n)
-                if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
-                throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
-            }
-            _ = try await Stacks.sync(in: dir, host: host)
-            if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
-            if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
+            let n = try await self.mergeOne(s, admin: admin, method: method, dir: dir, host: host)
             return "Merged #\(n). The next pull request is waiting for its checks."
         }
+    }
+
+    /// Merges every open pull request of the stack, lowest first, past the repository's rules. Each one still has to pass its checks, and the first problem stops the run.
+    func mergeAllAsAdmin(_ s: Stack) async {
+        await run("Merging") { [method] dir, host in
+            let names = Set(s.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.map(\.name))
+            var merged: [Int] = []
+            var current = s
+            while current.bottomOpen != nil {
+                guard let n = current.bottomOpen?.pr else { break }
+                self.notice = merged.isEmpty ? nil : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")). Waiting on #\(n)…"
+                var waited = 0
+                while true {
+                    let gate = await PRCenter.shared.gateFor(n, dir: dir)
+                    if gate.ready { break }
+                    guard gate.reasons == ["Checks are still running."], waited < 900 else {
+                        throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + "#\(n) is not ready: " + gate.reasons.joined(separator: " "))
+                    }
+                    try await Task.sleep(for: .seconds(20)); waited += 20
+                }
+                merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host))
+                guard let next = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { names.contains($0.name) && !$0.isMerged } }) else { break }
+                current = next
+            }
+            return "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")) as admin."
+        }
+    }
+
+    /// One merge of the lowest open pull request, then restack and resubmit what is left. Returns its number.
+    private func mergeOne(_ s: Stack, admin: Bool, method: MergeMethod, dir: String, host: StackHost) async throws -> Int {
+        guard let bottom = s.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("Submit the stack first. There is no open pull request to merge.") }
+        let gate = await PRCenter.shared.gateFor(n, dir: dir)
+        guard gate.ready else { throw StackError.message("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
+        do { _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method, admin: admin) }
+        catch where GitHub.isPolicyBlocked(error) {
+            self.policyBlocked.insert(n)
+            if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
+            throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
+        }
+        _ = try await Stacks.sync(in: dir, host: host)
+        if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
+        if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
+        return n
     }
 
     func create(_ name: String) async {
@@ -249,7 +281,7 @@ struct StacksView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         banners
                         if center.stacks.isEmpty && !center.loading { Text("No stacks yet. Start one below.").font(.system(size: 13)).foregroundStyle(.secondary) }
-                        ForEach(center.stacks) { s in StackCard(stack: s) }
+                        ForEach(center.stacks.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }) { s in StackCard(stack: s) }
                         startSection
                     }.padding(22).frame(maxWidth: 860, alignment: .leading)
                 }
@@ -317,12 +349,13 @@ struct StackCard: View {
     let stack: Stack
     let center = StackCenter.shared
     @State private var confirmBypass = false
+    @State private var confirmBypassAll = false
 
     var body: some View {
         @Bindable var c = center
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(stack.branches.last(where: { !$0.isMerged })?.title ?? stack.branches.last?.name ?? "Stack").font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                Text(stack.branches.first(where: { !$0.isMerged })?.title ?? stack.branches.last?.name ?? "Stack").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
@@ -410,6 +443,15 @@ extension StackCard {
             }
             Spacer(minLength: 12)
             if stack.nextStep == .merge, let n = stack.bottomOpen?.pr, center.policyBlocked.contains(n) || stack.bottomOpen?.mergeState == "BLOCKED", checkState != .failed, checkState != .pending {
+                if Prefs.shared.adminMergeAll, stack.branches.filter({ !$0.isMerged && $0.prState == "OPEN" }).count > 1 {
+                    Button("Merge all as admin…") { confirmBypassAll = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
+                        .confirmationDialog("Bypass the repository's rules to merge every open pull request?", isPresented: $confirmBypassAll, titleVisibility: .visible) {
+                            Button("Merge all \(stack.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.count) as admin", role: .destructive) { Task { await center.mergeAllAsAdmin(stack) } }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Merges the open pull requests of this stack one after another, lowest first, overriding GitHub's rules for \(stack.trunk) on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                        }
+                }
                 Button("Merge as admin…") { confirmBypass = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
                     .confirmationDialog("Bypass the repository's rules to merge #\(n)?", isPresented: $confirmBypass, titleVisibility: .visible) {
                         Button("Merge #\(n) as admin", role: .destructive) { Task { await center.mergeBottom(stack, admin: true) } }
@@ -446,10 +488,14 @@ struct StackNode: View {
     let branch: StackBranch
     let stack: Stack
     let center = StackCenter.shared
+    /// 1, 2, 3 … down the open branches, the order "Merge from the bottom" takes them in.
+    private var order: Int? { branch.isMerged ? nil : stack.branches.filter { !$0.isMerged }.firstIndex(of: branch).map { $0 + 1 } }
+    private var isNext: Bool { stack.bottomOpen?.name == branch.name }
 
     var body: some View {
         HStack(spacing: 10) {
             Circle().fill(branch.isMerged ? Theme.ok : branch.needsRestack ? Theme.warn : Theme.accent).frame(width: 10, height: 10).offset(x: -19)
+            if let n = order { Text("\(n)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(isNext ? Theme.accent : .secondary).frame(width: 18).help("Merge order: the stack merges from 1 upwards") }
             VStack(alignment: .leading, spacing: 2) {
                 Text(branch.name).font(.system(size: 13, weight: .semibold, design: .monospaced)).lineLimit(1)
                 Text([branch.pr.map { "#\($0)" }, branch.title, "\(branch.commits) commit\(branch.commits == 1 ? "" : "s")"].compactMap { $0 }.joined(separator: " · ")).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
@@ -457,6 +503,7 @@ struct StackNode: View {
             .padding(.leading, CGFloat(branch.depth) * 14 - 8)
             Spacer()
             if branch.isMerged { Badge(text: "Merged", kind: .ok) }
+            else if isNext, !branch.needsRestack, branch.prState == "OPEN" { Badge(text: "Merges next", kind: .accent) }
             else if branch.needsRestack { Badge(text: "Behind", kind: .warn) }
             else if branch.prState == "OPEN" { Badge(text: "Open", kind: .accent) }
             else { Badge(text: "No PR yet") }

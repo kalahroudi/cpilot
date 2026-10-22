@@ -13,6 +13,8 @@ struct ChatView: View {
     /// Follows new messages while you are at the bottom; scrolling up lets go until you jump back.
     @State private var stickToBottom = true
     @State private var userScrolling = false
+    /// Long transcripts show only the latest rows at first; laying out thousands of rows at once is what made opening a session slow and blank.
+    @State private var shown = 60
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,11 +33,19 @@ struct ChatView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
+        // Grouped once per pass, not once per row.
+        let top = session.items.filter { $0.parent == nil }
+        let kids = Dictionary(grouping: session.items.filter { $0.parent != nil }, by: { $0.parent! })
+        let visible = top.suffix(shown)
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if session.items.isEmpty { if session.loading || !session.loaded { OpeningSession() } else { EmptyChat(session: session) } }
-                    ForEach(session.items.filter { $0.parent == nil }) { item in ChatRow(item: item, session: session, children: session.items.filter { $0.parent == item.id }).id(item.id) }
+                    if top.count > visible.count {
+                        Button("Show \(min(100, top.count - visible.count)) earlier messages (\(top.count - visible.count) hidden)") { shown += 100 }
+                            .buttonStyle(Pill(kind: .plain)).frame(maxWidth: .infinity)
+                    }
+                    ForEach(visible) { item in ChatRow(item: item, session: session, children: kids[item.id] ?? []).id(item.id) }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 20).padding(.vertical, 16)
@@ -51,6 +61,8 @@ struct ChatView: View {
             .onChange(of: session.items.last?.text) { _, _ in scroll(proxy) }
             .onChange(of: session.items.last(where: { $0.kind == .user })?.id) { _, _ in stickToBottom = true; scroll(proxy) }
             .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: session.loaded) { _, now in if now { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } } }
+            .onChange(of: session.id) { _, _ in shown = 60; stickToBottom = true }
             .overlay(alignment: .bottom) {
                 if !stickToBottom {
                     Button { stickToBottom = true; scroll(proxy) } label: { Label("Jump to latest", systemImage: "arrow.down") }

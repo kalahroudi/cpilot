@@ -40,6 +40,8 @@ final class Prefs {
     /// Let Claude rewrite recaps in friendlier language (a small, cheap call).
     var recapWithClaude: Bool { didSet { d.set(recapWithClaude, forKey: "recapWithClaude") } }
     /// How much the agent does by itself when turning an idea into a spec and a stack: "step", "plan" or "hands".
+    /// Offers "Merge all as admin" on a stack whose pull requests GitHub's rules block.
+    var adminMergeAll: Bool { didSet { d.set(adminMergeAll, forKey: "adminMergeAll") } }
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
@@ -63,7 +65,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -73,6 +75,7 @@ final class Prefs {
         localModelURL = d.string(forKey: "localModelURL") ?? SecurityCage.defaultModelURL
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
+        adminMergeAll = d.bool(forKey: "adminMergeAll")
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
         recall = d.bool(forKey: "recall")
