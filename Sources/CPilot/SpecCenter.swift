@@ -359,12 +359,23 @@ final class SpecCenter {
     func approve(_ id: String, text: String) async {
         guard let r = repo, let draft = jobs[id]?.draft else { return }
         let file = draft.stage == .specify ? "spec.md" : draft.stage == .plan ? "plan.md" : "tasks.md"
+        // Tasks that would edit the same files are built one after the other, as a stack, instead of as pull requests that conflict.
+        let text = draft.stage == .tasks ? Specs.orderOverlapping(text) : text
         do { try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/\(file)", text, in: r.dir, tracked: tracked) } }
         catch { let message = AppModel.shared.capture(error, action: "Save the \(file)"); change(id) { $0.error = message }; saveRun(id); return }
         change(id) { $0.draft = nil }
         saveRun(id)
         await refresh()
         await advance(id, after: draft.stage)
+    }
+
+    /// For a tasks.md edited or written by hand: makes tasks that touch the same files wait for each other.
+    func orderOverlapping(_ id: String) async {
+        guard let r = repo, let d = doc(id), let text = d.tasksText else { return }
+        let ordered = Specs.orderOverlapping(text)
+        guard ordered != text else { return }
+        try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", ordered, in: r.dir, tracked: tracked) }
+        await refresh()
     }
 
     func discard(_ id: String) { change(id) { $0.draft = nil }; saveRun(id) }

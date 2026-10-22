@@ -289,11 +289,11 @@ final class StackCenter {
         }
     }
 
-    /// Starts the resolver if none is running and waits until the branch has been moved onto its new base. Gives up after 40 minutes, leaving the card.
+    /// Starts the resolver if none is running and waits until the branch has been moved onto its new base. Gives up after the time set in Settings (never, when that says no limit), leaving the card.
     private func awaitResolution(of branch: String, dir: String) async throws {
         for c in await Stacks.pendingConflicts(in: dir) where c.branch == branch && c.isolated && !resolving.contains(branch) { await resolveWithAgent(c, show: false) }
         var waited = 0
-        while waited < 2400 {
+        while Prefs.shared.conflictWaitMinutes == 0 || waited < Prefs.shared.conflictWaitMinutes * 60 {
             try await Task.sleep(for: .seconds(5)); waited += 5
             await Stacks.reconcile(in: dir)
             let waiting = await Stacks.pendingConflicts(in: dir).first { $0.branch == branch }

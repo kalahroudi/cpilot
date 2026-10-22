@@ -285,6 +285,16 @@ struct SpecDetail: View {
                 Label { job.submitFailed ? AnyView(ErrorLine(text: note)) : AnyView(Text(note)) } icon: { Image(systemName: job.submitFailed ? "exclamationmark.triangle" : "checkmark.circle").foregroundStyle(job.submitFailed ? Theme.danger : Theme.ok) }
                     .font(.system(size: 12.5)).padding(.horizontal, 12).padding(.bottom, 10).frame(maxWidth: .infinity, alignment: .leading)
             }
+            let clashes = Specs.taskOverlaps(doc.tasks)
+            if !clashes.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Some tasks change the same files and do not wait for each other", systemImage: "square.on.square").font(.system(size: 12.5, weight: .semibold))
+                    ForEach(clashes, id: \.later) { o in
+                        Text("\(o.earlier) and \(o.later): \(o.paths.prefix(2).joined(separator: ", "))").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                    AsyncButton("Make \(clashes.count == 1 ? "\(clashes[0].later) wait for \(clashes[0].earlier)" : "them wait in order")") { await center.orderOverlapping(doc.id) }.buttonStyle(Pill(kind: .plain)).padding(.top, 2)
+                }.padding(.horizontal, 12).padding(.bottom, 10).frame(maxWidth: .infinity, alignment: .leading)
+            }
             ForEach(doc.tasks) { t in Divider(); TaskRow(doc: doc, task: t, ready: ready.contains { $0.id == t.id }) }
         }.background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
     }

@@ -9,10 +9,11 @@ public struct SpecTask: Identifiable, Equatable, Sendable {
     public var done: Bool
     public var covers: [String] = []      // R3
     public var needs: [String] = []       // T002
+    public var touches: [String] = []     // Sources/Hush/ComposeField.swift, or a folder
     public var branch: String?
     public var pr: Int?
-    public init(id: String, title: String, done: Bool, covers: [String] = [], needs: [String] = [], branch: String? = nil, pr: Int? = nil) {
-        self.id = id; self.title = title; self.done = done; self.covers = covers; self.needs = needs; self.branch = branch; self.pr = pr
+    public init(id: String, title: String, done: Bool, covers: [String] = [], needs: [String] = [], touches: [String] = [], branch: String? = nil, pr: Int? = nil) {
+        self.id = id; self.title = title; self.done = done; self.covers = covers; self.needs = needs; self.touches = touches; self.branch = branch; self.pr = pr
     }
 }
 
@@ -63,15 +64,16 @@ public enum Specs {
             let id = String(line[idRange])
             var rest = String(line[idRange.upperBound...]).trimmingCharacters(in: .whitespaces)
             var task = SpecTask(id: id, title: "", done: done)
-            // Metadata keys (needs:, branch:, pr:) run to the next key or the end of the line.
-            if let k = rest.range(of: #"\s(needs|branch|pr):"#, options: .regularExpression) {
+            // Metadata keys (needs:, touches:, branch:, pr:) run to the next key or the end of the line.
+            if let k = rest.range(of: #"\s(needs|touches|branch|pr):"#, options: .regularExpression) {
                 let meta = String(rest[k.lowerBound...]); rest = String(rest[..<k.lowerBound])
-                let pattern = try? NSRegularExpression(pattern: #"(needs|branch|pr):\s*(.*?)(?=\s(?:needs|branch|pr):|$)"#)
+                let pattern = try? NSRegularExpression(pattern: #"(needs|touches|branch|pr):\s*(.*?)(?=\s(?:needs|touches|branch|pr):|$)"#)
                 let ns = meta as NSString
                 for mm in pattern?.matches(in: meta, range: NSRange(location: 0, length: ns.length)) ?? [] {
                     let key = ns.substring(with: mm.range(at: 1)), val = ns.substring(with: mm.range(at: 2)).trimmingCharacters(in: .whitespaces)
                     switch key {
                     case "needs": task.needs = val.split(whereSeparator: { ", ".contains($0) }).map(String.init).filter { $0.hasPrefix("T") }
+                    case "touches": task.touches = val.split(whereSeparator: { ", ".contains($0) }).map(String.init)
                     case "branch": task.branch = val.isEmpty ? nil : val
                     default: task.pr = Int(val.replacingOccurrences(of: "#", with: ""))
                     }
@@ -91,13 +93,14 @@ public enum Specs {
         var s = "- [\(t.done ? "x" : " ")] \(t.id) \(t.title)"
         if !t.covers.isEmpty { s += " (\(t.covers.joined(separator: ", ")))" }
         if !t.needs.isEmpty { s += " needs: \(t.needs.joined(separator: ", "))" }
+        if !t.touches.isEmpty { s += " touches: \(t.touches.joined(separator: ", "))" }
         if let b = t.branch { s += " branch: \(b)" }
         if let p = t.pr { s += " pr: #\(p)" }
         return s
     }
 
     /// Changes one task's line (tick it, record its branch or pull request) and leaves the rest of the file as it was.
-    public static func updateTask(_ text: String, id: String, done: Bool? = nil, branch: String? = nil, pr: Int? = nil) -> String {
+    public static func updateTask(_ text: String, id: String, done: Bool? = nil, branch: String? = nil, pr: Int? = nil, needs: [String]? = nil) -> String {
         var lines = text.components(separatedBy: "\n")
         for i in lines.indices {
             guard let t = parseTasks(lines[i]).first, t.id == id else { continue }
@@ -105,9 +108,48 @@ public enum Specs {
             if let done { u.done = done }
             if let branch { u.branch = branch }
             if let pr { u.pr = pr }
+            if let needs { u.needs = needs }
             lines[i] = render(u)
         }
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: Tasks that change the same files
+
+    /// Two tasks that would change the same files without one waiting for the other, so their pull requests would conflict.
+    public struct TaskOverlap: Equatable, Sendable { public var earlier: String, later: String, paths: [String] }
+
+    static func samePlace(_ a: String, _ b: String) -> Bool {
+        let x = a.hasSuffix("/") ? String(a.dropLast()) : a, y = b.hasSuffix("/") ? String(b.dropLast()) : b
+        return x == y || x.hasPrefix(y + "/") || y.hasPrefix(x + "/")
+    }
+
+    /// Unfinished tasks that name overlapping places in `touches:` and are not already ordered by `needs:` (directly or through others).
+    public static func taskOverlaps(_ tasks: [SpecTask]) -> [TaskOverlap] {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func reaches(_ from: String, _ to: String, _ seen: inout Set<String>) -> Bool {
+            guard seen.insert(from).inserted, let t = byID[from] else { return false }
+            return t.needs.contains(to) || t.needs.contains { reaches($0, to, &seen) }
+        }
+        let open = tasks.filter { !$0.done && !$0.touches.isEmpty }
+        var out: [TaskOverlap] = []
+        for (i, a) in open.enumerated() { for b in open[(i + 1)...] {
+            var s1 = Set<String>(), s2 = Set<String>()
+            if reaches(a.id, b.id, &s1) || reaches(b.id, a.id, &s2) { continue }
+            let shared = a.touches.filter { p in b.touches.contains { samePlace(p, $0) } }
+            if !shared.isEmpty { out.append(TaskOverlap(earlier: a.id, later: b.id, paths: shared)) }
+        } }
+        return out
+    }
+
+    /// Makes overlapping tasks wait for each other, the later one on the earlier one, so they are built as a stack and cannot conflict.
+    public static func orderOverlapping(_ text: String) -> String {
+        var out = text
+        for o in taskOverlaps(parseTasks(text)) {
+            guard let t = parseTasks(out).first(where: { $0.id == o.later }) else { continue }
+            out = updateTask(out, id: o.later, needs: t.needs + [o.earlier])
+        }
+        return out
     }
 
     /// The questions listed under "Open questions" in a spec.
@@ -266,7 +308,7 @@ public enum SpecPrompts {
     }
 
     public static func tasks(spec: String, plan: String, constitution: String?) -> String {
-        context(constitution: constitution) + "Break this plan into tasks. Each task must be small enough for one pull request (roughly 300 changed lines or fewer) and independently reviewable. Order them so each builds on the ones it needs. Reply with ONLY the contents of tasks.md.\n\nUse exactly this format, one task per line, no other list items:\n# Tasks: <title>\n- [ ] T001 <imperative title> (R1, R2)\n- [ ] T002 <imperative title> (R2) needs: T001\n\nRules: ids are T001, T002, ...; the parentheses list the requirement ids from the spec the task covers; \"needs:\" lists task ids that must be finished first, only when truly required; tasks that do not depend on each other should not list needs. Include the tests inside the task they test.\n\nThe spec:\n\(spec)\n\nThe plan:\n\(plan)"
+        context(constitution: constitution) + "Break this plan into tasks. Each task must be small enough for one pull request (roughly 300 changed lines or fewer) and independently reviewable. Order them so each builds on the ones it needs. Name the files or folders each task will change, as paths from the repository root, so tasks that would edit the same file can be built one after the other instead of conflicting. Reply with ONLY the contents of tasks.md.\n\nUse exactly this format, one task per line, no other list items:\n# Tasks: <title>\n- [ ] T001 <imperative title> (R1, R2)\n- [ ] T002 <imperative title> (R2) needs: T001 touches: Sources/App/Feature.swift, Tests/FeatureTests.swift\n\nRules: ids are T001, T002, ...; the parentheses list the requirement ids from the spec the task covers; \"needs:\" lists task ids that must be finished first, only when truly required; tasks that do not depend on each other should not list needs. Include the tests inside the task they test. \"touches:\" is a comma separated list of existing or new paths (a folder ends with a slash), written last on the line; two tasks that touch the same file must be ordered with \"needs:\".\n\nThe spec:\n\(spec)\n\nThe plan:\n\(plan)"
     }
 
     public static func implement(task: SpecTask, spec: SpecDoc, constitution: String?) -> String {

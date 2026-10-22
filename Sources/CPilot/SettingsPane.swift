@@ -96,6 +96,9 @@ struct SettingsPane: View {
                 }
                 SettingRow("Offer \"Merge all as admin\"", "On a stack that GitHub's rules block, merges every open pull request in order past those rules, after one confirmation. Each still needs its checks to pass. Off keeps the one-at-a-time button.") { toggle($p.adminMergeAll) }
                 SettingRow("Resolve stack conflicts with Claude", "When a restack stops on a conflict, a session starts by itself in a temporary copy to resolve it. Merge all as admin waits for it and carries on. Off keeps it a button.") { toggle($p.autoResolveConflicts) }
+                if prefs.autoResolveConflicts { SettingRow("Wait for a conflict up to", "How long Merge all as admin waits for Claude to resolve a conflict before it stops and leaves the conflict card.") {
+                    Segmented(options: [(10, "10 min"), (40, "40 min"), (120, "2 h"), (0, "No limit")], selection: $p.conflictWaitMinutes)
+                } }
                 SettingRow("Archive finished specs", "A spec moves to its archive folder by itself when its last task merges. Archived specs are not read again and can be restored from the Specs list.") { toggle($p.autoArchiveSpecs) }
             }
             SettingsGroup("Memory") {
