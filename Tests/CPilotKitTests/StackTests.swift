@@ -225,6 +225,56 @@ final class StackTests: XCTestCase {
         let none = await Stacks.pendingConflict(in: dir); XCTAssertNil(none)
     }
 
+    func testOverlapNamesFilesSharedAcrossStacksOnly() async throws {
+        let o = Stacks.overlaps(changes: ["t002": ["ComposeField.swift", "a"], "t006": ["ComposeField.swift"], "t007": ["z"], "t002b": ["ComposeField.swift"]],
+                                sameStack: { Set([$0, $1]) == ["t002", "t002b"] })
+        XCTAssertEqual(o.map { "\($0.first)+\($0.second)" }, ["t002+t006", "t002b+t006"])
+        XCTAssertEqual(o.first?.files, ["ComposeField.swift"])
+    }
+
+    func testOverlapReadsTheRealDiffs() async throws {
+        try await sh(["checkout", "-b", "p"]); try await commit("shared.txt", "p\n", "p")
+        try await sh(["checkout", "main"]); try await sh(["checkout", "-b", "q"]); try await commit("shared.txt", "q\n", "q")
+        try await sh(["checkout", "main"])
+        func branch(_ n: String) -> StackBranch { var b = StackBranch(name: n, parent: "main", base: nil, depth: 0); b.prState = "OPEN"; b.pr = 1; return b }
+        let o = await Stacks.overlaps(of: [Stack(trunk: "main", branches: [branch("p")]), Stack(trunk: "main", branches: [branch("q")])], in: dir)
+        XCTAssertEqual(o, [Stacks.Overlap(first: "p", second: "q", files: ["shared.txt"])])
+    }
+
+    func testWorktreesAreListedClassifiedAndRemoved() async throws {
+        try await buildStack()
+        let wt = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        defer { try? FileManager.default.removeItem(atPath: wt) }
+        try await sh(["checkout", "main"]); try await sh(["worktree", "add", wt, "b"])
+        try write("x.txt", "wip\n"); try "wip\n".write(toFile: wt + "/b-wip.txt", atomically: true, encoding: .utf8)
+        try await sh(["add", "b-wip.txt"], in: wt)
+        var list = await Worktrees.list(in: dir)
+        XCTAssertEqual(list.count, 2); XCTAssertEqual(list[0].kind, .main)
+        XCTAssertEqual(list[1].kind, .other); XCTAssertEqual(list[1].branch, "b"); XCTAssertEqual(list[1].uncommitted, 1); XCTAssertTrue(list[1].holdsWork)
+        let top = try await sh(["rev-parse", "--show-toplevel"], in: wt)
+        list = await Worktrees.list(in: dir, sessionPaths: [top]); XCTAssertEqual(list[1].kind, .session)
+        do { try await Worktrees.remove(list[0], in: dir, deleteBranch: false); XCTFail("main cannot go") } catch {}
+        try await Worktrees.remove(list[1], in: dir, deleteBranch: true)
+        let after = await Worktrees.list(in: dir); XCTAssertEqual(after.count, 1)
+        let kept = try await sh(["branch", "--list", "b"]); XCTAssertFalse(kept.isEmpty)           // the branch held unsaved work, so it stays
+    }
+
+    func testAFolderDeletedBehindGitsBackIsPrunedAndALeftoverRestackFolderIsClearedWithItsJob() async throws {
+        let stack = try await conflictSetup()
+        do { _ = try await Stacks.restack(stack, in: dir) } catch {}
+        let listed = await Worktrees.list(in: dir)
+        let leftover = try XCTUnwrap(listed.first { $0.kind == .restack })
+        XCTAssertTrue(leftover.rebasing)
+        try await Worktrees.remove(leftover, in: dir, deleteBranch: false)
+        let jobs = await Stacks.jobs(in: dir); XCTAssertTrue(jobs.isEmpty)
+        let none = await Stacks.pendingConflicts(in: dir); XCTAssertTrue(none.isEmpty)
+        let gone = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        try await sh(["worktree", "add", gone, "a"]); try FileManager.default.removeItem(atPath: gone)
+        let stale = await Worktrees.list(in: dir); XCTAssertTrue(stale.contains { $0.missing })
+        await Worktrees.prune(in: dir)
+        let clean = await Worktrees.list(in: dir); XCTAssertFalse(clean.contains { $0.missing })
+    }
+
     func testSubmitCreatesChainedPullRequestsThenUpdates() async throws {
         try await buildStack()
         let host = FakeHost()

@@ -207,20 +207,20 @@ public enum Stacks {
     /// Where the temporary folders for restacking live. Tests point this somewhere disposable.
     nonisolated(unsafe) public static var restackRootOverride: String?
 
-    static func restackRoot() -> String {
+    public static func restackRoot() -> String {
         if let o = restackRootOverride { return o }
         if let r = Exec.environment { return "\(r.remoteHome)/.cpilot/restack" }
         return AppPaths().root.appendingPathComponent("restack").path
     }
 
     /// One branch being rebased in a folder of its own. Kept in the repository's git config so it survives a restart.
-    struct Job: Equatable { var id: String, branch: String, oldTip: String, newBase: String, parent: String, path: String }
+    public struct Job: Equatable { var id: String, branch: String, oldTip: String, newBase: String, parent: String, path: String }
 
     static func jobID(_ branch: String) -> String {
         String(branch.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" })
     }
 
-    static func jobs(in dir: String) async -> [Job] {
+    public static func jobs(in dir: String) async -> [Job] {
         guard let out = try? await git(["config", "--get-regexp", #"^cpilot-restack\."#], in: dir) else { return [] }
         var fields: [String: [String: String]] = [:]
         for line in out.split(separator: "\n") {
@@ -236,7 +236,7 @@ public enum Stacks {
         }.sorted { $0.id < $1.id }
     }
 
-    static func dropJob(_ j: Job, in dir: String) async {
+    public static func dropJob(_ j: Job, in dir: String) async {
         _ = try? await Shell.run("git", ["worktree", "remove", "--force", j.path], cwd: cwd(dir))
         _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
         _ = try? await Shell.run("git", ["config", "--remove-section", "cpilot-restack.\(j.id)"], cwd: cwd(dir))
@@ -257,7 +257,7 @@ public enum Stacks {
         return job
     }
 
-    static func rebaseInProgress(in path: String) async -> Bool {
+    public static func rebaseInProgress(in path: String) async -> Bool {
         for sub in ["rebase-merge", "rebase-apply"] {
             guard let rel = try? await git(["rev-parse", "--git-path", sub], in: path) else { continue }
             let base = rel.hasPrefix("/") ? rel : path + "/" + rel
@@ -412,6 +412,35 @@ public enum Stacks {
             if !left.isEmpty { throw StackError.message("Still unresolved: \(left.joined(separator: ", ")). Resolve them (and git add), then continue.") }
             throw StackError.message(r.stderr.isEmpty ? "The rebase could not continue." : r.stderr)
         }
+    }
+
+    // MARK: Overlap
+
+    /// Two open branches that change the same files. Whichever merges second has to be rebased over the first.
+    public struct Overlap: Equatable, Sendable { public var first: String, second: String, files: [String] }
+
+    /// Pure: which branches share files, given what each one changes. Branches of one stack build on each other and are not compared.
+    public static func overlaps(changes: [String: Set<String>], sameStack: (String, String) -> Bool = { _, _ in false }) -> [Overlap] {
+        let names = changes.keys.sorted()
+        var out: [Overlap] = []
+        for (i, a) in names.enumerated() { for b in names[(i + 1)...] where !sameStack(a, b) {
+            let shared = changes[a]!.intersection(changes[b]!).sorted()
+            if !shared.isEmpty { out.append(Overlap(first: a, second: b, files: shared)) }
+        } }
+        return out
+    }
+
+    /// The files each open branch changes on top of its parent, compared across stacks.
+    public static func overlaps(of stacks: [Stack], in dir: String) async -> [Overlap] {
+        var changes: [String: Set<String>] = [:], home: [String: Int] = [:]
+        for (i, st) in stacks.enumerated() {
+            for b in st.branches where !b.isMerged && b.prState == "OPEN" {
+                let base = st.branches.first(where: { $0.name == b.parent && !$0.isMerged })?.name ?? st.trunk
+                let out = (try? await git(["diff", "--name-only", "\(base)...\(b.name)"], in: dir)) ?? ""
+                changes[b.name] = Set(out.split(separator: "\n").map(String.init)); home[b.name] = i
+            }
+        }
+        return overlaps(changes: changes, sameStack: { home[$0] == home[$1] })
     }
 
     // MARK: Submit and merge

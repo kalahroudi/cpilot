@@ -18,6 +18,12 @@ final class StackCenter {
     var error: String?
     /// Restacks stopped on a conflict, each in a folder of its own. Only the stack that owns one waits.
     var conflicts: [Stacks.PendingConflict] = []
+    /// Open pull requests in different stacks that change the same files, so the second to merge has to be rebased over the first.
+    var overlaps: [Stacks.Overlap] = []
+    /// Every checkout of the repository, for cleaning up the ones nothing uses any more.
+    var worktrees: [WorktreeInfo] = []
+    /// Conflicts a session was already started for, so each is offered to Claude once.
+    private var resolving: Set<String> = []
     func conflict(in stack: Stack) -> Stacks.PendingConflict? { conflicts.first { c in stack.branches.contains { $0.name == c.branch } } }
     var notice: String?
     var method: MergeMethod = .squash
@@ -139,6 +145,12 @@ final class StackCenter {
         stacks = loaded; checks = results; noteBlocked(); store(r)
         // A conflict is whatever the repository says it is: a rebase stopped part-way. It survives a restart, and it clears once resolved or aborted.
         conflicts = await Exec.with(env) { await Stacks.pendingConflicts(in: r.dir) }
+        overlaps = await Exec.with(env) { await Stacks.overlaps(of: loaded, in: r.dir) }
+        await loadWorktrees()
+        resolving.formIntersection(conflicts.map(\.branch))
+        if Prefs.shared.autoResolveConflicts {
+            for c in conflicts where c.isolated && resolving.insert(c.branch).inserted { await resolveWithAgent(c, show: false) }
+        }
         if manual { AppModel.shared.show(stacks.isEmpty ? "Refreshed. No stacks in this repository." : "Refreshed \(stacks.count) stack\(stacks.count == 1 ? "" : "s").", error: false) }
     }
 
@@ -225,10 +237,18 @@ final class StackCenter {
                 try await self.waitUntilReady(n, dir: dir, merged: merged)
                 do { merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host)) }
                 catch let e as StackError {
-                    guard case .conflict = e else { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + e.localizedDescription) }
-                    // The conflict card above says what to do; the merges that did land stay in the notice.
-                    if !merged.isEmpty { self.notice = "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped on a conflict." }
-                    throw e
+                    guard case .conflict(let branch, _) = e else { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + e.localizedDescription) }
+                    // A conflict only turns up after the merge itself went through, while the rest of the stack is restacked.
+                    merged.append(n)
+                    guard Prefs.shared.autoResolveConflicts else {
+                        self.notice = "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped on a conflict."
+                        throw e
+                    }
+                    self.notice = "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")). Claude is resolving the conflict in \(branch), then this carries on."
+                    self.busy = "Waiting for Claude to resolve \(branch)"
+                    try await self.finish(afterConflictIn: branch, dir: dir, host: host)
+                    todo.remove(n)
+                    continue
                 }
                 catch { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + error.localizedDescription) }
                 todo.remove(n)
@@ -248,10 +268,44 @@ final class StackCenter {
             if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
             throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
         }
+        try await afterMerge(dir: dir, host: host)
+        return n
+    }
+
+    /// Brings the trunk in, restacks what is left, submits it and clears what merged.
+    private func afterMerge(dir: String, host: StackHost) async throws {
         _ = try await Stacks.sync(in: dir, host: host)
         if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
         if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
-        return n
+    }
+
+    /// Waits for the conflict in `branch` to be resolved, then does the rest of what the merge step was doing. A new conflict further up is waited for the same way.
+    private func finish(afterConflictIn branch: String, dir: String, host: StackHost) async throws {
+        var branch = branch
+        while true {
+            try await awaitResolution(of: branch, dir: dir)
+            do { try await afterMerge(dir: dir, host: host); return }
+            catch StackError.conflict(let next, _) { branch = next; self.busy = "Waiting for Claude to resolve \(next)" }
+        }
+    }
+
+    /// Starts the resolver if none is running and waits until the branch has been moved onto its new base. Gives up after 40 minutes, leaving the card.
+    private func awaitResolution(of branch: String, dir: String) async throws {
+        for c in await Stacks.pendingConflicts(in: dir) where c.branch == branch && c.isolated && !resolving.contains(branch) { await resolveWithAgent(c, show: false) }
+        var waited = 0
+        while waited < 2400 {
+            try await Task.sleep(for: .seconds(5)); waited += 5
+            await Stacks.reconcile(in: dir)
+            let waiting = await Stacks.pendingConflicts(in: dir).first { $0.branch == branch }
+            if let waiting {
+                if waited % 60 == 0 { self.notice = "Still waiting for the conflict in \(waiting.branch) (\(waiting.files.joined(separator: ", ")))." }
+                continue
+            }
+            let landed = await Stacks.load(in: dir).flatMap(\.branches).first { $0.name == branch }?.needsRestack == false
+            if landed { return }
+            throw StackError.message("The conflict in \(branch) was aborted, so merging stopped.")
+        }
+        throw StackError.conflict(branch: branch, files: await Stacks.pendingConflicts(in: dir).first { $0.branch == branch }?.files ?? [])
     }
 
     func create(_ name: String) async {
@@ -259,6 +313,39 @@ final class StackCenter {
             try await Stacks.create(Git.slugify(name), in: dir)
             return "Created \(Git.slugify(name)) on top of your current branch."
         }
+    }
+
+    func loadWorktrees() async {
+        guard let r = repo else { return }
+        let owned = Set(Workspace.shared.sessions.compactMap(\.worktree))
+        worktrees = await Exec.with(env) { await Worktrees.list(in: r.dir, sessionPaths: owned) }
+    }
+
+    /// The session that owns this folder, if any.
+    func session(for w: WorktreeInfo) -> SessionMeta? { Workspace.shared.sessions.first { $0.worktree == w.path } }
+
+    /// A session's copy goes through the session, which asks first when it holds work. Anything else is removed here.
+    func removeWorktree(_ w: WorktreeInfo, deleteBranch: Bool) async {
+        guard let r = repo else { return }
+        if let s = session(for: w) { Workspace.shared.requestDelete(s.id); try? await Task.sleep(for: .seconds(1)); await refresh(); return }
+        do { try await Exec.with(env) { try await Worktrees.remove(w, in: r.dir, deleteBranch: deleteBranch) } }
+        catch { self.error = error.localizedDescription }
+        await refresh()
+        if error == nil { notice = "Removed \(URL(fileURLWithPath: w.path).lastPathComponent)." }
+    }
+
+    /// What can go without losing anything: records of missing folders, and copies nothing uses and that hold no work.
+    var removable: [WorktreeInfo] { worktrees.filter { $0.kind != .main && $0.kind != .session && !$0.holdsWork && !$0.rebasing || $0.missing } }
+
+    func cleanUpWorktrees() async {
+        guard let r = repo else { return }
+        let list = removable
+        await Exec.with(env) {
+            for w in list { try? await Worktrees.remove(w, in: r.dir, deleteBranch: false) }
+            await Worktrees.prune(in: r.dir)
+        }
+        await refresh()
+        notice = list.isEmpty ? "Nothing to clean up." : "Removed \(list.count) unused cop\(list.count == 1 ? "y" : "ies")."
     }
 
     /// The branch was never touched by the stopped restack, so giving up loses nothing.
@@ -276,15 +363,16 @@ final class StackCenter {
 
     /// Always a session of its own, started in the folder where the rebase is stopped. Reusing the branch's earlier session would put the
     /// agent in a different folder, and that session may be stopped.
-    func resolveWithAgent(_ c: Stacks.PendingConflict) async {
+    func resolveWithAgent(_ c: Stacks.PendingConflict, show: Bool = true) async {
         guard let r = repo else { return }
+        resolving.insert(c.branch)
         guard let c = await Exec.with(env, { await Stacks.pendingConflicts(in: r.dir) }).first(where: { $0.branch == c.branch }) else { await refresh(); return }
         let files = c.files.isEmpty ? "the conflicted files (see `git status`)" : c.files.joined(separator: ", ")
         let prompt = "A restack of the branch \(c.branch) stopped on a merge conflict in \(files). The rebase is stopped in this folder\(c.isolated ? ", a temporary copy made only for it" : ""). Resolve the conflict markers so both sides' intent is kept, run the tests, `git add` the files and run `git -c core.editor=true rebase --continue`. If more conflicts appear, resolve them the same way. Do not switch branches, do not push and do not commit anything else: CPilot moves the branch itself once the rebase has finished."
         let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
         do {
             try await Workspace.shared.create(.init(folder: c.dir, access: level, firstMessage: prompt, environment: r.environment, title: "Resolve conflict: \(c.branch)"))
-            AppDelegate.shared.showManager(pane: .sessions)
+            if show { AppDelegate.shared.showManager(pane: .sessions) } else { notice = "Claude is resolving the conflict in \(c.branch). Stacks carries on when it is done." }
         } catch { AppModel.shared.fail(error, action: "Start the session that resolves the conflict") }
     }
 }
@@ -296,6 +384,9 @@ struct StacksView: View {
     @State private var confirmBypassEvery = false
     @State private var splitting = false
     @State private var startOpen = false
+    @State private var worktreesOpen = false
+    @State private var confirmCleanUp = false
+    @State private var removing: WorktreeInfo?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -320,9 +411,11 @@ struct StacksView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         banners
                         mergeEverything
+                        overlapNotice
                         if center.stacks.isEmpty && !center.loading { Text("No stacks yet. Start one below.").font(.system(size: 13)).foregroundStyle(.secondary) }
                         ForEach(center.stacks.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }) { s in StackCard(stack: s) }
                         startSection
+                        worktreesSection
                     }.padding(22).frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity)
                 }
             }
@@ -339,6 +432,27 @@ struct StacksView: View {
             guard let n = s.bottomOpen?.pr else { return false }
             return center.policyBlocked.contains(n) || s.bottomOpen?.mergeState == "BLOCKED"
         }.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }
+    }
+
+    private func title(of branch: String) -> String {
+        guard let t = center.stacks.flatMap(\.branches).first(where: { $0.name == branch })?.title, !t.isEmpty else { return branch }
+        return t.split(separator: ":").first.map(String.init) ?? branch
+    }
+
+    /// Told before anything merges, so a conflict is no surprise: the second of two pull requests that change the same file is rebased over the first.
+    @ViewBuilder private var overlapNotice: some View {
+        if !center.overlaps.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Some pull requests change the same files", systemImage: "square.on.square").font(.system(size: 12.5, weight: .semibold))
+                ForEach(center.overlaps.prefix(5), id: \.first) { o in
+                    Text("\(title(of: o.first)) and \(title(of: o.second)): \(o.files.prefix(2).joined(separator: ", "))\(o.files.count > 2 ? " and \(o.files.count - 2) more" : "")")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                if center.overlaps.count > 5 { Text("and \(center.overlaps.count - 5) more pairs").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                Text(Prefs.shared.autoResolveConflicts ? "Whichever merges second is rebased over the first. If that conflicts, Claude resolves it in a temporary copy and merging carries on." : "Whichever merges second is rebased over the first, and you resolve any conflict from here.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+        }
     }
 
     /// One button for all of them, for the common case of many one-pull-request stacks that each wait on the same rule.
@@ -358,7 +472,7 @@ struct StacksView: View {
                         Button("Merge all \(total) as admin", role: .destructive) { Task { await center.mergeEveryAsAdmin(blocked) } }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                        Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. \(center.overlaps.isEmpty ? "" : "Some change the same files: a conflict is resolved in a temporary copy\(Prefs.shared.autoResolveConflicts ? " by Claude, and merging carries on" : " and waits for you"). ")The merges are recorded as bypasses. You can turn this button off in Settings.")
                     }
             }.padding(12).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 10))
         }
@@ -415,6 +529,83 @@ struct StacksView: View {
         }
         .padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
         .animation(.easeInOut(duration: 0.2), value: open)
+    }
+}
+
+extension StacksView {
+    private func label(_ w: WorktreeInfo) -> (text: String, kind: Badge.Kind) {
+        switch w.kind {
+        case .main: ("Your folder", .neutral)
+        case .restack: (w.rebasing ? "Conflict copy" : "Restack copy", w.rebasing ? .warn : .neutral)
+        case .session: (center.session(for: w).map { _ in "Session" } ?? "Session", .accent)
+        case .other: ("Leftover", .warn)
+        }
+    }
+
+    private func shortPath(_ p: String) -> String { p.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+
+    /// Every checkout of this repository, so the copies sessions and restacks leave behind can be seen and removed.
+    @ViewBuilder var worktreesSection: some View {
+        let list = center.worktrees
+        if list.count > 1 || list.contains(where: \.missing) {
+            let open = worktreesOpen
+            let unused = center.removable.count
+            VStack(spacing: 0) {
+                Button { worktreesOpen.toggle() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Worktrees (\(list.count - 1))").font(.system(size: 13, weight: .semibold))
+                            Text(unused > 0 ? "\(unused) unused cop\(unused == 1 ? "y" : "ies") can go without losing anything." : "Copies of this repository that sessions and restacks work in.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if unused > 0 { Badge(text: "\(unused) unused", kind: .warn) }
+                    }.padding(.vertical, 10).contentShape(Rectangle())
+                }.buttonStyle(.soft)
+                if open {
+                    Divider()
+                    HStack {
+                        Text("Remove what nothing uses, and clear records of folders that are gone.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Clean up unused…") { confirmCleanUp = true }.buttonStyle(Pill(kind: .plain)).disabled(unused == 0 && !list.contains(where: \.missing))
+                            .confirmationDialog("Remove \(unused) unused cop\(unused == 1 ? "y" : "ies")?", isPresented: $confirmCleanUp, titleVisibility: .visible) {
+                                Button("Remove", role: .destructive) { Task { await center.cleanUpWorktrees() } }
+                                Button("Cancel", role: .cancel) {}
+                            } message: { Text("Only copies with no uncommitted changes and no unpushed commits, and none with a conflict waiting. Sessions are never touched here.") }
+                    }.padding(.vertical, 8)
+                    ForEach(list) { w in
+                        Divider()
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(w.branch ?? "detached \(w.head)").font(.system(size: 12.5, weight: .semibold, design: .monospaced)).lineLimit(1)
+                                    Badge(text: label(w).text, kind: label(w).kind)
+                                    if w.missing { Badge(text: "Folder missing", kind: .danger) }
+                                    if w.uncommitted > 0 { Badge(text: "\(w.uncommitted) uncommitted", kind: .warn) }
+                                    if w.unpushed > 0 { Badge(text: "\(w.unpushed) not pushed", kind: .warn) }
+                                }
+                                Text(shortPath(w.path)).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                if let s = center.session(for: w) { Text("Used by the session \"\(s.title)\"").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                            }
+                            Spacer()
+                            if w.kind != .main {
+                                Button(center.session(for: w) != nil ? "Delete session…" : w.missing ? "Clear" : "Remove…") {
+                                    if w.holdsWork || center.session(for: w) != nil { removing = w } else { Task { await center.removeWorktree(w, deleteBranch: false) } }
+                                }.buttonStyle(Pill(kind: .plain))
+                            }
+                        }.padding(.vertical, 8)
+                    }
+                }
+            }
+            .padding(.horizontal, 14).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
+            .confirmationDialog("Remove this copy?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible, presenting: removing) { w in
+                Button(center.session(for: w) != nil ? "Delete the session" : "Remove it", role: .destructive) { Task { await center.removeWorktree(w, deleteBranch: false) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { w in
+                Text(center.session(for: w) != nil ? "Deleting the session removes this copy. CPilot asks again if it holds work that exists nowhere else."
+                     : "It holds \([w.uncommitted > 0 ? "\(w.uncommitted) uncommitted change\(w.uncommitted == 1 ? "" : "s")" : nil, w.unpushed > 0 ? "\(w.unpushed) commit\(w.unpushed == 1 ? "" : "s") that no remote has" : nil].compactMap { $0 }.joined(separator: " and ")). Removing it loses that for good. The branch is kept.")
+            }
+        }
     }
 }
 

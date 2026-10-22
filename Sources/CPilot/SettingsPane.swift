@@ -95,6 +95,7 @@ struct SettingsPane: View {
                     Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
                 }
                 SettingRow("Offer \"Merge all as admin\"", "On a stack that GitHub's rules block, merges every open pull request in order past those rules, after one confirmation. Each still needs its checks to pass. Off keeps the one-at-a-time button.") { toggle($p.adminMergeAll) }
+                SettingRow("Resolve stack conflicts with Claude", "When a restack stops on a conflict, a session starts by itself in a temporary copy to resolve it. Merge all as admin waits for it and carries on. Off keeps it a button.") { toggle($p.autoResolveConflicts) }
                 SettingRow("Archive finished specs", "A spec moves to its archive folder by itself when its last task merges. Archived specs are not read again and can be restored from the Specs list.") { toggle($p.autoArchiveSpecs) }
             }
             SettingsGroup("Memory") {
