@@ -34,8 +34,8 @@ final class Project {
             var found: [String: String] = [:]
             for r in refs where roots[r.key] == nil && found[r.key] == nil {
                 let env = Workspace.shared.environment(r.environment)
-                let top = await Exec.with(env) { try? await Shell.check("git", ["rev-parse", "--show-toplevel"], cwd: URL(fileURLWithPath: r.dir)) }
-                let t = top?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let top = await Exec.with(env) { await Git.mainRoot(r.dir) }
+                let t = top ?? ""
                 found[r.key] = t.isEmpty ? r.dir : t
             }
             roots.merge(found) { $1 }
@@ -55,7 +55,10 @@ final class Project {
     /// Whether a session belongs to the active repository (a session in a subfolder counts). Every list of sessions follows the repository.
     func owns(_ m: SessionMeta) -> Bool {
         guard let c = current else { return true }
-        return c.environment == m.environment && RepoRef(dir: c.dir, environment: c.environment).contains(m.cwd)
+        guard c.environment == m.environment else { return false }
+        let own = RepoRef(dir: m.cwd, environment: m.environment).key
+        if let root = roots[own] { return root == c.dir || RepoRef(dir: c.dir, environment: c.environment).contains(root) }
+        return RepoRef(dir: c.dir, environment: c.environment).contains(m.cwd)
     }
 
     func choose(_ r: PRCenter.Repo) { current = r }

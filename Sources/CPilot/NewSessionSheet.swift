@@ -27,12 +27,6 @@ struct NewSessionSheet: View {
     @State private var picking = false
     private var env: EnvironmentConfig? { ws.environment(envId) }
 
-    private var recents: [String] {
-        var seen = Set<String>(), out: [String] = []
-        for m in ws.sessions where m.environment == envId && !seen.contains(m.cwd) { seen.insert(m.cwd); out.append(m.cwd) }
-        return Array(out.prefix(4))
-    }
-
     private var folderLabel: String { env == nil ? folder.replacingOccurrences(of: NSHomeDirectory(), with: "~") : folder }
     private var agentName: String { agentOptions.first { $0.0 == backend }?.1 ?? "Claude" }
 
@@ -66,13 +60,6 @@ struct NewSessionSheet: View {
                         Spacer(minLength: 4)
                         Button("Choose…") { if env != nil { picking = true } else { choose() } }.buttonStyle(Pill(kind: .plain))
                         if env == nil { Button("Clone…") { showClone = true; Task { repos = await GitHub.repos() } }.buttonStyle(Pill(kind: .plain)).help("Clone from GitHub") }
-                    }
-                    if !recents.isEmpty {
-                        FlowLayout(spacing: 6) {
-                            ForEach(recents, id: \.self) { r in
-                                Button { folder = r } label: { Badge(text: URL(fileURLWithPath: r).lastPathComponent, kind: r == folder ? .accent : .neutral) }.buttonStyle(.soft)
-                            }
-                        }
                     }
                 } note: {
                     if let info { "Git repository" + (info.remote.map { " · \($0)" } ?? "") + (info.dirty ? " · has uncommitted changes" : " · clean") }

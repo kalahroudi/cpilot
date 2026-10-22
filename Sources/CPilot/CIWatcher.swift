@@ -54,8 +54,7 @@ final class CIWatcher {
     private func repoKey(_ r: PRCenter.Repo) async -> String? {
         let k = r.dir + "|" + (r.environment ?? "")
         if let known = topLevels[k] { return known }
-        let top = (try? await Shell.check("git", ["rev-parse", "--show-toplevel"], cwd: URL(fileURLWithPath: r.dir)))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let top = await Git.mainRoot(r.dir)
         let key = top.flatMap { $0.isEmpty ? nil : $0 + "|" + (r.environment ?? "") }
         topLevels[k] = key
         return key

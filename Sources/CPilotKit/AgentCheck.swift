@@ -39,6 +39,7 @@ public enum AgentCheck {
                     let why = signIn ? said : "Starts, but is not signed in."
                     return Result(state: .needsSignIn, detail: why)
                 } catch {
+                    if let why = explain(client.recentLog, agent: agent.name, on: env) { return Result(state: .failed, detail: why) }
                     let log = client.recentLog.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
                     return Result(state: .failed, detail: log.isEmpty ? error.localizedDescription : "\(error.localizedDescription) \(log)")
                 }
@@ -53,6 +54,18 @@ public enum AgentCheck {
             group.cancelAll()
             return first
         }
+    }
+
+    /// A plain reason for a failure the agent's own output explains, so the check does not end on "signal: aborted".
+    /// A build made for one memory page size aborts on a machine that uses another, as on a Raspberry Pi 5 with its default 16 KB kernel.
+    static func explain(_ log: String, agent: String, on env: EnvironmentConfig?) -> String? {
+        guard let line = log.split(separator: "\n").last(where: { $0.contains("page size") && $0.contains(" vs") }),
+              let m = line.range(of: #"\((\d+) vs\.? (\d+)\)"#, options: .regularExpression) else { return nil }
+        let nums = line[m].split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard nums.count == 2 else { return nil }
+        let (have, built) = (nums[0] / 1024, nums[1] / 1024)
+        let where_ = env.map { "\($0.name) runs" } ?? "this machine runs"
+        return "\(agent) was built for \(built) KB memory pages, but \(where_) \(have) KB pages. On a Raspberry Pi 5 that is the default kernel: add `kernel=kernel8.img` under [all] in /boot/firmware/config.txt and reboot to use the \(built) KB one."
     }
 
     static func claude(on env: EnvironmentConfig?) async -> Result {
