@@ -214,6 +214,12 @@ final class StackCenter {
                 self.busy = "Merging #\(n)"
                 try await self.waitUntilReady(n, dir: dir, merged: merged)
                 do { merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host)) }
+                catch let e as StackError {
+                    guard case .conflict = e else { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + e.localizedDescription) }
+                    // The conflict card above says what to do; the merges that did land stay in the notice.
+                    if !merged.isEmpty { self.notice = "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped on a conflict." }
+                    throw e
+                }
                 catch { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + error.localizedDescription) }
                 todo.remove(n)
             }
