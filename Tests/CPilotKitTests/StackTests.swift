@@ -16,6 +16,10 @@ final class FakeHost: StackHost, @unchecked Sendable {
     }
     func setBase(_ number: Int, base: String) async throws { calls.append("base #\(number)->\(base)") }
     func setBody(_ number: Int, body: String) async throws { bodies[number] = body }
+    func close(_ number: Int, comment: String) async throws {
+        calls.append("close #\(number)")
+        if let i = prs.firstIndex(where: { $0.number == number }) { prs[i].state = "CLOSED" }
+    }
     func merge(_ number: Int, method: MergeMethod) async throws {
         calls.append("merge #\(number)")
         if let i = prs.firstIndex(where: { $0.number == number }) { prs[i].state = "MERGED" }
@@ -301,6 +305,64 @@ final class StackTests: XCTestCase {
         let merged = try await Stacks.mergeBottom(stack, in: dir, host: host)
         XCTAssertEqual(merged, "a")
         XCTAssertEqual(host.calls, ["base #102->main", "merge #101"])       // the next PR is moved to main before the merge
+    }
+
+    // MARK: Collapsing
+
+    func testCollapseCombinesSiblingBranchesIntoOneAndFinishClosesTheOthers() async throws {
+        try await commit("shared.txt", "one\ntwo\nthree\n", "shared")
+        try await sh(["push", "origin", "main"])
+        try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
+        try await sh(["checkout", "a"]); try await Stacks.create("b", in: dir); try await commit("shared.txt", "one\ntwo b\nthree\n", "b edits shared")
+        try await sh(["checkout", "a"]); try await Stacks.create("c", in: dir); try await commit("c.txt", "c\n", "add c")
+        let host = FakeHost()
+        let stack = await Stacks.load(in: dir, host: host)[0]
+        _ = try await Stacks.submit(stack, in: dir, host: host)
+        let fresh = await Stacks.load(in: dir, host: host)[0]
+        let job = try await Stacks.startCollapse(fresh, in: dir)
+        XCTAssertFalse(job.conflicted)
+        XCTAssertEqual(job.applied, 3)
+        XCTAssertEqual(Set(job.sources), ["a", "b", "c"])
+        let files = try await sh(["ls-tree", "-r", "--name-only", job.branch])
+        XCTAssertTrue(files.contains("a.txt") && files.contains("c.txt"))
+        let shared = try await sh(["show", "\(job.branch):shared.txt"])
+        XCTAssertTrue(shared.contains("two b"))
+        try await sh(["config", "branch.\(job.branch).cpilot-title", "Everything"])
+        let done = await Stacks.collapseFinished(job, in: dir)
+        XCTAssertFalse(done)
+        let number = try await Stacks.finishCollapse(job, in: dir, host: host)
+        XCTAssertEqual(host.calls.filter { $0.hasPrefix("create") }.last, "create \(job.branch)->main")
+        XCTAssertEqual(host.calls.filter { $0.hasPrefix("close") }.count, 3)
+        XCTAssertTrue(host.prs.contains { $0.number == number && $0.title == "Everything" })
+        let after = await Stacks.load(in: dir, host: host)
+        XCTAssertEqual(after.flatMap(\.branches).map(\.name), [job.branch])
+    }
+
+    func testCollapseStopsOnAConflictAndHandsOverTheRest() async throws {
+        try await commit("shared.txt", "one\ntwo\nthree\n", "shared")
+        try await sh(["push", "origin", "main"])
+        try await Stacks.create("a", in: dir); try await commit("shared.txt", "one\ntwo from a\nthree\n", "a edits shared")
+        try await sh(["checkout", "main"]); try await Stacks.create("b", in: dir); try await commit("shared.txt", "one\ntwo from b\nthree\n", "b edits shared")
+        try await Stacks.create("c", in: dir); try await commit("c.txt", "c\n", "add c")
+        // a and b are separate roots; combine them as one list to test the stop.
+        let stack = Stack(trunk: "main", branches: [
+            StackBranch(name: "a", parent: "main", base: nil, commits: 1, pr: 1, prState: "OPEN"),
+            StackBranch(name: "b", parent: "main", base: nil, commits: 1, pr: 2, prState: "OPEN"),
+            StackBranch(name: "c", parent: "b", base: nil, commits: 1, pr: 3, prState: "OPEN")])
+        let job = try await Stacks.startCollapse(stack, in: dir)
+        XCTAssertTrue(job.conflicted)
+        XCTAssertEqual(job.pending.count, 1)
+        XCTAssertTrue(job.pending[0].hasSuffix("add c"))
+        XCTAssertTrue(Stacks.collapsePrompt(job).contains("cherry-pick"))
+        await Stacks.abortCollapse(job, in: dir)
+        let gone = await Stacks.gitOK(["rev-parse", "--verify", "--quiet", "refs/heads/\(job.branch)"], in: dir)
+        XCTAssertFalse(gone)
+    }
+
+    func testCollapseNeedsTwoOpenBranches() async throws {
+        try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
+        let stack = await Stacks.load(in: dir)[0]
+        do { _ = try await Stacks.startCollapse(stack, in: dir); XCTFail("one branch is nothing to combine") } catch {}
     }
 }
 

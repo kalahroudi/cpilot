@@ -308,6 +308,38 @@ final class StackCenter {
         throw StackError.conflict(branch: branch, files: await Stacks.pendingConflicts(in: dir).first { $0.branch == branch }?.files ?? [])
     }
 
+    /// Combines every open branch of the stack into one pull request, start to finish: builds one branch from the latest trunk,
+    /// has Claude resolve the overlaps and prove it builds and passes, publishes it, and closes the pull requests it replaces.
+    func collapse(_ s: Stack) async {
+        await run("Combining") { dir, host in
+            self.busy = "Combining into one branch"
+            let job = try await Stacks.startCollapse(s, in: dir)
+            self.busy = "Waiting for Claude to finish \(job.branch)"
+            let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
+            let session: SessionController
+            do { session = try await Workspace.shared.create(.init(folder: job.path, access: level, firstMessage: Stacks.collapsePrompt(job), environment: self.repo?.environment, title: "Combine: \(job.branch)")) }
+            catch { await Stacks.abortCollapse(job, in: dir); throw error }
+            self.notice = "Claude is combining \(job.sources.count) branches into \(job.branch). This carries on when it is done."
+            try await self.awaitCollapse(job, session, dir: dir)
+            self.busy = "Publishing \(job.branch)"
+            let n = try await Stacks.finishCollapse(job, in: dir, host: host)
+            AppModel.shared.notify("Combined into #\(n)", body: "\(job.prs.count) pull requests are now one.")
+            return "Combined \(job.prs.map { "#\($0)" }.joined(separator: ", ")) into #\(n) and closed them."
+        }
+    }
+
+    /// Waits until Claude says the combined branch is finished. If its turn ends without that, stops and leaves the folder for a look.
+    private func awaitCollapse(_ job: Stacks.CollapseJob, _ session: SessionController, dir: String) async throws {
+        var waited = 0, idle = 0, sawBusy = false
+        while Prefs.shared.conflictWaitMinutes == 0 || waited < max(Prefs.shared.conflictWaitMinutes, 30) * 60 {
+            try await Task.sleep(for: .seconds(5)); waited += 5
+            if await Stacks.collapseFinished(job, in: dir) { return }
+            if session.isBusy { sawBusy = true; idle = 0 } else if sawBusy || waited > 60 { idle += 1 }
+            if idle >= 3 { throw StackError.message("Claude stopped before \(job.branch) was finished. What it did is in \(job.path); finish it there, or remove that copy under Worktrees.") }
+        }
+        throw StackError.message("Gave up waiting for \(job.branch). What it did is in \(job.path).")
+    }
+
     func create(_ name: String) async {
         await run("Creating") { dir, _ in
             try await Stacks.create(Git.slugify(name), in: dir)
@@ -614,6 +646,8 @@ struct StackCard: View {
     let center = StackCenter.shared
     @State private var confirmBypass = false
     @State private var confirmBypassAll = false
+    @State private var confirmCollapse = false
+    private var openCount: Int { stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }.count }
 
     var body: some View {
         @Bindable var c = center
@@ -623,6 +657,14 @@ struct StackCard: View {
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
+                if openCount >= 2 {
+                    Button { confirmCollapse = true } label: { BusyLabel(title: "Combine into one PR", busyTitle: "Combining…", busy: center.busy?.hasPrefix("Combining") == true || center.busy?.hasPrefix("Waiting for Claude to finish") == true || center.busy?.hasPrefix("Publishing") == true) }
+                        .buttonStyle(Pill(kind: .plain)).disabled(center.conflict(in: stack) != nil || center.busy != nil)
+                        .help("Merge these branches into one, have Claude resolve the overlaps and check it builds, open one pull request and close these")
+                        .confirmationDialog("Combine \(openCount) pull requests into one?", isPresented: $confirmCollapse, titleVisibility: .visible) {
+                            Button("Combine and close \(openCount) pull requests") { Task { await center.collapse(stack) } }
+                        } message: { Text("Claude merges their changes into one new branch, removes duplicated code and checks it builds and passes. Then one pull request is opened and these are closed. The old branches are kept.") }
+                }
                 Button { Task { await center.restack(stack) } } label: { BusyLabel(title: "Restack", busyTitle: "Restacking…", busy: center.busy == "Restacking") }.buttonStyle(Pill(kind: .plain)).disabled(!stack.needsRestack || stack.nextStep == .sync || center.conflict(in: stack) != nil || center.busy != nil)
                 Button { Task { await center.submit(stack) } } label: { BusyLabel(title: "Submit", busyTitle: "Submitting…", busy: center.busy == "Submitting") }.buttonStyle(Pill(kind: .plain))
                     .disabled(center.conflict(in: stack) != nil || stack.nextStep == .sync || stack.needsRestack || stack.unsubmitted.isEmpty || center.busy != nil)

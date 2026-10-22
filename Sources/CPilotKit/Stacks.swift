@@ -53,6 +53,7 @@ public struct Stack: Equatable, Sendable, Identifiable, Codable {
 extension StackHost {
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await merge(number, method: method) }
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws { try await merge(number, method: method, expectedHead: expectedHead) }
+    public func close(_ number: Int, comment: String) async throws {}
 }
 
 /// What a stack needs from GitHub. The live version uses the GitHub command line; tests use a stand-in.
@@ -66,6 +67,8 @@ public protocol StackHost: Sendable {
     func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws
     /// `admin` merges past the repository's rules. Only ever on the user's explicit confirmation, never from auto-merge.
     func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws
+    /// Closes a pull request with a comment saying why. Used when a stack is collapsed into one pull request.
+    func close(_ number: Int, comment: String) async throws
 }
 
 public struct LiveStackHost: StackHost {
@@ -88,6 +91,7 @@ public struct LiveStackHost: StackHost {
     public func merge(_ number: Int, method: MergeMethod) async throws { try await GitHub.merge(number, method: method, auto: false, in: dir) }
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?) async throws { try await GitHub.merge(number, method: method, auto: false, expectedHead: expectedHead, in: dir) }
     public func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws { try await GitHub.merge(number, method: method, auto: false, admin: admin, expectedHead: expectedHead, in: dir) }
+    public func close(_ number: Int, comment: String) async throws { try await Shell.check("gh", ["pr", "close", String(number), "--comment", comment], cwd: cwd, timeout: 60) }
 }
 
 public enum StackError: Error, LocalizedError, Equatable {
@@ -513,6 +517,121 @@ public enum Stacks {
             _ = try? await Shell.run("git", ["branch", "-D", b.name], cwd: cwd(dir))
             await untrack(b.name, in: dir)
         }
+    }
+
+    // MARK: Collapsing a stack into one pull request
+
+    /// A stack being combined into one branch in a folder of its own. The branch gets every open branch's own commits, oldest first.
+    /// Where picking a commit stopped on a conflict, `pending` holds the commits still to apply after it.
+    public struct CollapseJob: Equatable, Sendable {
+        public var branch: String
+        public var path: String
+        public var trunk: String
+        /// The open pull requests this replaces, and the branches they come from.
+        public var prs: [Int]
+        public var sources: [String]
+        /// Commits (hash and subject) applied so far, and still to come after a conflict.
+        public var applied: Int
+        public var pending: [String]
+        public var conflicted: Bool
+    }
+
+    /// The commits each unmerged branch adds on top of its parent that the trunk does not already have, in stack order.
+    /// A commit whose change the trunk already holds (for example the squashed merge of a lower pull request) is left out.
+    public static func collapseCommits(_ stack: Stack, trunkRef: String, in dir: String) async -> [(branch: String, sha: String, subject: String)] {
+        let open = stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }
+        let names = Set(open.map(\.name))
+        var out: [(String, String, String)] = []
+        for b in open {
+            let parent = names.contains(b.parent) ? b.parent : trunkRef
+            let fresh = Set(((try? await git(["cherry", trunkRef, b.name], in: dir)) ?? "").split(separator: "\n").compactMap { l -> String? in
+                l.hasPrefix("+ ") ? String(l.dropFirst(2)) : nil
+            })
+            let listed = (try? await git(["log", "--reverse", "--format=%H\t%s", "\(parent)..\(b.name)"], in: dir)) ?? ""
+            for line in listed.split(separator: "\n") {
+                let f = line.split(separator: "\t", maxSplits: 1).map(String.init)
+                if f.count == 2, fresh.contains(f[0]) { out.append((b.name, f[0], f[1])) }
+            }
+        }
+        return out
+    }
+
+    /// Builds the combined branch from the latest trunk in a temporary folder, picking each commit in turn.
+    /// Stops at the first conflict and says so; everything that picks cleanly is already in.
+    public static func startCollapse(_ stack: Stack, in dir: String) async throws -> CollapseJob {
+        let open = stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }
+        guard open.count >= 2 else { throw StackError.message("There is nothing to combine: the stack has fewer than two open branches.") }
+        await fetch(in: dir)
+        let remote = "origin/\(stack.trunk)"
+        let base = await gitOK(["rev-parse", "--verify", "--quiet", remote], in: dir) ? remote : stack.trunk
+        let commits = await collapseCommits(stack, trunkRef: base, in: dir)
+        guard !commits.isEmpty else { throw StackError.message("Every change in this stack is already in \(stack.trunk).") }
+        var name = Git.slugify((open.first?.name ?? "stack") + "-combined"), n = 2
+        while await gitOK(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: dir) { name = Git.slugify((open.first?.name ?? "stack") + "-combined-\(n)"); n += 1 }
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
+        let path = restackRoot() + "/collapse-" + jobID(name)
+        try await git(["worktree", "add", "-b", name, path, base], in: dir, timeout: 120)
+        let top = (try? await git(["rev-parse", "--show-toplevel"], in: path)) ?? path
+        var job = CollapseJob(branch: name, path: top, trunk: stack.trunk, prs: open.compactMap(\.pr), sources: open.map(\.name), applied: 0, pending: [], conflicted: false)
+        for (i, c) in commits.enumerated() {
+            let r = try await Shell.run("git", ["cherry-pick", "-x", c.sha], cwd: cwd(top), timeout: 120)
+            if r.ok { job.applied += 1; continue }
+            if await conflictedFiles(in: top).isEmpty {
+                // Nothing left to apply: the change was already there. Skip the empty pick and carry on.
+                _ = try? await Shell.run("git", ["cherry-pick", "--skip"], cwd: cwd(top), timeout: 60)
+                continue
+            }
+            job.conflicted = true
+            job.pending = commits.dropFirst(i + 1).map { "\($0.sha) \($0.subject)" }
+            return job
+        }
+        return job
+    }
+
+    /// What the agent is asked to do in the combined branch's folder: finish the picks, make the result one coherent change, prove it works.
+    public static func collapsePrompt(_ job: CollapseJob) -> String {
+        var p = "This folder holds the branch \(job.branch), made by combining \(job.sources.count) stacked branches (\(job.sources.joined(separator: ", "))) into one pull request against \(job.trunk). They were written separately, so they overlap: the same file edited by several, the same helper written twice."
+        if job.conflicted {
+            p += "\n\nA `git cherry-pick` is stopped on a conflict. Resolve the markers so both sides' intent is kept, `git add` the files and run `git -c core.editor=true cherry-pick --continue`."
+            if !job.pending.isEmpty { p += " Then apply the rest in this order, resolving conflicts the same way (`git cherry-pick -x <hash>`; if a pick turns out empty, `git cherry-pick --skip`):\n" + job.pending.map { "- " + $0 }.joined(separator: "\n") }
+        }
+        p += "\n\nThen make the combined result one coherent change: remove duplicated definitions and helpers (keep one, the better one), and make sure names that two branches both introduced do not clash. Run the project's build and tests and fix what fails; commit the fixes on this branch. Do not switch branches, push or open a pull request: CPilot does that."
+        p += "\n\nWhen it builds and the tests pass, run these two commands, with a title and a short plain description of what the whole change does (no task ids) in place of the placeholders, and then stop:\n`git config branch.\(job.branch).cpilot-title \"<pull request title>\"`\n`git config branch.\(job.branch).cpilot-summary \"<two or three sentences>\"`\n`git config branch.\(job.branch).cpilot-collapse done`"
+        return p
+    }
+
+    /// True once the agent has said the combined branch is finished.
+    public static func collapseFinished(_ job: CollapseJob, in dir: String) async -> Bool {
+        (try? await git(["config", "branch.\(job.branch).cpilot-collapse"], in: dir)) == "done"
+    }
+
+    /// Publishes the combined branch as one pull request, closes the ones it replaces, and tidies up. Returns the new pull request's number.
+    public static func finishCollapse(_ job: CollapseJob, in dir: String, host: StackHost) async throws -> Int {
+        guard await !pickInProgress(in: job.path) else { throw StackError.message("A cherry-pick is still stopped in \(job.path). Resolve it, then try again.") }
+        guard (try await git(["status", "--porcelain", "--untracked-files=no"], in: job.path)).isEmpty else { throw StackError.message("\(job.branch) has uncommitted changes in \(job.path). Commit them, then try again.") }
+        let configured = (try? await git(["config", "branch.\(job.branch).cpilot-title"], in: dir)) ?? ""
+        let summary = (try? await git(["config", "branch.\(job.branch).cpilot-summary"], in: dir)) ?? ""
+        let title = configured.isEmpty ? "Combine \(job.sources.count) stacked pull requests" : configured
+        let replaced = job.prs.map { "#\($0)" }.joined(separator: ", ")
+        let body = (summary.isEmpty ? "" : summary + "\n\n") + "Combines \(replaced) into one pull request, because they changed the same files and conflicted with each other. Each change is still its own commit."
+        try await git(["push", "-u", "origin", job.branch], in: job.path, timeout: 180)
+        let number = try await host.create(head: job.branch, base: job.trunk, title: title, body: body, draft: false)
+        for n in job.prs { try? await host.close(n, comment: "Combined into #\(number): these pull requests changed the same files and conflicted with each other.") }
+        let tip = try await git(["rev-parse", job.branch], in: dir)
+        try await setParent(job.branch, to: job.trunk, base: tip, in: dir)
+        for b in job.sources { await untrack(b, in: dir) }
+        _ = try? await Shell.run("git", ["worktree", "remove", "--force", job.path], cwd: cwd(dir))
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
+        return number
+    }
+
+    static func pickInProgress(in path: String) async -> Bool { await gitOK(["rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD"], in: path) }
+
+    /// Gives up on a combine: removes its folder and branch. The branches it was built from are untouched.
+    public static func abortCollapse(_ job: CollapseJob, in dir: String) async {
+        _ = try? await Shell.run("git", ["worktree", "remove", "--force", job.path], cwd: cwd(dir))
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
+        _ = try? await Shell.run("git", ["branch", "-D", job.branch], cwd: cwd(dir))
     }
 
     // MARK: Splitting a big change
