@@ -150,6 +150,8 @@ final class StackCenter {
             if case .conflict = e { /* shown from the repository's real state by refresh() below */ } else { error = e.localizedDescription }
         } catch { self.error = AppModel.shared.capture(error, action: label) }
         await refresh()
+        // Merging and restacking change the pull requests' branches. A pull request already open on the other screen was judged before that.
+        await PRCenter.shared.refreshOpen()
     }
 
     func restack(_ s: Stack) async {

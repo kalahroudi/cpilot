@@ -101,6 +101,15 @@ final class PRCenter {
         do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { AppModel.shared.failQuietly(error, action: "Load pull requests") }
     }
 
+    /// Reads the open list and the selected pull request again, after something outside this screen moved their branches.
+    func refreshOpen() async {
+        guard repoDir != nil else { return }
+        await Exec.with(env) {
+            await refreshList()
+            if let n = selected { await selectImpl(n) }
+        }
+    }
+
     func select(_ n: Int) async {
         await Exec.with(env) { await selectImpl(n) }
     }
