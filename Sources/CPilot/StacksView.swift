@@ -150,6 +150,8 @@ final class StackCenter {
             if case .conflict = e { /* shown from the repository's real state by refresh() below */ } else { error = e.localizedDescription }
         } catch { self.error = AppModel.shared.capture(error, action: label) }
         await refresh()
+        // Merging and restacking change the pull requests' branches. A pull request already open on the other screen was judged before that.
+        await PRCenter.shared.refreshOpen()
     }
 
     func restack(_ s: Stack) async {
@@ -283,7 +285,7 @@ struct StacksView: View {
                         if center.stacks.isEmpty && !center.loading { Text("No stacks yet. Start one below.").font(.system(size: 13)).foregroundStyle(.secondary) }
                         ForEach(center.stacks.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }) { s in StackCard(stack: s) }
                         startSection
-                    }.padding(22).frame(maxWidth: 860, alignment: .leading)
+                    }.padding(22).frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity)
                 }
             }
         }
@@ -435,46 +437,49 @@ extension StackCard {
     /// One tidy row: what to do next on the left, its action if it has one, and the auto-merge switch on the right.
     @ViewBuilder var nextStepBar: some View {
         let st = step
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: st.icon).font(.system(size: 17, weight: .medium)).foregroundStyle(st.tint).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(st.title).font(.system(size: 12.5, weight: .semibold))
-                Text(st.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: st.icon).font(.system(size: 17, weight: .medium)).foregroundStyle(st.tint).frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(st.title).font(.system(size: 12.5, weight: .semibold))
+                    Text(st.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Spacer(minLength: 12)
-            if stack.nextStep == .merge, let n = stack.bottomOpen?.pr, center.policyBlocked.contains(n) || stack.bottomOpen?.mergeState == "BLOCKED", checkState != .failed, checkState != .pending {
-                if Prefs.shared.adminMergeAll, stack.branches.filter({ !$0.isMerged && $0.prState == "OPEN" }).count > 1 {
-                    Button("Merge all as admin…") { confirmBypassAll = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
-                        .confirmationDialog("Bypass the repository's rules to merge every open pull request?", isPresented: $confirmBypassAll, titleVisibility: .visible) {
-                            Button("Merge all \(stack.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.count) as admin", role: .destructive) { Task { await center.mergeAllAsAdmin(stack) } }
+            HStack(alignment: .center, spacing: 8) {
+                if stack.nextStep == .merge, let n = stack.bottomOpen?.pr, center.policyBlocked.contains(n) || stack.bottomOpen?.mergeState == "BLOCKED", checkState != .failed, checkState != .pending {
+                    if Prefs.shared.adminMergeAll, stack.branches.filter({ !$0.isMerged && $0.prState == "OPEN" }).count > 1 {
+                        Button("Merge all as admin…") { confirmBypassAll = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
+                            .confirmationDialog("Bypass the repository's rules to merge every open pull request?", isPresented: $confirmBypassAll, titleVisibility: .visible) {
+                                Button("Merge all \(stack.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.count) as admin", role: .destructive) { Task { await center.mergeAllAsAdmin(stack) } }
+                                Button("Cancel", role: .cancel) {}
+                            } message: {
+                                Text("Merges the open pull requests of this stack one after another, lowest first, overriding GitHub's rules for \(stack.trunk) on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                            }
+                    }
+                    Button("Merge as admin…") { confirmBypass = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
+                        .confirmationDialog("Bypass the repository's rules to merge #\(n)?", isPresented: $confirmBypass, titleVisibility: .visible) {
+                            Button("Merge #\(n) as admin", role: .destructive) { Task { await center.mergeBottom(stack, admin: true) } }
                             Button("Cancel", role: .cancel) {}
                         } message: {
-                            Text("Merges the open pull requests of this stack one after another, lowest first, overriding GitHub's rules for \(stack.trunk) on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                            Text("GitHub's rules for \(stack.trunk) refuse this merge. As an administrator you can override them for this one pull request. The rules stay in place for everyone else, and the merge is recorded as a bypass.")
                         }
                 }
-                Button("Merge as admin…") { confirmBypass = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
-                    .confirmationDialog("Bypass the repository's rules to merge #\(n)?", isPresented: $confirmBypass, titleVisibility: .visible) {
-                        Button("Merge #\(n) as admin", role: .destructive) { Task { await center.mergeBottom(stack, admin: true) } }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("GitHub's rules for \(stack.trunk) refuse this merge. As an administrator you can override them for this one pull request. The rules stay in place for everyone else, and the merge is recorded as a bypass.")
-                    }
-            }
-            if stack.nextStep == .sync {
-                AsyncButton("Sync now") { await center.sync() }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
-            } else if stack.nextStep == .merge, checkState == .failed, let link = bottomChecks.first(where: \.failed)?.link, let url = URL(string: link) {
-                Button("View run") { NSWorkspace.shared.open(url) }.buttonStyle(Pill(kind: .plain))
-            }
-            if let r = center.repo {
-                let on = center.isArmed(r)
-                Divider().frame(height: 30)
-                VStack(alignment: .trailing, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text("Auto-merge").font(.system(size: 12, weight: .medium))
-                        Toggle("", isOn: Binding(get: { on }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(Theme.accent)
-                    }
-                    Text(on ? "Merges bottom first when rules pass" : "Off: you merge by hand").font(.system(size: 11)).foregroundStyle(.secondary)
-                }.help("Merge the stack automatically, bottom first, whenever every rule passes")
+                if stack.nextStep == .sync {
+                    AsyncButton("Sync now") { await center.sync() }.buttonStyle(Pill(kind: .primary)).disabled(center.busy != nil)
+                } else if stack.nextStep == .merge, checkState == .failed, let link = bottomChecks.first(where: \.failed)?.link, let url = URL(string: link) {
+                    Button("View run") { NSWorkspace.shared.open(url) }.buttonStyle(Pill(kind: .plain))
+                }
+                Spacer(minLength: 12)
+                if let r = center.repo {
+                    let on = center.isArmed(r)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text("Auto-merge").font(.system(size: 12, weight: .medium))
+                            Toggle("", isOn: Binding(get: { on }, set: { center.arm(repo: r, on: $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(Theme.accent)
+                        }
+                        Text(on ? "Merges bottom first when rules pass" : "Off: you merge by hand").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }.help("Merge the stack automatically, bottom first, whenever every rule passes")
+                }
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
