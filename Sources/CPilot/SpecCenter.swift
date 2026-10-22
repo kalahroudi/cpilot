@@ -391,10 +391,19 @@ final class SpecCenter {
         let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
         let prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
         do {
-            let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
+            // The branch may already belong to a session (tasks.md lost its branch line, or this ran twice): carry on in that session rather than starting another.
+            let c: SessionController
+            if let m = Workspace.shared.session(forBranch: branch, repo: r.dir, environment: r.environment), let existing = Workspace.shared.controller(m.id) {
+                existing.onTurnEnd = turnHandler(id, task.id)
+                c = existing
+            } else {
+                c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: branch, parent: parent,
                                                          title: "\(task.id) \(task.title)", prompt: prompt, focus: focus, onTurnEnd: turnHandler(id, task.id))
+            }
             taskSessions["\(id)/\(task.id)"] = c.id
-            let updated = Specs.updateTask(text, id: task.id, branch: branch)
+            // Read tasks.md again: starting the session takes a while, and another task may have written its branch line meanwhile.
+            let latest = (try? await Exec.with(env) { try await Shell.check("cat", ["\(Specs.folder)/\(id)/tasks.md"], cwd: URL(fileURLWithPath: r.dir)) }) ?? text
+            let updated = Specs.updateTask(latest, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
             await refresh()
         } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message } }
