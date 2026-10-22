@@ -249,7 +249,7 @@ struct StacksView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         banners
                         if center.stacks.isEmpty && !center.loading { Text("No stacks yet. Start one below.").font(.system(size: 13)).foregroundStyle(.secondary) }
-                        ForEach(center.stacks) { s in StackCard(stack: s) }
+                        ForEach(center.stacks.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }) { s in StackCard(stack: s) }
                         startSection
                     }.padding(22).frame(maxWidth: 860, alignment: .leading)
                 }
@@ -322,7 +322,7 @@ struct StackCard: View {
         @Bindable var c = center
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(stack.branches.last(where: { !$0.isMerged })?.title ?? stack.branches.last?.name ?? "Stack").font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                Text(stack.branches.first(where: { !$0.isMerged })?.title ?? stack.branches.last?.name ?? "Stack").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Badge(text: "\(stack.branches.filter { !$0.isMerged }.count) open", kind: .accent)
                 if stack.needsRestack { Badge(text: "Needs restack", kind: .warn) }
                 Spacer()
@@ -446,10 +446,14 @@ struct StackNode: View {
     let branch: StackBranch
     let stack: Stack
     let center = StackCenter.shared
+    /// 1, 2, 3 … down the open branches, the order "Merge from the bottom" takes them in.
+    private var order: Int? { branch.isMerged ? nil : stack.branches.filter { !$0.isMerged }.firstIndex(of: branch).map { $0 + 1 } }
+    private var isNext: Bool { stack.bottomOpen?.name == branch.name }
 
     var body: some View {
         HStack(spacing: 10) {
             Circle().fill(branch.isMerged ? Theme.ok : branch.needsRestack ? Theme.warn : Theme.accent).frame(width: 10, height: 10).offset(x: -19)
+            if let n = order { Text("\(n)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(isNext ? Theme.accent : .secondary).frame(width: 18).help("Merge order: the stack merges from 1 upwards") }
             VStack(alignment: .leading, spacing: 2) {
                 Text(branch.name).font(.system(size: 13, weight: .semibold, design: .monospaced)).lineLimit(1)
                 Text([branch.pr.map { "#\($0)" }, branch.title, "\(branch.commits) commit\(branch.commits == 1 ? "" : "s")"].compactMap { $0 }.joined(separator: " · ")).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
@@ -457,6 +461,7 @@ struct StackNode: View {
             .padding(.leading, CGFloat(branch.depth) * 14 - 8)
             Spacer()
             if branch.isMerged { Badge(text: "Merged", kind: .ok) }
+            else if isNext, !branch.needsRestack, branch.prState == "OPEN" { Badge(text: "Merges next", kind: .accent) }
             else if branch.needsRestack { Badge(text: "Behind", kind: .warn) }
             else if branch.prState == "OPEN" { Badge(text: "Open", kind: .accent) }
             else { Badge(text: "No PR yet") }
