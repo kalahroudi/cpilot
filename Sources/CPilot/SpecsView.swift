@@ -218,7 +218,10 @@ struct SpecDetail: View {
         if let e = job.error {
             VStack(alignment: .leading, spacing: 8) {
                 Label { ErrorLine(text: e) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.danger) }
-                AsyncButton("Try again") { await center.run(doc.id, SpecPrompts.Stage(rawValue: job.stage) ?? .specify) }.buttonStyle(Pill(kind: .plain))
+                AsyncButton("Try again") {
+                    if job.stage.hasPrefix(SpecCenter.implementStage) { await center.retryTask(doc.id, String(job.stage.dropFirst(SpecCenter.implementStage.count))) }
+                    else { await center.run(doc.id, SpecPrompts.Stage(rawValue: job.stage) ?? .specify) }
+                }.buttonStyle(Pill(kind: .plain))
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 10))
         }
         if let d = job.draft { DraftCard(doc: doc, draft: d) }

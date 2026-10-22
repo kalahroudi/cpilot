@@ -385,6 +385,15 @@ final class SpecCenter {
         for t in ready.prefix(max(0, limit - running)) { await implement(id, t, focus: false) }
     }
 
+    static let implementStage = "implement "
+
+    /// Try again after a task failed to start: only that task, never a new tasks.md.
+    func retryTask(_ id: String, _ taskId: String) async {
+        guard let t = doc(id)?.tasks.first(where: { $0.id == taskId }) else { return }
+        create(id) { $0.error = nil }
+        await implement(id, t)
+    }
+
     func implement(_ id: String, _ task: SpecTask, focus: Bool = true) async {
         guard let r = repo, let d = doc(id), let text = d.tasksText else { return }
         let branch = Specs.taskBranch(spec: id, task: task)
@@ -406,7 +415,7 @@ final class SpecCenter {
             let updated = Specs.updateTask(latest, id: task.id, branch: branch)
             try await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }
             await refresh()
-        } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message } }
+        } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message; $0.stage = Self.implementStage + task.id } }   // so Try again retries this task, not the tasks stage
     }
 
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
