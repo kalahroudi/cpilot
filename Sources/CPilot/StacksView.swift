@@ -179,20 +179,52 @@ final class StackCenter {
     /// `admin` merges past the repository's rules; the card only offers it after a warning the user confirms.
     func mergeBottom(_ s: Stack, admin: Bool = false) async {
         await run("Merging") { [method] dir, host in
-            guard let bottom = s.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("Submit the stack first. There is no open pull request to merge.") }
-            let gate = await PRCenter.shared.gateFor(n, dir: dir)
-            guard gate.ready else { throw StackError.message("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
-            do { _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method, admin: admin) }
-            catch where GitHub.isPolicyBlocked(error) {
-                self.policyBlocked.insert(n)
-                if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
-                throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
-            }
-            _ = try await Stacks.sync(in: dir, host: host)
-            if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
-            if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
+            let n = try await self.mergeOne(s, admin: admin, method: method, dir: dir, host: host)
             return "Merged #\(n). The next pull request is waiting for its checks."
         }
+    }
+
+    /// Merges every open pull request of the stack, lowest first, past the repository's rules. Each one still has to pass its checks, and the first problem stops the run.
+    func mergeAllAsAdmin(_ s: Stack) async {
+        await run("Merging") { [method] dir, host in
+            let names = Set(s.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.map(\.name))
+            var merged: [Int] = []
+            var current = s
+            while current.bottomOpen != nil {
+                guard let n = current.bottomOpen?.pr else { break }
+                self.notice = merged.isEmpty ? nil : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")). Waiting on #\(n)…"
+                var waited = 0
+                while true {
+                    let gate = await PRCenter.shared.gateFor(n, dir: dir)
+                    if gate.ready { break }
+                    guard gate.reasons == ["Checks are still running."], waited < 900 else {
+                        throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + "#\(n) is not ready: " + gate.reasons.joined(separator: " "))
+                    }
+                    try await Task.sleep(for: .seconds(20)); waited += 20
+                }
+                merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host))
+                guard let next = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { names.contains($0.name) && !$0.isMerged } }) else { break }
+                current = next
+            }
+            return "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")) as admin."
+        }
+    }
+
+    /// One merge of the lowest open pull request, then restack and resubmit what is left. Returns its number.
+    private func mergeOne(_ s: Stack, admin: Bool, method: MergeMethod, dir: String, host: StackHost) async throws -> Int {
+        guard let bottom = s.branches.first(where: { !$0.isMerged && $0.prState == "OPEN" }), let n = bottom.pr else { throw StackError.message("Submit the stack first. There is no open pull request to merge.") }
+        let gate = await PRCenter.shared.gateFor(n, dir: dir)
+        guard gate.ready else { throw StackError.message("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
+        do { _ = try await Stacks.mergeBottom(s, in: dir, host: host, method: method, admin: admin) }
+        catch where GitHub.isPolicyBlocked(error) {
+            self.policyBlocked.insert(n)
+            if admin { throw StackError.message("GitHub refused even as an administrator. Your account may not be allowed to bypass this rule.") }
+            throw StackError.message("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules): a required review, or a rule that restricts who can update \(s.trunk).")
+        }
+        _ = try await Stacks.sync(in: dir, host: host)
+        if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
+        if let done = await Stacks.load(in: dir, host: host).first(where: { $0.branches.contains { $0.isMerged } }) { await Stacks.cleanUp(done, in: dir) }
+        return n
     }
 
     func create(_ name: String) async {
@@ -317,6 +349,7 @@ struct StackCard: View {
     let stack: Stack
     let center = StackCenter.shared
     @State private var confirmBypass = false
+    @State private var confirmBypassAll = false
 
     var body: some View {
         @Bindable var c = center
@@ -410,6 +443,15 @@ extension StackCard {
             }
             Spacer(minLength: 12)
             if stack.nextStep == .merge, let n = stack.bottomOpen?.pr, center.policyBlocked.contains(n) || stack.bottomOpen?.mergeState == "BLOCKED", checkState != .failed, checkState != .pending {
+                if Prefs.shared.adminMergeAll, stack.branches.filter({ !$0.isMerged && $0.prState == "OPEN" }).count > 1 {
+                    Button("Merge all as admin…") { confirmBypassAll = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
+                        .confirmationDialog("Bypass the repository's rules to merge every open pull request?", isPresented: $confirmBypassAll, titleVisibility: .visible) {
+                            Button("Merge all \(stack.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.count) as admin", role: .destructive) { Task { await center.mergeAllAsAdmin(stack) } }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Merges the open pull requests of this stack one after another, lowest first, overriding GitHub's rules for \(stack.trunk) on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                        }
+                }
                 Button("Merge as admin…") { confirmBypass = true }.buttonStyle(Pill(kind: .plain)).disabled(center.busy != nil)
                     .confirmationDialog("Bypass the repository's rules to merge #\(n)?", isPresented: $confirmBypass, titleVisibility: .visible) {
                         Button("Merge #\(n) as admin", role: .destructive) { Task { await center.mergeBottom(stack, admin: true) } }
