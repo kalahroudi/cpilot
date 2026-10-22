@@ -23,19 +23,24 @@ final class EnvironmentCenter {
     func check(_ env: EnvironmentConfig, retry: Bool = false) {
         guard !settingUp.contains(env.id) else { return }
         if retry { attempted.remove(env.id) }
+        Task { await run(env) }
+    }
+
+    /// Connects, then sets up whatever is missing, and returns when that is done.
+    func run(_ env: EnvironmentConfig, retry: Bool = false) async {
+        if retry { attempted.remove(env.id) }
+        guard !settingUp.contains(env.id) else { return }
         status[env.id] = .checking
-        Task {
-            let (updated, report) = await EnvironmentProbe.connect(env)
-            guard report.connected else { status[env.id] = .failed(report.error ?? "Could not connect."); return }
-            var current = env; current.active = updated.active; current.home = updated.home
-            if let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
-                Workspace.shared.environments[i].active = updated.active; Workspace.shared.environments[i].home = updated.home
-                Workspace.shared.saveEnvironments()
-                current = Workspace.shared.environments[i]
-            }
-            status[env.id] = .ok(report)
-            if !AppModel.shared.demo, !attempted.contains(env.id) { attempted.insert(env.id); await prepare(current, report) }
+        let (updated, report) = await EnvironmentProbe.connect(env)
+        guard report.connected else { status[env.id] = .failed(report.error ?? "Could not connect."); return }
+        var current = env; current.active = updated.active; current.home = updated.home
+        if let i = Workspace.shared.environments.firstIndex(where: { $0.id == env.id }) {
+            Workspace.shared.environments[i].active = updated.active; Workspace.shared.environments[i].home = updated.home
+            Workspace.shared.saveEnvironments()
+            current = Workspace.shared.environments[i]
         }
+        status[env.id] = .ok(report)
+        if !AppModel.shared.demo, !attempted.contains(env.id) { attempted.insert(env.id); await prepare(current, report) }
     }
 
     /// Installs whatever the server is missing, as soon as it is added, and shows each step.

@@ -192,6 +192,31 @@ struct AgentSettings: View {
     /// Test results by agent ("claude" for Claude), then by place ("" for this Mac, else the server's id). A nil result is still running.
     @State private var tests: [String: [String: AgentCheck.Result?]] = [:]
 
+    /// Places (agent and place, joined) where a sign-in is waiting on you.
+    @State private var signingIn: Set<String> = []
+    @State private var claudeSignIn: EnvironmentConfig?
+
+    /// Runs the agent's own sign-in in one place, then shows the new result.
+    private func signIn(_ agent: AcpAgentConfig, place: EnvironmentConfig?) {
+        let key = agent.id, pid = place?.id ?? ""
+        tests[key]?[pid] = .some(nil); signingIn.insert(key + "|" + pid)
+        Task {
+            let r = await AgentCheck.signIn(agent, on: place)
+            signingIn.remove(key + "|" + pid)
+            tests[key]?[pid] = .some(r)
+        }
+    }
+
+    /// Installs what is missing on the server, then tests again there.
+    private func setUp(_ agent: AcpAgentConfig?, on env: EnvironmentConfig) {
+        let key = agent?.id ?? "claude"
+        tests[key]?[env.id] = .some(nil)
+        Task {
+            await EnvironmentCenter.shared.run(env, retry: true)
+            tests[key]?[env.id] = .some(await AgentCheck.run(agent, on: ws.environment(env.id) ?? env))
+        }
+    }
+
     /// Starts the agent on this Mac and on every server, for real, and records what happened. Never starts a sign-in.
     private func test(_ agent: AcpAgentConfig?) {
         let key = agent?.id ?? "claude"
@@ -226,11 +251,26 @@ struct AgentSettings: View {
                         }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(place.isEmpty ? "This Mac" : (ws.environment(place)?.name ?? place)).font(.system(size: 12, weight: .medium))
-                            Text(r?.detail ?? "Starting…").font(.system(size: 11.5)).foregroundStyle(r == nil || r?.state == .ok ? .secondary : Theme.warn).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                            Text(r?.detail ?? (signingIn.contains((agent?.id ?? "claude") + "|" + place) ? "Waiting for you to finish signing in, in the browser that opened…" : "Working…")).font(.system(size: 11.5)).foregroundStyle(r == nil || r?.state == .ok ? .secondary : Theme.warn).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                            testAction(agent, place: place, state: r?.state)
                         }
                     }
                 }
             }.padding(.horizontal, 14).padding(.bottom, 10)
+        }
+    }
+
+    /// What to do about a result that is not ok: sign in, or set the server up.
+    @ViewBuilder private func testAction(_ agent: AcpAgentConfig?, place: String, state: AgentCheck.Result.State?) -> some View {
+        let env = place.isEmpty ? nil : ws.environment(place)
+        switch state {
+        case .needsSignIn:
+            if let agent { Button("Sign in…") { signIn(agent, place: env) }.buttonStyle(Pill(kind: .primary)) }
+            else if let env { Button("Sign in…") { claudeSignIn = env }.buttonStyle(Pill(kind: .primary)) }
+            else { Text("Run claude in Terminal once to sign in.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+        case .notSetUp:
+            if let env { Button("Set up on \(env.name)") { setUp(agent, on: env) }.buttonStyle(Pill(kind: .primary)) }
+        default: EmptyView()
         }
     }
 
@@ -266,6 +306,7 @@ struct AgentSettings: View {
         }
         .sheet(isPresented: $showRegistry) { registrySheet }
         .sheet(isPresented: $custom) { CustomAgentSheet() }
+        .sheet(item: $claudeSignIn, onDismiss: { test(nil) }) { e in ClaudeSignInSheet(env: e) }
     }
 
     private func load() {
