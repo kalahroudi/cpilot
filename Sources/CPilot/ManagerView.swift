@@ -165,6 +165,7 @@ struct SessionsPane: View {
 
     @ViewBuilder private var content: some View {
         Group { if let s = ws.current { ChatView(session: s).id(s.id) } else { Welcome() } }.animation(.easeOut(duration: 0.15), value: ws.selected)
+            .onChange(of: Project.shared.current) { _, _ in ws.keepSelectionInRepo() }
     }
 }
 
@@ -237,7 +238,7 @@ struct TabStrip: View {
         HStack(spacing: 2) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(ws.tabs, id: \.self) { id in
+                    ForEach(ws.tabs.filter { ws.inRepo($0) }, id: \.self) { id in
                         if let c = ws.controller(id) { TabButton(session: c, selected: ws.selected == id) }
                     }
                 }

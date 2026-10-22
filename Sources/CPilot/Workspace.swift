@@ -566,6 +566,15 @@ final class Workspace {
         persistTabs()
     }
 
+    /// Whether a session belongs to the repository chosen in the switcher.
+    func inRepo(_ id: String) -> Bool { sessions.first(where: { $0.id == id }).map(Project.shared.owns) ?? true }
+
+    /// The repository was switched: leave a session from another repository for one of this repository's tabs, or for the welcome screen.
+    func keepSelectionInRepo() {
+        guard let id = selected, !inRepo(id) else { return }
+        if let next = tabs.first(where: inRepo) { select(next) } else { selected = nil; persistTabs() }
+    }
+
     /// Back on the tab strip: the session on screen gets its tab, the rest stay as they were.
     func ensureSelectedTab() {
         guard let id = selected, !tabs.contains(id) else { return }
