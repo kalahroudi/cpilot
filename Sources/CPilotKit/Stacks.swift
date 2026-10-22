@@ -204,16 +204,117 @@ public enum Stacks {
 
     public enum RestackResult: Equatable, Sendable { case upToDate, restacked([String]) }
 
+    /// Where the temporary folders for restacking live. Tests point this somewhere disposable.
+    nonisolated(unsafe) public static var restackRootOverride: String?
+
+    static func restackRoot() -> String {
+        if let o = restackRootOverride { return o }
+        if let r = Exec.environment { return "\(r.remoteHome)/.cpilot/restack" }
+        return AppPaths().root.appendingPathComponent("restack").path
+    }
+
+    /// One branch being rebased in a folder of its own. Kept in the repository's git config so it survives a restart.
+    struct Job: Equatable { var id: String, branch: String, oldTip: String, newBase: String, parent: String, path: String }
+
+    static func jobID(_ branch: String) -> String {
+        String(branch.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" })
+    }
+
+    static func jobs(in dir: String) async -> [Job] {
+        guard let out = try? await git(["config", "--get-regexp", #"^cpilot-restack\."#], in: dir) else { return [] }
+        var fields: [String: [String: String]] = [:]
+        for line in out.split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].split(separator: ".").map(String.init)      // cpilot-restack, <id>, <field>
+            guard key.count == 3 else { continue }
+            fields[key[1], default: [:]][key[2]] = parts[1]
+        }
+        return fields.compactMap { id, f in
+            guard let branch = f["branch"], let oldTip = f["oldtip"], let newBase = f["newbase"], let parent = f["parent"], let path = f["path"] else { return nil }
+            return Job(id: id, branch: branch, oldTip: oldTip, newBase: newBase, parent: parent, path: path)
+        }.sorted { $0.id < $1.id }
+    }
+
+    static func dropJob(_ j: Job, in dir: String) async {
+        _ = try? await Shell.run("git", ["worktree", "remove", "--force", j.path], cwd: cwd(dir))
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
+        _ = try? await Shell.run("git", ["config", "--remove-section", "cpilot-restack.\(j.id)"], cwd: cwd(dir))
+    }
+
+    /// A temporary folder holding `branch` as it is now, so the rebase never touches the folder you work in.
+    static func startJob(branch: String, oldTip: String, newBase: String, parent: String, in dir: String) async throws -> Job {
+        let id = jobID(branch)
+        if let old = await jobs(in: dir).first(where: { $0.id == id }) { await dropJob(old, in: dir) }
+        _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
+        let path = restackRoot() + "/" + id
+        try await git(["worktree", "add", "--detach", path, oldTip], in: dir, timeout: 120)
+        let top = (try? await git(["rev-parse", "--show-toplevel"], in: path)) ?? path
+        let job = Job(id: id, branch: branch, oldTip: oldTip, newBase: newBase, parent: parent, path: top)
+        for (k, v) in [("branch", branch), ("oldtip", oldTip), ("newbase", newBase), ("parent", parent), ("path", top)] {
+            try await git(["config", "cpilot-restack.\(id).\(k)", v], in: dir)
+        }
+        return job
+    }
+
+    static func rebaseInProgress(in path: String) async -> Bool {
+        for sub in ["rebase-merge", "rebase-apply"] {
+            guard let rel = try? await git(["rev-parse", "--git-path", sub], in: path) else { continue }
+            let base = rel.hasPrefix("/") ? rel : path + "/" + rel
+            if (try? await Shell.run("test", ["-d", base]))?.ok == true { return true }
+        }
+        return false
+    }
+
+    static func conflictedFiles(in path: String) async -> [String] {
+        ((try? await git(["diff", "--name-only", "--diff-filter=U"], in: path)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    /// Moves the branch to the rebased commits and records where it now sits. The folder that has the branch checked out (if any) follows it.
+    static func land(_ j: Job, in dir: String) async throws {
+        let newTip = try await git(["rev-parse", "HEAD"], in: j.path)
+        let current = try await git(["rev-parse", "--verify", "refs/heads/\(j.branch)"], in: dir)
+        guard current == j.oldTip else {
+            await dropJob(j, in: dir)
+            throw StackError.message("\(j.branch) changed while it was being restacked, so nothing was moved. Restack again.")
+        }
+        if let folder = await checkoutFolder(of: j.branch, in: dir) {
+            guard (try await git(["status", "--porcelain", "--untracked-files=no"], in: folder)).isEmpty else {
+                throw StackError.message("\(j.branch) has uncommitted changes in \(folder). Commit or stash them there, then restack again; the rebased commits are kept until then.")
+            }
+            try await git(["reset", "--hard", newTip], in: folder)
+        } else {
+            try await git(["update-ref", "refs/heads/\(j.branch)", newTip, j.oldTip], in: dir)
+        }
+        try await setParent(j.branch, to: j.parent, base: j.newBase, in: dir)
+        await dropJob(j, in: dir)
+    }
+
+    /// Takes in rebases that finished in their own folders (resolved by Claude or by hand), and clears the ones that were abandoned.
+    @discardableResult
+    public static func reconcile(in dir: String) async -> (landed: [String], problems: [String]) {
+        var landed: [String] = [], problems: [String] = []
+        for j in await jobs(in: dir) {
+            if await rebaseInProgress(in: j.path) { continue }
+            let head = try? await git(["rev-parse", "HEAD"], in: j.path)
+            guard let head, await gitOK(["merge-base", "--is-ancestor", j.newBase, head], in: j.path), head != j.oldTip else { await dropJob(j, in: dir); continue }
+            do { try await land(j, in: dir); landed.append(j.branch) } catch { problems.append(error.localizedDescription) }
+        }
+        return (landed, problems)
+    }
+
     /// Puts every branch of the stack back on top of its parent, bottom first. A parent that has been merged is replaced by
     /// the trunk, and only the branch's own commits are replayed, so a squash merge does not cause duplicate changes.
+    /// Each rebase runs in a temporary folder, so your checkout is never left half-way through one.
     @discardableResult
     public static func restack(_ stack: Stack, in dir: String) async throws -> RestackResult {
-        guard (try await git(["status", "--porcelain", "--untracked-files=no"], in: dir)).isEmpty else { throw StackError.dirty }
-        let original = (try? await git(["branch", "--show-current"], in: dir)) ?? ""
         var moved: [String] = []
         var parentOf: [String: String] = [:]
         for b in stack.branches { parentOf[b.name] = b.parent }
+        await reconcile(in: dir)
+        let waiting = await pendingConflicts(in: dir)
         for b in stack.branches where !b.isMerged {
+            if let c = waiting.first(where: { $0.branch == b.name }) { throw StackError.conflict(branch: c.branch, files: c.files) }
             var parent = parentOf[b.name] ?? b.parent
             // Parents that are merged (or gone) collapse into the trunk.
             while let p = stack.branches.first(where: { $0.name == parent }), p.isMerged { parent = parentOf[p.name] ?? stack.trunk }
@@ -225,35 +326,39 @@ public enum Stacks {
             let isAncestor = await gitOK(["merge-base", "--is-ancestor", newBase, b.name], in: dir)
             if oldBase == newBase && isAncestor && parent == b.parent { continue }
             if isAncestor && parent == b.parent && b.base == nil { try await setParent(b.name, to: parent, base: newBase, in: dir); continue }
-            // A branch a session has checked out lives in that session's own folder, and git refuses to rebase it from anywhere else.
-            let folder = await checkoutFolder(of: b.name, in: dir) ?? dir
-            if folder != dir, !(try await git(["status", "--porcelain", "--untracked-files=no"], in: folder)).isEmpty {
+            // Only a folder that has this very branch checked out has to be clean, because it is moved to the rebased commits afterwards.
+            if let folder = await checkoutFolder(of: b.name, in: dir), !(try await git(["status", "--porcelain", "--untracked-files=no"], in: folder)).isEmpty {
+                if URL(fileURLWithPath: folder).resolvingSymlinksInPath() == URL(fileURLWithPath: dir).resolvingSymlinksInPath() { throw StackError.dirty }
                 throw StackError.message("\(b.name) has uncommitted changes in its session folder. Commit or stash them there, then restack.")
             }
-            let r = try await Shell.run("git", ["rebase", "--onto", newBase, oldBase, b.name], cwd: cwd(folder), timeout: 120)
+            let oldTip = try await git(["rev-parse", b.name], in: dir)
+            let job = try await startJob(branch: b.name, oldTip: oldTip, newBase: newBase, parent: parent, in: dir)
+            let r = try await Shell.run("git", ["rebase", "--onto", newBase, oldBase], cwd: cwd(job.path), timeout: 120)
             if !r.ok {
                 // Only a rebase that stopped part-way is a conflict. Anything else (a refusal, a missing ref) is reported as what it is.
-                guard let pending = await pendingConflict(in: dir) else {
+                guard await rebaseInProgress(in: job.path) else {
+                    await dropJob(job, in: dir)
                     let why = r.stderr.split(separator: "\n").first.map(String.init) ?? "git could not rebase it."
                     throw StackError.message("Could not restack \(b.name): \(why)")
                 }
-                throw StackError.conflict(branch: pending.branch, files: pending.files)
+                throw StackError.conflict(branch: b.name, files: await conflictedFiles(in: job.path))
             }
-            try await setParent(b.name, to: parent, base: newBase, in: dir)
+            try await land(job, in: dir)
             parentOf[b.name] = parent
             moved.append(b.name)
         }
-        if !original.isEmpty { _ = try? await Shell.run("git", ["checkout", original], cwd: cwd(dir)) }
         return moved.isEmpty ? .upToDate : .restacked(moved)
     }
 
-    public static func abortRestack(in dir: String) async {
-        let where_ = await pendingConflict(in: dir)?.dir ?? dir
-        _ = try? await Shell.run("git", ["rebase", "--abort"], cwd: cwd(where_))
+    /// Gives up on a stopped restack. The branch was never touched, so nothing is lost. With no branch named, the first one is aborted.
+    public static func abortRestack(in dir: String, branch: String? = nil) async {
+        guard let c = await pendingConflicts(in: dir).first(where: { branch == nil || $0.branch == branch }) else { return }
+        _ = try? await Shell.run("git", ["rebase", "--abort"], cwd: cwd(c.dir))
+        if let j = await jobs(in: dir).first(where: { $0.path == c.dir }) { await dropJob(j, in: dir) }
     }
 
-    /// A rebase that stopped on a conflict, and the folder it is stopped in (this checkout or one of its worktrees).
-    public struct PendingConflict: Equatable, Sendable { public var branch: String; public var files: [String]; public var dir: String }
+    /// A rebase that stopped on a conflict, and the folder it is stopped in.
+    public struct PendingConflict: Equatable, Sendable { public var branch: String; public var files: [String]; public var dir: String; public var isolated = true }
 
     /// Every checkout of this repository: the main one and each worktree, with the branch it has (nil when detached).
     static func checkouts(in dir: String) async -> [(path: String, branch: String?)] {
@@ -275,25 +380,38 @@ public enum Stacks {
         await checkouts(in: dir).first { $0.branch == branch }?.path
     }
 
-    public static func pendingConflict(in dir: String) async -> PendingConflict? {
-        for c in await checkouts(in: dir) {
+    /// Every restack stopped on a conflict: the ones in their own folders, and any an older version left half-way in a checkout.
+    public static func pendingConflicts(in dir: String) async -> [PendingConflict] {
+        var out: [PendingConflict] = []
+        let all = await jobs(in: dir)
+        for j in all where await rebaseInProgress(in: j.path) {
+            out.append(PendingConflict(branch: j.branch, files: await conflictedFiles(in: j.path), dir: j.path))
+        }
+        let own = Set(all.map(\.path))
+        for c in await checkouts(in: dir) where !own.contains(c.path) {
             for sub in ["rebase-merge", "rebase-apply"] {
                 guard let rel = try? await git(["rev-parse", "--git-path", sub], in: c.path) else { continue }
                 let base = rel.hasPrefix("/") ? rel : c.path + "/" + rel
-                guard FileManager.default.fileExists(atPath: base) else { continue }
-                let head = (try? String(contentsOfFile: base + "/head-name", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard (try? await Shell.run("test", ["-d", base]))?.ok == true else { continue }
+                let head = ((try? await Shell.run("cat", [base + "/head-name"]))?.stdout ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 let branch = head.hasPrefix("refs/heads/") ? String(head.dropFirst(11)) : (c.branch ?? head)
-                let files = ((try? await git(["diff", "--name-only", "--diff-filter=U"], in: c.path)) ?? "").split(separator: "\n").map(String.init)
-                return PendingConflict(branch: branch, files: files, dir: c.path)
+                out.append(PendingConflict(branch: branch, files: await conflictedFiles(in: c.path), dir: c.path, isolated: false))
+                break
             }
         }
-        return nil
+        return out
     }
 
-    /// After resolving a conflict: continue the rebase, then the caller restacks again to finish the rest of the stack.
+    public static func pendingConflict(in dir: String) async -> PendingConflict? { await pendingConflicts(in: dir).first }
+
+    /// After resolving a conflict: continue the rebase in the folder it stopped in. The caller then takes the result in with `reconcile` and restacks the rest.
     public static func continueRestack(in dir: String) async throws {
         let r = try await Shell.run("git", ["-c", "core.editor=true", "rebase", "--continue"], cwd: cwd(dir), timeout: 120)
-        guard r.ok else { throw StackError.message(r.stderr.isEmpty ? "The rebase could not continue." : r.stderr) }
+        guard r.ok else {
+            let left = await conflictedFiles(in: dir)
+            if !left.isEmpty { throw StackError.message("Still unresolved: \(left.joined(separator: ", ")). Resolve them (and git add), then continue.") }
+            throw StackError.message(r.stderr.isEmpty ? "The rebase could not continue." : r.stderr)
+        }
     }
 
     // MARK: Submit and merge
@@ -350,9 +468,12 @@ public enum Stacks {
         if current == t { _ = try? await git(["merge", "--ff-only", "origin/\(t)"], in: dir) }
         else { _ = try? await git(["fetch", "origin", "\(t):\(t)"], in: dir) }
         var moved: [String] = []
+        var conflict: StackError?
         for stack in await load(in: dir, host: host) where stack.needsRestack {
-            if case .restacked(let m) = try await restack(stack, in: dir) { moved += m }
+            do { if case .restacked(let m) = try await restack(stack, in: dir) { moved += m } }
+            catch let e as StackError { if case .conflict = e { conflict = conflict ?? e } else { throw e } }   // the other stacks still move
         }
+        if let conflict { throw conflict }
         return moved.isEmpty ? .upToDate : .restacked(moved)
     }
 
