@@ -45,6 +45,8 @@ final class Prefs {
     /// How long Merge all waits for a conflict to be resolved. 0 waits for as long as it takes.
     var conflictWaitMinutes: Int { didSet { d.set(conflictWaitMinutes, forKey: "conflictWaitMinutes") } }
     var autoResolveConflicts: Bool { didSet { d.set(autoResolveConflicts, forKey: "autoResolveConflicts") } }
+    /// Stacks that change the same files are combined into one pull request by themselves.
+    var autoCollapse: Bool { didSet { d.set(autoCollapse, forKey: "autoCollapse") } }
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
@@ -68,7 +70,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -80,6 +82,7 @@ final class Prefs {
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         adminMergeAll = d.bool(forKey: "adminMergeAll")
         autoResolveConflicts = d.bool(forKey: "autoResolveConflicts")
+        autoCollapse = d.bool(forKey: "autoCollapse")
         conflictWaitMinutes = d.integer(forKey: "conflictWaitMinutes")
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
