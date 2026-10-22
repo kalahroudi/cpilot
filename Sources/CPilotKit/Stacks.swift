@@ -635,10 +635,25 @@ public enum Stacks {
         for n in job.prs { try? await host.close(n, comment: "Combined into #\(number): these pull requests changed the same files and conflicted with each other.") }
         let tip = try await git(["rev-parse", job.branch], in: dir)
         try await setParent(job.branch, to: job.trunk, base: tip, in: dir)
+        // Remembered, so the specs whose tasks these branches were are ticked off when this pull request merges.
+        try await git(["config", "branch.\(job.branch).cpilot-replaces", job.sources.joined(separator: ",")], in: dir)
         for b in job.sources { await untrack(b, in: dir) }
         _ = try? await Shell.run("git", ["worktree", "remove", "--force", job.path], cwd: cwd(dir))
         _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
         return number
+    }
+
+    /// Combined branch to the branches it replaced.
+    public static func replacedBranches(in dir: String) async -> [String: [String]] {
+        guard let out = try? await git(["config", "--get-regexp", #"^branch\..*\.cpilot-replaces$"#], in: dir) else { return [:] }
+        var map: [String: [String]] = [:]
+        for line in out.split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2, parts[0].hasPrefix("branch.") else { continue }
+            let branch = String(parts[0].dropFirst(7).dropLast(".cpilot-replaces".count))
+            map[branch] = parts[1].split(separator: ",").map(String.init)
+        }
+        return map
     }
 
     static func pickInProgress(in path: String) async -> Bool { await gitOK(["rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD"], in: path) }

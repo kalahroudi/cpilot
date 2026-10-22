@@ -336,6 +336,8 @@ final class StackTests: XCTestCase {
         XCTAssertTrue(host.prs.contains { $0.number == number && $0.title == "Everything" })
         let after = await Stacks.load(in: dir, host: host)
         XCTAssertEqual(after.flatMap(\.branches).map(\.name), [job.branch])
+        let replaced = await Stacks.replacedBranches(in: dir)
+        XCTAssertEqual(Set(replaced[job.branch] ?? []), ["a", "b", "c"])
     }
 
     func testCollapseStopsOnAConflictAndHandsOverTheRest() async throws {
