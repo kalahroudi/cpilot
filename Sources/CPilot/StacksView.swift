@@ -186,29 +186,38 @@ final class StackCenter {
         }
     }
 
-    /// Merges every open pull request of the stack, lowest first, past the repository's rules. Each one still has to pass its checks, and the first problem stops the run.
-    func mergeAllAsAdmin(_ s: Stack) async {
-        await run("Merging") { [method] dir, host in
-            let names = Set(s.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.map(\.name))
-            var merged: [Int] = []
-            var current = s
-            while current.bottomOpen != nil {
-                guard let n = current.bottomOpen?.pr else { break }
-                self.notice = merged.isEmpty ? nil : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")). Waiting on #\(n)…"
-                var waited = 0
-                while true {
-                    let gate = await PRCenter.shared.gateFor(n, dir: dir)
-                    if gate.ready { break }
-                    guard gate.reasons == ["Checks are still running."], waited < 900 else {
-                        throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + "#\(n) is not ready: " + gate.reasons.joined(separator: " "))
-                    }
-                    try await Task.sleep(for: .seconds(20)); waited += 20
-                }
-                merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host))
-                guard let next = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { names.contains($0.name) && !$0.isMerged } }) else { break }
-                current = next
+    /// Waits for `n`'s checks to finish, and stops with a plain message at the first other thing that is not ready.
+    private func waitUntilReady(_ n: Int, dir: String, merged: [Int]) async throws {
+        var waited = 0
+        while true {
+            let gate = await PRCenter.shared.gateFor(n, dir: dir)
+            if gate.ready { return }
+            guard gate.reasons == ["Checks are still running."], waited < 900 else {
+                throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + "#\(n) is not ready: " + gate.reasons.joined(separator: " "))
             }
-            return "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")) as admin."
+            try await Task.sleep(for: .seconds(20)); waited += 20
+        }
+    }
+
+    /// Merges every open pull request of the stack, lowest first, past the repository's rules. Each one still has to pass its checks, and the first problem stops the run.
+    func mergeAllAsAdmin(_ s: Stack) async { await mergeEveryAsAdmin([s]) }
+
+    /// The same for several stacks: each stack's pull requests lowest first, stacks in the order of their next pull request.
+    func mergeEveryAsAdmin(_ list: [Stack]) async {
+        await run("Merging") { [method] dir, host in
+            var todo = Set(list.flatMap { $0.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.compactMap(\.pr) })
+            var merged: [Int] = []
+            while !todo.isEmpty {
+                let all = await Stacks.load(in: dir, host: host)
+                guard let current = all.filter({ $0.bottomOpen?.pr.map(todo.contains) == true }).min(by: { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }), let n = current.bottomOpen?.pr else { break }
+                self.notice = merged.isEmpty ? nil : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")). Next: #\(n)…"
+                self.busy = "Merging #\(n)"
+                try await self.waitUntilReady(n, dir: dir, merged: merged)
+                do { merged.append(try await self.mergeOne(current, admin: true, method: method, dir: dir, host: host)) }
+                catch { throw StackError.message((merged.isEmpty ? "" : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")), then stopped. ") + error.localizedDescription) }
+                todo.remove(n)
+            }
+            return merged.isEmpty ? "Nothing was left to merge." : "Merged \(merged.map { "#\($0)" }.joined(separator: ", ")) as admin."
         }
     }
 
@@ -257,6 +266,7 @@ struct StacksView: View {
     let center = StackCenter.shared
     let pr = PRCenter.shared
     @State private var newName = ""
+    @State private var confirmBypassEvery = false
     @State private var splitting = false
     @State private var startOpen = false
 
@@ -282,6 +292,7 @@ struct StacksView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         banners
+                        mergeEverything
                         if center.stacks.isEmpty && !center.loading { Text("No stacks yet. Start one below.").font(.system(size: 13)).foregroundStyle(.secondary) }
                         ForEach(center.stacks.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }) { s in StackCard(stack: s) }
                         startSection
@@ -293,6 +304,37 @@ struct StacksView: View {
         .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current { Task { await center.open(r) } } }
         .onChange(of: Project.shared.current) { _, r in if let r, r != center.repo { Task { await center.open(r) } } }
         .sheet(isPresented: $splitting) { SplitSheet() }
+    }
+
+    /// Stacks whose next pull request GitHub's rules refuse although its checks pass.
+    private var blockedStacks: [Stack] {
+        center.stacks.filter { s in
+            guard let n = s.bottomOpen?.pr else { return false }
+            return center.policyBlocked.contains(n) || s.bottomOpen?.mergeState == "BLOCKED"
+        }.sorted { ($0.bottomOpen?.pr ?? .max) < ($1.bottomOpen?.pr ?? .max) }
+    }
+
+    /// One button for all of them, for the common case of many one-pull-request stacks that each wait on the same rule.
+    @ViewBuilder private var mergeEverything: some View {
+        let blocked = blockedStacks
+        let total = blocked.reduce(0) { $0 + $1.branches.filter { !$0.isMerged && $0.prState == "OPEN" }.count }
+        if Prefs.shared.adminMergeAll, blocked.count > 1, center.busy == nil {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "lock.fill").foregroundStyle(Theme.warn)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("GitHub's rules block \(blocked.count) stacks").font(.system(size: 12.5, weight: .semibold))
+                    Text("Merge all \(total) pull requests as admin, one after another.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Merge all \(total) as admin…") { confirmBypassEvery = true }.buttonStyle(Pill(kind: .plain))
+                    .confirmationDialog("Bypass the repository's rules to merge \(total) pull requests?", isPresented: $confirmBypassEvery, titleVisibility: .visible) {
+                        Button("Merge all \(total) as admin", role: .destructive) { Task { await center.mergeEveryAsAdmin(blocked) } }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. The merges are recorded as bypasses. You can turn this button off in Settings.")
+                    }
+            }.padding(12).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 
     @ViewBuilder private var banners: some View {

@@ -184,6 +184,8 @@ public final class AcpClient: @unchecked Sendable {
         linkLock.unlock()
         if let found { handler?(found) }
     }
+    /// The tail of what the agent has printed to its error output, to say why it stopped.
+    public var recentLog: String { linkLock.lock(); defer { linkLock.unlock() }; return recentStderr }
     private func watchForLink(_ h: (@Sendable (OAuthLink) -> Void)?) { linkLock.lock(); onLink = h; recentStderr = ""; linkLock.unlock() }
     private let lock = NSLock()
     private let writeQueue = DispatchQueue(label: "cpilot.acp.write")
