@@ -27,11 +27,15 @@ public enum RemoteHost {
         return r.stdout.contains("cpilotd \(Cpilotd.version)")
     }
 
-    /// Installs Node.js for this user under ~/.cpilot/node (no root needed) when the server has none.
+    /// The oldest Node.js the agents CPilot runs through npx work with. Older ones start and exit without a word.
+    static let minimumNode = 22
+
+    /// Installs Node.js for this user under ~/.cpilot/node (no root needed) when the server has none, or has one older than `minimumNode`.
     static let nodeInstallScript = """
     export PATH="$HOME/.cpilot/node/bin:$PATH"
-    command -v node >/dev/null 2>&1 && exit 0
-    V=v20.18.1
+    MAJOR=$(node -v 2>/dev/null | sed 's/^v//; s/\\..*//')
+    [ -n "$MAJOR" ] && [ "$MAJOR" -ge \(minimumNode) ] 2>/dev/null && exit 0
+    V=v22.23.4
     case "$(uname -s)" in Linux) OS=linux;; Darwin) OS=darwin;; *) echo "Unsupported system $(uname -s)" >&2; exit 1;; esac
     case "$(uname -m)" in x86_64|amd64) A=x64;; aarch64|arm64) A=arm64;; armv7l) A=armv7l;; *) echo "Unsupported CPU $(uname -m)" >&2; exit 1;; esac
     URL="https://nodejs.org/dist/$V/node-$V-$OS-$A.tar.gz"

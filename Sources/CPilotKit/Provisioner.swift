@@ -37,6 +37,9 @@ public enum Provisioner {
             // Until CPilot has recorded how the agent runs on this server (its own arguments), it is set up again.
             guard env.remoteAgents?[agent.id] != nil else { return false }
             probe = "test -x \"" + AgentInstaller.onServer(agent, home: "$HOME").command + "\""
+        } else if agent.command == "npx" {
+            // npx agents need a recent Node.js; an older one starts them and they exit without saying why.
+            probe = "export PATH=\"$HOME/.cpilot/node/bin:$PATH\"; command -v npx >/dev/null 2>&1 && [ \"$(node -v | sed 's/^v//; s/\\..*//')\" -ge \(RemoteHost.minimumNode) ]"
         } else { probe = "command -v " + SSH.quote(agent.command) + " >/dev/null 2>&1" }
         let r = try? await Exec.with(env) { try await Shell.run("sh", ["-c", probe], timeout: 30) }
         return r?.ok == true

@@ -190,3 +190,14 @@ final class LiveAgentInstallTests: XCTestCase {
         else { FileHandle.standardError.write(Data("[live] sign-in methods: \(client.authMethods.map(\.name))\n".utf8)) }
     }
 }
+
+final class AgentCheckExplainTests: XCTestCase {
+    func testPageSizeMismatchIsExplainedWithTheFix() {
+        let log = "F1022 23:58:04.916375   20460 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size\n*** Check failure stack trace: ***\n[tailscale-ssh: process died: signal: aborted]"
+        let env = EnvironmentConfig(name: "node-1", routes: ["moram@node-1"])
+        let why = AgentCheck.explain(log, agent: "Google Antigravity", on: env)
+        XCTAssertNotNil(why)
+        XCTAssertTrue(why!.contains("built for 4 KB") && why!.contains("node-1 runs 16 KB") && why!.contains("kernel=kernel8.img"))
+        XCTAssertNil(AgentCheck.explain("something else broke", agent: "A", on: nil))
+    }
+}
