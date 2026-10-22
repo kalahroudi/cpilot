@@ -34,6 +34,7 @@ final class StackTests: XCTestCase {
 
     override func setUp() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("stack-\(UUID().uuidString.prefix(8))")
+        Stacks.restackRootOverride = root.appendingPathComponent("restack").path
         origin = root.appendingPathComponent("origin.git").path; dir = root.appendingPathComponent("work").path
         try FileManager.default.createDirectory(atPath: root.path, withIntermediateDirectories: true)
         try await sh(["init", "--bare", "-b", "main", origin], in: root.path)
@@ -112,17 +113,6 @@ final class StackTests: XCTestCase {
         XCTAssertTrue(tree.contains("a.txt") && tree.contains("b.txt") && tree.contains("c.txt"))
     }
 
-    func testConflictIsReportedAndCanBeAborted() async throws {
-        try await buildStack()
-        try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
-        try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
-        let stack = await Stacks.load(in: dir)[0]
-        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") }
-        catch let e as StackError { guard case .conflict(let b, let files) = e else { return XCTFail("\(e)") }; XCTAssertEqual(b, "b"); XCTAssertEqual(files, ["shared.txt"]) }
-        await Stacks.abortRestack(in: dir)
-        let status = try await sh(["status", "--porcelain", "--untracked-files=no"]); XCTAssertEqual(status, "")
-    }
-
     /// The real-world failure: a session has the branch checked out in its own worktree, so git refuses to rebase it from the main folder.
     func testBranchCheckedOutInAWorktreeIsRestackedThere() async throws {
         try await buildStack()
@@ -137,27 +127,152 @@ final class StackTests: XCTestCase {
         let nowAt = try await sh(["-C", wt, "branch", "--show-current"]); XCTAssertEqual(nowAt, "b")
     }
 
-    func testAConflictInAWorktreeIsFoundAndAbortedThere() async throws {
+    func testDirtyCheckoutOfTheBranchBeingMovedIsRefused() async throws {
+        try await buildStack()
+        try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
+        try await sh(["checkout", "b"]); try write("b.txt", "changed\n")
+        let stack = await Stacks.load(in: dir)[0]
+        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected dirty") } catch { XCTAssertEqual(error as? StackError, .dirty) }
+    }
+
+    func testUncommittedChangesElsewhereDoNotBlockARestack() async throws {
+        try await buildStack()
+        try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
+        try write("scratch.txt", "x\n"); try write("a.txt", "dirty\n")          // a is checked out and dirty, but a is not moved
+        let stack = await Stacks.load(in: dir)[0]
+        let r = try await Stacks.restack(stack, in: dir)
+        XCTAssertEqual(r, .restacked(["b", "c"]))
+        let tree = try await sh(["ls-tree", "-r", "--name-only", "c"]); XCTAssertTrue(tree.contains("a2.txt"))
+        let mine = try String(contentsOfFile: dir + "/a.txt", encoding: .utf8); XCTAssertEqual(mine, "dirty\n")
+    }
+
+    private func conflictSetup() async throws -> Stack {
         try await buildStack()
         try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
         try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
-        let wt = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
-        defer { try? FileManager.default.removeItem(atPath: wt) }
-        try await sh(["worktree", "add", wt, "b"])
-        let stack = await Stacks.load(in: dir)[0]
-        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") } catch { guard case .conflict = error as? StackError else { return XCTFail("\(error)") } }
-        let pending = await Stacks.pendingConflict(in: dir)
-        XCTAssertEqual(pending?.branch, "b"); XCTAssertEqual(pending?.files, ["shared.txt"])
-        XCTAssertTrue(pending?.dir.hasSuffix(URL(fileURLWithPath: wt).lastPathComponent) == true)   // the rebase is in the session's folder
+        try await sh(["checkout", "c"])
+        return await Stacks.load(in: dir)[0]
+    }
+
+    /// The point of restacking in a folder of its own: a conflict leaves your checkout exactly as it was.
+    func testAConflictLeavesYourCheckoutAloneAndAbortLosesNothing() async throws {
+        let stack = try await conflictSetup()
+        let tipB = try await sh(["rev-parse", "b"])
+        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") }
+        catch let e as StackError { guard case .conflict(let b, let files) = e else { return XCTFail("\(e)") }; XCTAssertEqual(b, "b"); XCTAssertEqual(files, ["shared.txt"]) }
+        let status = try await sh(["status", "--porcelain", "--untracked-files=no"]); XCTAssertEqual(status, "")
+        let here = try await sh(["branch", "--show-current"]); XCTAssertEqual(here, "c")
+        let state = try await sh(["status"]); XCTAssertFalse(state.contains("rebase in progress"))
+        let pending = await Stacks.pendingConflicts(in: dir); XCTAssertEqual(pending.map(\.branch), ["b"])
+        XCTAssertNotEqual(pending.first?.dir, dir)
+        await Stacks.abortRestack(in: dir)
+        let none = await Stacks.pendingConflicts(in: dir); XCTAssertTrue(none.isEmpty)
+        let after = try await sh(["rev-parse", "b"]); XCTAssertEqual(after, tipB)
+        let listed = try await sh(["worktree", "list"]); XCTAssertEqual(listed.split(separator: "\n").count, 1)
+    }
+
+    func testResolvingByHandLandsTheBranchAndTheRestFollows() async throws {
+        let stack = try await conflictSetup()
+        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") } catch {}
+        let pc = await Stacks.pendingConflict(in: dir); let c = try XCTUnwrap(pc)
+        do { try await Stacks.continueRestack(in: c.dir); XCTFail("expected unresolved") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("shared.txt")) }
+        try "resolved\n".write(toFile: c.dir + "/shared.txt", atomically: true, encoding: .utf8)
+        try await sh(["add", "shared.txt"], in: c.dir)
+        try await Stacks.continueRestack(in: c.dir)
+        let r = await Stacks.reconcile(in: dir)
+        XCTAssertEqual(r.landed, ["b"]); XCTAssertTrue(r.problems.isEmpty)
+        let shared = try await sh(["show", "b:shared.txt"]); XCTAssertEqual(shared, "resolved")
+        let fresh = await Stacks.load(in: dir)[0]
+        XCTAssertEqual(fresh.branches.first { $0.name == "b" }?.needsRestack, false)
+        XCTAssertEqual(fresh.branches.first { $0.name == "c" }?.needsRestack, true)
+        let done = try await Stacks.restack(fresh, in: dir)
+        XCTAssertEqual(done, .restacked(["c"]))
+        let tree = try await sh(["ls-tree", "-r", "--name-only", "c"]); XCTAssertTrue(tree.contains("shared.txt") && tree.contains("c.txt"))
+    }
+
+    func testAbandoningTheRebaseInItsFolderClearsTheJob() async throws {
+        let stack = try await conflictSetup()
+        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected a conflict") } catch {}
+        let pc = await Stacks.pendingConflict(in: dir); let c = try XCTUnwrap(pc)
+        try await sh(["rebase", "--abort"], in: c.dir)
+        await Stacks.reconcile(in: dir)
+        let none = await Stacks.pendingConflicts(in: dir); XCTAssertTrue(none.isEmpty)
+        let jobs = await Stacks.jobs(in: dir); XCTAssertTrue(jobs.isEmpty)
+    }
+
+    func testAConflictInOneStackDoesNotStopTheOthers() async throws {
+        try await buildStack()
+        try await sh(["checkout", "main"])
+        try await Stacks.create("x", in: dir); try await commit("x.txt", "x\n", "add x")
+        try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
+        try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
+        try await sh(["checkout", "main"]); try await commit("m.txt", "m\n", "main moves"); try await sh(["push", "origin", "main"])
+        do { _ = try await Stacks.sync(in: dir, host: nil); XCTFail("expected a conflict") }
+        catch let e as StackError { guard case .conflict(let b, _) = e else { return XCTFail("\(e)") }; XCTAssertEqual(b, "b") }
+        let x = await Stacks.load(in: dir).first { $0.branches.map(\.name) == ["x"] }
+        XCTAssertEqual(x?.needsRestack, false)                       // x was restacked even though the stack of a, b, c stopped
+    }
+
+    func testAnOldHalfFinishedRebaseInTheCheckoutIsStillFoundAndAborted() async throws {
+        try await buildStack()
+        try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
+        try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
+        _ = try? await sh(["rebase", "--onto", "a", "a~1", "b"])      // what earlier versions left behind
+        let p = await Stacks.pendingConflict(in: dir)
+        XCTAssertEqual(p?.branch, "b"); XCTAssertEqual(p.map { URL(fileURLWithPath: $0.dir).resolvingSymlinksInPath().path }, URL(fileURLWithPath: dir).resolvingSymlinksInPath().path)
         await Stacks.abortRestack(in: dir)
         let none = await Stacks.pendingConflict(in: dir); XCTAssertNil(none)
     }
 
-    func testDirtyTreeIsRefused() async throws {
+    func testOverlapNamesFilesSharedAcrossStacksOnly() async throws {
+        let o = Stacks.overlaps(changes: ["t002": ["ComposeField.swift", "a"], "t006": ["ComposeField.swift"], "t007": ["z"], "t002b": ["ComposeField.swift"]],
+                                sameStack: { Set([$0, $1]) == ["t002", "t002b"] })
+        XCTAssertEqual(o.map { "\($0.first)+\($0.second)" }, ["t002+t006", "t002b+t006"])
+        XCTAssertEqual(o.first?.files, ["ComposeField.swift"])
+    }
+
+    func testOverlapReadsTheRealDiffs() async throws {
+        try await sh(["checkout", "-b", "p"]); try await commit("shared.txt", "p\n", "p")
+        try await sh(["checkout", "main"]); try await sh(["checkout", "-b", "q"]); try await commit("shared.txt", "q\n", "q")
+        try await sh(["checkout", "main"])
+        func branch(_ n: String) -> StackBranch { var b = StackBranch(name: n, parent: "main", base: nil, depth: 0); b.prState = "OPEN"; b.pr = 1; return b }
+        let o = await Stacks.overlaps(of: [Stack(trunk: "main", branches: [branch("p")]), Stack(trunk: "main", branches: [branch("q")])], in: dir)
+        XCTAssertEqual(o, [Stacks.Overlap(first: "p", second: "q", files: ["shared.txt"])])
+    }
+
+    func testWorktreesAreListedClassifiedAndRemoved() async throws {
         try await buildStack()
-        try write("a.txt", "changed\n")
-        let stack = await Stacks.load(in: dir)[0]
-        do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected dirty") } catch { XCTAssertEqual(error as? StackError, .dirty) }
+        let wt = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        defer { try? FileManager.default.removeItem(atPath: wt) }
+        try await sh(["checkout", "main"]); try await sh(["worktree", "add", wt, "b"])
+        try write("x.txt", "wip\n"); try "wip\n".write(toFile: wt + "/b-wip.txt", atomically: true, encoding: .utf8)
+        try await sh(["add", "b-wip.txt"], in: wt)
+        var list = await Worktrees.list(in: dir)
+        XCTAssertEqual(list.count, 2); XCTAssertEqual(list[0].kind, .main)
+        XCTAssertEqual(list[1].kind, .other); XCTAssertEqual(list[1].branch, "b"); XCTAssertEqual(list[1].uncommitted, 1); XCTAssertTrue(list[1].holdsWork)
+        let top = try await sh(["rev-parse", "--show-toplevel"], in: wt)
+        list = await Worktrees.list(in: dir, sessionPaths: [top]); XCTAssertEqual(list[1].kind, .session)
+        do { try await Worktrees.remove(list[0], in: dir, deleteBranch: false); XCTFail("main cannot go") } catch {}
+        try await Worktrees.remove(list[1], in: dir, deleteBranch: true)
+        let after = await Worktrees.list(in: dir); XCTAssertEqual(after.count, 1)
+        let kept = try await sh(["branch", "--list", "b"]); XCTAssertFalse(kept.isEmpty)           // the branch held unsaved work, so it stays
+    }
+
+    func testAFolderDeletedBehindGitsBackIsPrunedAndALeftoverRestackFolderIsClearedWithItsJob() async throws {
+        let stack = try await conflictSetup()
+        do { _ = try await Stacks.restack(stack, in: dir) } catch {}
+        let listed = await Worktrees.list(in: dir)
+        let leftover = try XCTUnwrap(listed.first { $0.kind == .restack })
+        XCTAssertTrue(leftover.rebasing)
+        try await Worktrees.remove(leftover, in: dir, deleteBranch: false)
+        let jobs = await Stacks.jobs(in: dir); XCTAssertTrue(jobs.isEmpty)
+        let none = await Stacks.pendingConflicts(in: dir); XCTAssertTrue(none.isEmpty)
+        let gone = NSTemporaryDirectory() + "cpilot-wt-\(UUID().uuidString.prefix(6))"
+        try await sh(["worktree", "add", gone, "a"]); try FileManager.default.removeItem(atPath: gone)
+        let stale = await Worktrees.list(in: dir); XCTAssertTrue(stale.contains { $0.missing })
+        await Worktrees.prune(in: dir)
+        let clean = await Worktrees.list(in: dir); XCTAssertFalse(clean.contains { $0.missing })
     }
 
     func testSubmitCreatesChainedPullRequestsThenUpdates() async throws {

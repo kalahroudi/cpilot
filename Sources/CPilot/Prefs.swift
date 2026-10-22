@@ -42,6 +42,9 @@ final class Prefs {
     /// How much the agent does by itself when turning an idea into a spec and a stack: "step", "plan" or "hands".
     /// Offers "Merge all as admin" on a stack whose pull requests GitHub's rules block.
     var adminMergeAll: Bool { didSet { d.set(adminMergeAll, forKey: "adminMergeAll") } }
+    /// How long Merge all waits for a conflict to be resolved. 0 waits for as long as it takes.
+    var conflictWaitMinutes: Int { didSet { d.set(conflictWaitMinutes, forKey: "conflictWaitMinutes") } }
+    var autoResolveConflicts: Bool { didSet { d.set(autoResolveConflicts, forKey: "autoResolveConflicts") } }
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
@@ -65,7 +68,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -76,6 +79,8 @@ final class Prefs {
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         adminMergeAll = d.bool(forKey: "adminMergeAll")
+        autoResolveConflicts = d.bool(forKey: "autoResolveConflicts")
+        conflictWaitMinutes = d.integer(forKey: "conflictWaitMinutes")
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
         recall = d.bool(forKey: "recall")

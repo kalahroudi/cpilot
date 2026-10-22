@@ -13,6 +13,30 @@ final class SpecTests: XCTestCase {
     Some other line
     """
 
+    func testTouchesRoundTripsAndOverlappingTasksAreOrdered() {
+        let text = """
+        # Tasks: x
+        - [ ] T001 Add field (R1) touches: Sources/Hush/ComposeField.swift, Tests/FieldTests.swift
+        - [ ] T002 Intercept Tab (R2) needs: T001 touches: Sources/Hush/Keys.swift
+        - [ ] T003 Pin history (R3) touches: Sources/Hush/ComposeField.swift
+        - [ ] T004 Docs (R4) touches: docs/
+        - [ ] T005 Keys docs (R4) touches: docs/keys.md Sources/Hush/
+        """
+        let tasks = Specs.parseTasks(text)
+        XCTAssertEqual(tasks[0].touches, ["Sources/Hush/ComposeField.swift", "Tests/FieldTests.swift"])
+        XCTAssertEqual(tasks[1].needs, ["T001"]); XCTAssertEqual(tasks[1].touches, ["Sources/Hush/Keys.swift"])
+        let o = Specs.taskOverlaps(tasks)
+        XCTAssertTrue(o.contains(Specs.TaskOverlap(earlier: "T001", later: "T003", paths: ["Sources/Hush/ComposeField.swift"])))
+        XCTAssertTrue(o.contains { $0.earlier == "T004" && $0.later == "T005" })            // a folder overlaps a file inside it
+        XCTAssertFalse(o.contains { $0.earlier == "T001" && $0.later == "T002" })           // already ordered
+        let fixed = Specs.orderOverlapping(text)
+        XCTAssertEqual(Specs.parseTasks(fixed).first { $0.id == "T003" }?.needs, ["T001"])
+        XCTAssertEqual(Specs.parseTasks(fixed).first { $0.id == "T003" }?.touches, ["Sources/Hush/ComposeField.swift"])
+        XCTAssertTrue(Specs.taskOverlaps(Specs.parseTasks(fixed)).filter { $0.earlier == "T001" }.isEmpty)
+        // T005 now waits for T004, and T003 waits for T001 through a chain, so ordering twice changes nothing.
+        XCTAssertEqual(Specs.orderOverlapping(fixed), fixed)
+    }
+
     func testParseTasks() {
         let t = Specs.parseTasks(tasksText)
         XCTAssertEqual(t.map(\.id), ["T001", "T002", "T003", "T004"])
