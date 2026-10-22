@@ -24,6 +24,8 @@ final class StackCenter {
     var worktrees: [WorktreeInfo] = []
     /// Conflicts a session was already started for, so each is offered to Claude once.
     private var resolving: Set<String> = []
+    /// Overlapping groups already combined or tried, so a failure is not retried every refresh.
+    private var collapseTried: Set<String> = []
     func conflict(in stack: Stack) -> Stacks.PendingConflict? { conflicts.first { c in stack.branches.contains { $0.name == c.branch } } }
     var notice: String?
     var method: MergeMethod = .squash
@@ -147,6 +149,7 @@ final class StackCenter {
         conflicts = await Exec.with(env) { await Stacks.pendingConflicts(in: r.dir) }
         overlaps = await Exec.with(env) { await Stacks.overlaps(of: loaded, in: r.dir) }
         await loadWorktrees()
+        await collapseOverlapping()
         resolving.formIntersection(conflicts.map(\.branch))
         if Prefs.shared.autoResolveConflicts {
             for c in conflicts where c.isolated && resolving.insert(c.branch).inserted { await resolveWithAgent(c, show: false) }
@@ -310,10 +313,25 @@ final class StackCenter {
 
     /// Combines every open branch of the stack into one pull request, start to finish: builds one branch from the latest trunk,
     /// has Claude resolve the overlaps and prove it builds and passes, publishes it, and closes the pull requests it replaces.
-    func collapse(_ s: Stack) async {
+    func collapse(_ s: Stack) async { await collapse([s]) }
+
+    /// Stacks that change the same files cannot merge without conflicts. With the setting on, each such group is combined once, by itself.
+    private func collapseOverlapping() async {
+        guard Prefs.shared.autoCollapse, busy == nil, conflicts.isEmpty else { return }
+        for group in Stacks.overlapGroups(stacks, overlaps: overlaps) {
+            let open = group.flatMap(\.branches).filter { !$0.isMerged && $0.prState != "CLOSED" }
+            let key = open.map(\.name).sorted().joined(separator: ",")
+            guard open.count >= 2, open.allSatisfy({ $0.prState == "OPEN" }), collapseTried.insert(key).inserted else { continue }
+            notice = "Pull requests in \(group.count) stacks change the same files. Combining them into one."
+            await collapse(group)
+            return
+        }
+    }
+
+    func collapse(_ list: [Stack]) async {
         await run("Combining") { dir, host in
             self.busy = "Combining into one branch"
-            let job = try await Stacks.startCollapse(s, in: dir)
+            let job = try await Stacks.startCollapse(list, in: dir)
             self.busy = "Waiting for Claude to finish \(job.branch)"
             let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
             let session: SessionController
@@ -481,7 +499,7 @@ struct StacksView: View {
                         .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
                 if center.overlaps.count > 5 { Text("and \(center.overlaps.count - 5) more pairs").font(.system(size: 11.5)).foregroundStyle(.secondary) }
-                Text(Prefs.shared.autoResolveConflicts ? "Whichever merges second is rebased over the first. If that conflicts, Claude resolves it in a temporary copy and merging carries on." : "Whichever merges second is rebased over the first, and you resolve any conflict from here.")
+                Text(Prefs.shared.autoCollapse ? "CPilot combines these into one pull request by itself: Claude merges the changes, checks it builds, and the old pull requests are closed." : Prefs.shared.autoResolveConflicts ? "Whichever merges second is rebased over the first. If that conflicts, Claude resolves it in a temporary copy and merging carries on." : "Whichever merges second is rebased over the first, and you resolve any conflict from here.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.card, in: RoundedRectangle(cornerRadius: 10)).overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
         }

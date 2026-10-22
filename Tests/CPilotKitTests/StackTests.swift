@@ -359,6 +359,15 @@ final class StackTests: XCTestCase {
         XCTAssertFalse(gone)
     }
 
+    func testOverlapGroupsJoinStacksThroughOverlaps() {
+        func st(_ names: String...) -> Stack { Stack(trunk: "main", branches: names.map { StackBranch(name: $0, parent: "main", base: nil, commits: 1, pr: 1, prState: "OPEN") }) }
+        let stacks = [st("a"), st("b"), st("c"), st("d")]
+        let groups = Stacks.overlapGroups(stacks, overlaps: [.init(first: "a", second: "b", files: ["x"]), .init(first: "b", second: "c", files: ["y"])])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].map(\.id), ["a", "b", "c"])
+        XCTAssertTrue(Stacks.overlapGroups(stacks, overlaps: []).isEmpty)
+    }
+
     func testCollapseNeedsTwoOpenBranches() async throws {
         try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
         let stack = await Stacks.load(in: dir)[0]

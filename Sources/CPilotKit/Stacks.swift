@@ -447,6 +447,17 @@ public enum Stacks {
         return overlaps(changes: changes, sameStack: { home[$0] == home[$1] })
     }
 
+    /// Stacks joined by overlaps: each group is stacks that change the same files, directly or through another stack. Only groups of two or more.
+    public static func overlapGroups(_ stacks: [Stack], overlaps: [Overlap]) -> [[Stack]] {
+        var parent = Array(stacks.indices)
+        func root(_ i: Int) -> Int { parent[i] == i ? i : { let r = root(parent[i]); parent[i] = r; return r }() }
+        func index(of branch: String) -> Int? { stacks.firstIndex { $0.branches.contains { $0.name == branch } } }
+        for o in overlaps { if let a = index(of: o.first), let b = index(of: o.second) { parent[root(a)] = root(b) } }
+        var groups: [Int: [Stack]] = [:]
+        for i in stacks.indices { groups[root(i), default: []].append(stacks[i]) }
+        return groups.values.filter { $0.count >= 2 }.map { $0.sorted { $0.id < $1.id } }.sorted { ($0.first?.id ?? "") < ($1.first?.id ?? "") }
+    }
+
     // MARK: Submit and merge
 
     static func footer(_ stack: Stack, numbers: [String: Int], current: String) -> String {
@@ -538,8 +549,8 @@ public enum Stacks {
 
     /// The commits each unmerged branch adds on top of its parent that the trunk does not already have, in stack order.
     /// A commit whose change the trunk already holds (for example the squashed merge of a lower pull request) is left out.
-    public static func collapseCommits(_ stack: Stack, trunkRef: String, in dir: String) async -> [(branch: String, sha: String, subject: String)] {
-        let open = stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }
+    public static func collapseCommits(_ stacks: [Stack], trunkRef: String, in dir: String) async -> [(branch: String, sha: String, subject: String)] {
+        let open = stacks.flatMap(\.branches).filter { !$0.isMerged && $0.prState != "CLOSED" }
         let names = Set(open.map(\.name))
         var out: [(String, String, String)] = []
         for b in open {
@@ -558,14 +569,19 @@ public enum Stacks {
 
     /// Builds the combined branch from the latest trunk in a temporary folder, picking each commit in turn.
     /// Stops at the first conflict and says so; everything that picks cleanly is already in.
-    public static func startCollapse(_ stack: Stack, in dir: String) async throws -> CollapseJob {
+    public static func startCollapse(_ stack: Stack, in dir: String) async throws -> CollapseJob { try await startCollapse([stack], in: dir) }
+
+    /// The same for several stacks at once, for stacks that change the same files and so cannot merge without conflicts.
+    public static func startCollapse(_ stacks: [Stack], in dir: String) async throws -> CollapseJob {
+        guard let first = stacks.first else { throw StackError.message("There is nothing to combine.") }
+        let stack = Stack(trunk: first.trunk, branches: stacks.flatMap(\.branches))
         let open = stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }
-        guard open.count >= 2 else { throw StackError.message("There is nothing to combine: the stack has fewer than two open branches.") }
+        guard open.count >= 2 else { throw StackError.message("There is nothing to combine: fewer than two open branches.") }
         await fetch(in: dir)
         let remote = "origin/\(stack.trunk)"
         let base = await gitOK(["rev-parse", "--verify", "--quiet", remote], in: dir) ? remote : stack.trunk
-        let commits = await collapseCommits(stack, trunkRef: base, in: dir)
-        guard !commits.isEmpty else { throw StackError.message("Every change in this stack is already in \(stack.trunk).") }
+        let commits = await collapseCommits(stacks, trunkRef: base, in: dir)
+        guard !commits.isEmpty else { throw StackError.message("Every change in these branches is already in \(stack.trunk).") }
         var name = Git.slugify((open.first?.name ?? "stack") + "-combined"), n = 2
         while await gitOK(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: dir) { name = Git.slugify((open.first?.name ?? "stack") + "-combined-\(n)"); n += 1 }
         _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
