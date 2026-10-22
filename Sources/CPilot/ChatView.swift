@@ -23,14 +23,16 @@ struct ChatView: View {
             Composer(session: session)
         }
         .background(Theme.pane)
-        .onAppear { session.loadIfNeeded(); session.showRecapIfAway() }
+        .onAppear { session.loadInBackground() }
+        .onChange(of: session.loaded) { _, now in if now { session.showRecapIfAway() } }
+        .transition(.opacity)
     }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    if session.items.isEmpty { EmptyChat(session: session) }
+                    if session.items.isEmpty { if session.loading || !session.loaded { OpeningSession() } else { EmptyChat(session: session) } }
                     ForEach(session.items.filter { $0.parent == nil }) { item in ChatRow(item: item, session: session, children: session.items.filter { $0.parent == item.id }).id(item.id) }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -149,6 +151,16 @@ struct ChatHeader: View {
         if level == .fullAccess, session.env != nil { session.addNotice("Full access is not available on servers. Agents there always ask first."); return }
         guard level == .fullAccess, Workspace.shared.policy.requireTouchIDForFullAccess else { session.setAccess(level); return }
         Biometrics.confirm("Allow \"\(session.meta.title)\" to run without asking") { ok in if ok { session.setAccess(.fullAccess) } }
+    }
+}
+
+/// Shown while a transcript is being read, so opening a session never looks like an empty or broken chat.
+struct OpeningSession: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text("Opening session…").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+        }.padding(.top, 60).frame(maxWidth: .infinity)
     }
 }
 

@@ -164,7 +164,7 @@ struct SessionsPane: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let s = ws.current { ChatView(session: s).id(s.id) } else { Welcome() }
+        Group { if let s = ws.current { ChatView(session: s).id(s.id) } else { Welcome() } }.animation(.easeOut(duration: 0.15), value: ws.selected)
     }
 }
 
@@ -301,6 +301,19 @@ struct Welcome: View {
             Text("Start a session").font(.system(size: 20, weight: .semibold))
             Text("Pick a folder, an agent and how much it may do. Everything resumes later with its context.").font(.system(size: 13)).foregroundStyle(.secondary)
             Button("New session") { nav.showNewSession = true }.buttonStyle(Pill(kind: .primary)).keyboardShortcut("n", modifiers: .command)
+            let waiting = ws.needingYou
+            if !waiting.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionLabel("Needs you").padding(.bottom, 6)
+                    ForEach(waiting) { m in
+                        Button { ws.select(m.id) } label: {
+                            HStack(spacing: 8) { Circle().fill(Theme.warn).frame(width: 8, height: 8); Text(m.title).lineLimit(1); Spacer(); Text("Review").foregroundStyle(Theme.accent) }
+                                .font(.system(size: 12.5, weight: .medium)).padding(.vertical, 6).contentShape(Rectangle())
+                        }.buttonStyle(.soft)
+                        Divider().opacity(0.5)
+                    }
+                }.frame(width: 380).padding(.top, 10)
+            }
             let recent = ws.sessions.filter { Project.shared.owns($0) }
             if !recent.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {

@@ -51,9 +51,29 @@ final class SessionController: Identifiable {
 
     // MARK: Loading
 
+    /// True while the transcript is being read off the main thread, so the pane can say so instead of showing an empty chat.
+    var loading = false
+
+    /// Reads the transcript in the background (big ones take a moment) and fills the chat in when it arrives. Use this when opening a session on screen.
+    func loadInBackground() {
+        guard !loaded, !loading else { return }
+        loading = true
+        let store = ws.store, id = id
+        Task { @MainActor in
+            let rows = await Task.detached(priority: .userInitiated) { store.items(id) }.value
+            loading = false
+            if !loaded { finishLoad(rows) }
+        }
+    }
+
+    /// Reads the transcript now. For code that needs the rows straight away (sending, recaps).
     func loadIfNeeded() {
         guard !loaded else { return }
-        var rows = ws.store.items(id)
+        finishLoad(ws.store.items(id))
+    }
+
+    private func finishLoad(_ stored: [ChatItem]) {
+        var rows = stored
         // After a crash or a quit mid-reply, rows can be left "running" or waiting for an approval that no longer exists.
         var repaired = false
         for i in rows.indices {
@@ -523,6 +543,8 @@ final class Workspace {
     }
 
     var current: SessionController? { selected.flatMap(controller) }
+    /// Sessions with an approval waiting, whether or not they have a tab open.
+    var needingYou: [SessionMeta] { sessions.filter { !(controllers[$0.id]?.pending.isEmpty ?? true) } }
     var attention: Int { controllers.values.filter { !$0.pending.isEmpty }.count }
     var runningCount: Int { controllers.values.filter(\.isBusy).count }
     var live: [SessionController] { controllers.values.sorted { $0.meta.updatedAt > $1.meta.updatedAt } }
@@ -538,8 +560,7 @@ final class Workspace {
         selected = id
         // With the side list there is no tab strip, so browsing it must not pile every session into the tabs.
         if !tabs.contains(id), !Prefs.shared.tabsOnSide { tabs.append(id) }
-        controller(id)?.loadIfNeeded()
-        controller(id)?.showRecapIfAway()
+        controller(id)?.loadInBackground()
         if Prefs.shared.followSession, let m = sessions.first(where: { $0.id == id }) { Project.shared.follow(dir: m.cwd, environment: m.environment) }
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
