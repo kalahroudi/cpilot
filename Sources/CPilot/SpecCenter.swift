@@ -253,7 +253,7 @@ final class SpecCenter {
         }
         guard changed else { return }
         try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(d.id)/tasks.md", text, in: r.dir, tracked: tracked) }
-        if let i = docs.firstIndex(where: { $0.id == d.id }) { docs[i].tasksText = text; docs[i].tasks = Specs.parseTasks(text) }
+        if let i = docs.firstIndex(where: { $0.id == d.id }) { docs[i].tasksText = text }
     }
 
     private func tickMerged(_ d: SpecDoc, landed: [PullRequest]) async {
