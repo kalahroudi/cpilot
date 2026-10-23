@@ -30,16 +30,22 @@ public enum Provisioner {
     npm install -g --prefix "$HOME/.cpilot/claude" @anthropic-ai/claude-code && command -v claude >/dev/null 2>&1
     """
 
+    /// Succeeds when this machine has a Node.js recent enough for npx agents, with a working npm downloader.
+    /// Requiring the downloader is what shows a Node.js unpacked over an older one; `node -v` and `npm -v` still look fine then.
+    static let nodeProbe = "export PATH=\"$HOME/.cpilot/node/bin:$PATH\"; node -e 'require(require(\"child_process\").execSync(\"npm root -g\").toString().trim() + \"/npm/node_modules/minipass-fetch\")' >/dev/null 2>&1 && [ \"$(node -v | sed 's/^v//; s/\\..*//')\" -ge \(RemoteHost.minimumNode) ]"
+
     /// Whether `agent` can already run on the server.
-    static func ready(_ agent: AcpAgentConfig, on env: EnvironmentConfig) async -> Bool {
+    static func ready(_ agent: AcpAgentConfig, on env: EnvironmentConfig?) async -> Bool {
         let probe: String
-        if AgentInstaller.installedVersion(of: agent) != nil {
+        if agent.id == AgyAdapter.agentId {
+            probe = AgyAdapter.readyProbe
+        } else if AgentInstaller.installedVersion(of: agent) != nil {
             // Until CPilot has recorded how the agent runs on this server (its own arguments), it is set up again.
-            guard env.remoteAgents?[agent.id] != nil else { return false }
+            guard env?.remoteAgents?[agent.id] != nil else { return false }
             probe = "test -x \"" + AgentInstaller.onServer(agent, home: "$HOME").command + "\""
         } else if agent.command == "npx" {
             // npx agents need a recent Node.js; an older one starts them and they exit without saying why.
-            probe = "export PATH=\"$HOME/.cpilot/node/bin:$PATH\"; command -v npx >/dev/null 2>&1 && [ \"$(node -v | sed 's/^v//; s/\\..*//')\" -ge \(RemoteHost.minimumNode) ]"
+            probe = nodeProbe
         } else { probe = "command -v " + SSH.quote(agent.command) + " >/dev/null 2>&1" }
         let r = try? await Exec.with(env) { try await Shell.run("sh", ["-c", probe], timeout: 30) }
         return r?.ok == true
@@ -141,7 +147,7 @@ public enum Provisioner {
         return (fresh, t.all, t.remoteAgents)
     }
 
-    static func run(_ script: String, on env: EnvironmentConfig, progress: @escaping @Sendable (String) -> Void) async throws -> (code: Int32, last: String) {
+    static func run(_ script: String, on env: EnvironmentConfig?, progress: @escaping @Sendable (String) -> Void) async throws -> (code: Int32, last: String) {
         final class Tail: @unchecked Sendable { var last = "" }
         let tail = Tail()
         let code = try await Exec.with(env) {
@@ -157,6 +163,7 @@ public enum Provisioner {
     /// Makes `agent` runnable on the server: its runtime (Node.js or uv), its download, or a clear message when it is a custom command.
     static func installAgent(_ agent: AcpAgentConfig, on env: EnvironmentConfig, progress: @escaping @Sendable (String) -> Void) async throws -> AcpAgentConfig? {
         func fail(_ why: String) -> ShellError { .failed(command: "install", status: 1, stderr: why) }
+        if agent.id == AgyAdapter.agentId { try await AgyAdapter.install(on: env, progress: progress); return nil }
         if let version = AgentInstaller.installedVersion(of: agent) {
             progress("Checking the server…")
             let u = try await run("uname -sm", on: env, progress: { _ in })

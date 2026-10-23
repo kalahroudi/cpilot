@@ -12,6 +12,9 @@ struct MemoryView: View {
     @State private var scope = MemoryStore.globalScope
     @State private var title = ""
     @State private var text = ""
+    /// A note being written that is not saved yet. Without it the editor would look the same whether or not New note was pressed.
+    @State private var creating = false
+    @FocusState private var titleFocus: Bool
 
     private var projects: [(String, String)] {
         var seen = Set<String>(), out: [(String, String)] = [(MemoryStore.globalScope, "All projects")]
@@ -25,7 +28,7 @@ struct MemoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Memory", subtitle: "Notes every session starts with. Plain Markdown files you can edit anywhere. \(budget)") {
-                Button("New note") { selection = nil; title = ""; text = "" }.buttonStyle(Pill(kind: .primary))
+                Button("New note") { startNote() }.buttonStyle(Pill(kind: .primary))
             }
             HSplitView {
                 VStack(spacing: 8) {
@@ -37,28 +40,44 @@ struct MemoryView: View {
                         }.tag(n.id)
                     }.listStyle(.plain)
                 }.frame(minWidth: 220, maxWidth: 300)
+                if selection == nil, !creating {
+                    VStack(spacing: 8) {
+                        Image(systemName: "brain").font(.system(size: 26)).foregroundStyle(.secondary)
+                        Text("Pick a note to edit it, or write a new one").font(.system(size: 13)).foregroundStyle(.secondary)
+                        Text("Notes are loaded at the start of every session, so keep them short and true. You can also save any message from a chat with Remember.").font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
+                        Button("New note") { startNote() }.buttonStyle(Pill(kind: .primary))
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity).frame(minWidth: 340)
+                } else {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        TextField("Title", text: $title).textFieldStyle(CPField())
+                        TextField("Title", text: $title).textFieldStyle(CPField()).focused($titleFocus)
                         Dropdown(options: projects.map { ($0.0, $0.1) }, selection: $scope).frame(width: 170)
                     }
                     TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
                     HStack {
                         if let sel = selection, let n = notes.first(where: { $0.id == sel }) {
-                            Button("Delete") { ws.memory.delete(scope: n.scope, name: n.name); selection = nil; reload() }.buttonStyle(Pill(kind: .danger))
+                            Button("Delete") { ws.memory.delete(scope: n.scope, name: n.name); selection = nil; creating = false; reload() }.buttonStyle(Pill(kind: .danger))
                         }
                         Spacer()
-                        Button("Save") { if let n = ws.memory.save(scope: scope, name: title, body: text) { selection = n.id }; reload() }
+                        Button("Save") { if let n = ws.memory.save(scope: scope, name: title, body: text) { creating = false; selection = n.id }; reload() }
                             .buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || text.isEmpty)
                     }
                 }.padding(14).frame(minWidth: 340)
+                }
             }
         }
         .background(Theme.pane)
         .onAppear(perform: reload)
         .onChange(of: selection) { _, id in
-            if let n = notes.first(where: { $0.id == id }) { title = n.name; text = n.body; scope = n.scope }
+            if let n = notes.first(where: { $0.id == id }) { creating = false; title = n.name; text = n.body; scope = n.scope }
         }
+    }
+
+    /// An empty editor for a note of the repository you are in (or all projects without one), with the cursor in the title.
+    private func startNote() {
+        selection = nil; creating = true; title = ""; text = ""
+        scope = Project.shared.current.map { MemoryStore.scope(forProject: $0.dir) } ?? MemoryStore.globalScope
+        titleFocus = true
     }
 
     /// Sessions load notes up to a cap, so show how close you are.

@@ -49,6 +49,9 @@ final class StackTests: XCTestCase {
         try await sh(["remote", "set-head", "origin", "main"])
     }
 
+    /// The first stack, or a failed test instead of a crash that takes the whole run with it.
+    func firstStack() async throws -> Stack { let all = await Stacks.load(in: dir); return try XCTUnwrap(all.first, "no stack was found") }
+
     func buildStack() async throws {
         try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
         try await Stacks.create("b", in: dir); try await commit("b.txt", "b\n", "add b")
@@ -69,11 +72,11 @@ final class StackTests: XCTestCase {
     func testChangeBelowRestacksAbove() async throws {
         try await buildStack()
         try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
-        var stack = await Stacks.load(in: dir)[0]
+        var stack = try await firstStack()
         XCTAssertEqual(stack.branches.filter(\.needsRestack).map(\.name), ["b"])
         let r = try await Stacks.restack(stack, in: dir)
         XCTAssertEqual(r, .restacked(["b", "c"]))
-        stack = await Stacks.load(in: dir)[0]
+        stack = try await firstStack()
         XCTAssertFalse(stack.needsRestack)
         let tree = try await sh(["ls-tree", "-r", "--name-only", "c"])
         XCTAssertTrue(tree.contains("a2.txt") && tree.contains("b.txt") && tree.contains("c.txt"))
@@ -108,7 +111,7 @@ final class StackTests: XCTestCase {
         try await buildStack()
         try await sh(["checkout", "main"]); try await sh(["merge", "--squash", "a"]); try await sh(["commit", "-m", "add a (#1)"]); try await sh(["push", "origin", "main"])
         try await sh(["branch", "-D", "a"])                       // gh pr merge --delete-branch does this
-        let stack = await Stacks.load(in: dir)[0]
+        let stack = try await firstStack()
         XCTAssertEqual(stack.branches.first?.name, "b"); XCTAssertEqual(stack.trunk, "main"); XCTAssertTrue(stack.needsRestack)
         let r = try await Stacks.restack(stack, in: dir)
         XCTAssertEqual(r, .restacked(["b", "c"]))
@@ -124,7 +127,7 @@ final class StackTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: wt) }
         try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
         try await sh(["worktree", "add", wt, "b"])                // b is now "used by worktree"
-        let stack = await Stacks.load(in: dir)[0]
+        let stack = try await firstStack()
         let r = try await Stacks.restack(stack, in: dir)
         XCTAssertEqual(r, .restacked(["b", "c"]))
         let tree = try await sh(["ls-tree", "-r", "--name-only", "c"]); XCTAssertTrue(tree.contains("a2.txt"))
@@ -135,7 +138,7 @@ final class StackTests: XCTestCase {
         try await buildStack()
         try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
         try await sh(["checkout", "b"]); try write("b.txt", "changed\n")
-        let stack = await Stacks.load(in: dir)[0]
+        let stack = try await firstStack()
         do { _ = try await Stacks.restack(stack, in: dir); XCTFail("expected dirty") } catch { XCTAssertEqual(error as? StackError, .dirty) }
     }
 
@@ -143,7 +146,7 @@ final class StackTests: XCTestCase {
         try await buildStack()
         try await sh(["checkout", "a"]); try await commit("a2.txt", "more\n", "more a")
         try write("scratch.txt", "x\n"); try write("a.txt", "dirty\n")          // a is checked out and dirty, but a is not moved
-        let stack = await Stacks.load(in: dir)[0]
+        let stack = try await firstStack()
         let r = try await Stacks.restack(stack, in: dir)
         XCTAssertEqual(r, .restacked(["b", "c"]))
         let tree = try await sh(["ls-tree", "-r", "--name-only", "c"]); XCTAssertTrue(tree.contains("a2.txt"))
@@ -155,7 +158,7 @@ final class StackTests: XCTestCase {
         try await sh(["checkout", "b"]); try await commit("shared.txt", "from b\n", "b shared")
         try await sh(["checkout", "a"]); try await commit("shared.txt", "from a\n", "a shared")
         try await sh(["checkout", "c"])
-        return await Stacks.load(in: dir)[0]
+        return try await firstStack()
     }
 
     /// The point of restacking in a folder of its own: a conflict leaves your checkout exactly as it was.
@@ -187,7 +190,7 @@ final class StackTests: XCTestCase {
         let r = await Stacks.reconcile(in: dir)
         XCTAssertEqual(r.landed, ["b"]); XCTAssertTrue(r.problems.isEmpty)
         let shared = try await sh(["show", "b:shared.txt"]); XCTAssertEqual(shared, "resolved")
-        let fresh = await Stacks.load(in: dir)[0]
+        let fresh = try await firstStack()
         XCTAssertEqual(fresh.branches.first { $0.name == "b" }?.needsRestack, false)
         XCTAssertEqual(fresh.branches.first { $0.name == "c" }?.needsRestack, true)
         let done = try await Stacks.restack(fresh, in: dir)
@@ -372,7 +375,7 @@ final class StackTests: XCTestCase {
 
     func testCollapseNeedsTwoOpenBranches() async throws {
         try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
-        let stack = await Stacks.load(in: dir)[0]
+        let stack = try await firstStack()
         do { _ = try await Stacks.startCollapse(stack, in: dir); XCTFail("one branch is nothing to combine") } catch {}
     }
 }

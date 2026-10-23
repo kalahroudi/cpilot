@@ -34,16 +34,20 @@ public enum RemoteHost {
     static let nodeInstallScript = """
     export PATH="$HOME/.cpilot/node/bin:$PATH"
     MAJOR=$(node -v 2>/dev/null | sed 's/^v//; s/\\..*//')
-    [ -n "$MAJOR" ] && [ "$MAJOR" -ge \(minimumNode) ] 2>/dev/null && exit 0
+    [ -n "$MAJOR" ] && [ "$MAJOR" -ge \(minimumNode) ] 2>/dev/null && node -e 'require(require("child_process").execSync("npm root -g").toString().trim() + "/npm/node_modules/minipass-fetch")' >/dev/null 2>&1 && exit 0
     V=v22.23.4
     case "$(uname -s)" in Linux) OS=linux;; Darwin) OS=darwin;; *) echo "Unsupported system $(uname -s)" >&2; exit 1;; esac
     case "$(uname -m)" in x86_64|amd64) A=x64;; aarch64|arm64) A=arm64;; armv7l) A=armv7l;; *) echo "Unsupported CPU $(uname -m)" >&2; exit 1;; esac
     URL="https://nodejs.org/dist/$V/node-$V-$OS-$A.tar.gz"
     DIR="$HOME/.cpilot/node"
-    mkdir -p "$DIR" || exit 1
-    if command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" | tar -xz -C "$DIR" --strip-components=1
-    elif command -v wget >/dev/null 2>&1; then wget -qO- "$URL" | tar -xz -C "$DIR" --strip-components=1
-    else echo "Neither curl nor wget is on the server, so Node.js could not be downloaded." >&2; exit 1; fi
+    # Unpacked on its own and swapped in: unpacking over an older Node.js leaves a mix of both, and npm then fails with "Class extends value undefined".
+    NEW="$DIR.new"
+    rm -rf "$NEW"; mkdir -p "$NEW" || exit 1
+    if command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" | tar -xz -C "$NEW" --strip-components=1
+    elif command -v wget >/dev/null 2>&1; then wget -qO- "$URL" | tar -xz -C "$NEW" --strip-components=1
+    else echo "Neither curl nor wget is on the server, so Node.js could not be downloaded." >&2; rm -rf "$NEW"; exit 1; fi
+    [ -x "$NEW/bin/node" ] || { echo "Node.js did not unpack from $URL" >&2; rm -rf "$NEW"; exit 1; }
+    rm -rf "$DIR"; mv "$NEW" "$DIR" || exit 1
     command -v node >/dev/null 2>&1 || { echo "Node.js did not install from $URL" >&2; exit 1; }
     """
 

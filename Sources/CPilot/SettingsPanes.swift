@@ -195,6 +195,8 @@ struct AgentSettings: View {
     /// Places (agent and place, joined) where a sign-in is waiting on you.
     @State private var signingIn: Set<String> = []
     @State private var claudeSignIn: EnvironmentConfig?
+    @State private var agySignIn: AgyTarget?
+    @State private var keyFor: AgentKeyTarget?
 
     /// Runs the agent's own sign-in in one place, then shows the new result.
     private func signIn(_ agent: AcpAgentConfig, place: EnvironmentConfig?) {
@@ -214,6 +216,15 @@ struct AgentSettings: View {
         Task {
             await EnvironmentCenter.shared.run(env, retry: true)
             tests[key]?[env.id] = .some(await AgentCheck.run(agent, on: ws.environment(env.id) ?? env))
+        }
+    }
+
+    /// Installs agy and its adapter on this Mac, then tests again.
+    private func setUpHere(_ agent: AcpAgentConfig) {
+        tests[agent.id]?[""] = .some(nil)
+        Task {
+            do { try await AgyAdapter.install(on: nil) { _ in } } catch { tests[agent.id]?[""] = .some(AgentCheck.Result(state: .failed, detail: error.localizedDescription)); return }
+            tests[agent.id]?[""] = .some(await AgentCheck.run(agent, on: nil))
         }
     }
 
@@ -265,11 +276,14 @@ struct AgentSettings: View {
         let env = place.isEmpty ? nil : ws.environment(place)
         switch state {
         case .needsSignIn:
-            if let agent { Button("Sign in…") { signIn(agent, place: env) }.buttonStyle(Pill(kind: .primary)) }
+            if let agent, let name = AgentKey.variable(for: agent.id) { Button("Add API key…") { keyFor = AgentKeyTarget(agent: agent, env: env, variable: name) }.buttonStyle(Pill(kind: .primary)) }
+            else if let agent, agent.id == AgyAdapter.agentId { Button("Sign in…") { agySignIn = AgyTarget(env: env) }.buttonStyle(Pill(kind: .primary)) }
+            else if let agent { Button("Sign in…") { signIn(agent, place: env) }.buttonStyle(Pill(kind: .primary)) }
             else if let env { Button("Sign in…") { claudeSignIn = env }.buttonStyle(Pill(kind: .primary)) }
             else { Text("Run claude in Terminal once to sign in.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
         case .notSetUp:
             if let env { Button("Set up on \(env.name)") { setUp(agent, on: env) }.buttonStyle(Pill(kind: .primary)) }
+            else if let agent, agent.id == AgyAdapter.agentId { Button("Set up on this Mac") { setUpHere(agent) }.buttonStyle(Pill(kind: .primary)) }
         default: EmptyView()
         }
     }
@@ -307,6 +321,8 @@ struct AgentSettings: View {
         .sheet(isPresented: $showRegistry) { registrySheet }
         .sheet(isPresented: $custom) { CustomAgentSheet() }
         .sheet(item: $claudeSignIn, onDismiss: { test(nil) }) { e in ClaudeSignInSheet(env: e) }
+        .sheet(item: $keyFor, onDismiss: { if let a = ws.acpAgents.first(where: { AgentKey.variable(for: $0.id) != nil }) { test(a) } }) { t in AgentKeySheet(target: t) }
+        .sheet(item: $agySignIn, onDismiss: { if let a = ws.acpAgents.first(where: { $0.id == AgyAdapter.agentId }) { test(a) } }) { t in AgySignInSheet(env: t.env) }
     }
 
     private func load() {
@@ -324,7 +340,9 @@ struct AgentSettings: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) { Text(a.name).font(.system(size: 13, weight: .medium)); Text(a.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2) }
                     Spacer()
-                    if let c = a.config {
+                    if a.id == AgyAdapter.agentId, let c = a.config {
+                        agyControl(a, c)
+                    } else if let c = a.config {
                         if ws.acpAgents.contains(where: { $0.id == a.id }) { Badge(text: "Added", kind: .ok) }
                         else if Shell.find(c.command) == nil { Badge(text: "Needs \(a.needsRuntime ?? c.command)", kind: .warn) }
                         else { Button("Add") { ws.acpAgents.append(c); ws.saveAgents() }.buttonStyle(Pill(kind: .primary)) }
@@ -347,6 +365,28 @@ extension AgentSettings {
             else if existing != nil, current == a.version || current == nil { Badge(text: "Added", kind: .ok) }
             else { Button(existing == nil ? "Install" : "Update to \(a.version)") { install(a) }.buttonStyle(Pill(kind: .primary)).disabled(installing != nil) }
             if let note = installNotes[a.id] { Text(note).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.trailing).frame(maxWidth: 220, alignment: .trailing) }
+        }
+    }
+
+    /// Adds agy: it comes with Node.js, the agy command and CPilot's adapter, installed in ~/.cpilot on this Mac.
+    @ViewBuilder func agyControl(_ a: RegistryAgent, _ c: AcpAgentConfig) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            if installing == a.id { HStack(spacing: 6) { ProgressView().controlSize(.small); Text(installNotes[a.id] ?? "Installing…").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1) } }
+            else if ws.acpAgents.contains(where: { $0.id == a.id }) { Badge(text: "Added", kind: .ok) }
+            else { Button("Add") { addAgy(a, c) }.buttonStyle(Pill(kind: .primary)).disabled(installing != nil) }
+            if installing != a.id, let note = installNotes[a.id] { Text(note).font(.system(size: 11)).foregroundStyle(Theme.warn).multilineTextAlignment(.trailing).frame(maxWidth: 220, alignment: .trailing) }
+        }
+    }
+
+    private func addAgy(_ a: RegistryAgent, _ c: AcpAgentConfig) {
+        installing = a.id; installNotes[a.id] = "Installing…"
+        Task {
+            do {
+                try await AgyAdapter.install(on: nil) { line in Task { @MainActor in installNotes[a.id] = line } }
+                ws.acpAgents.removeAll { $0.id == a.id }; ws.acpAgents.append(c); ws.saveAgents()
+                installNotes[a.id] = nil
+            } catch { installNotes[a.id] = error.localizedDescription }
+            installing = nil
         }
     }
 
@@ -385,5 +425,90 @@ struct CustomAgentSheet: View {
                 }.buttonStyle(Pill(kind: .primary)).disabled(name.isEmpty || command.isEmpty).keyboardShortcut(.defaultAction)
             }
         }.padding(18).frame(width: 440)
+    }
+}
+
+struct AgyTarget: Identifiable { let env: EnvironmentConfig?; var id: String { env?.id ?? "" } }
+
+/// Signs agy in with a Google account: CPilot opens the link agy prints, you paste back the code the page shows.
+struct AgySignInSheet: View {
+    let env: EnvironmentConfig?
+    @Environment(\.dismiss) private var dismiss
+    @State private var login: AgyAdapter.Login?
+    @State private var url: URL?
+    @State private var code = ""
+    @State private var starting = true
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sign in to Antigravity on \(env?.name ?? "this Mac")").font(.system(size: 16, weight: .semibold))
+            if starting { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Asking agy for a sign-in link…").font(.system(size: 12)).foregroundStyle(.secondary) } }
+            else if let url {
+                Text("A browser tab opened. Sign in with your Google account, copy the code the page shows and paste it here.").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("Open the link again") { NSWorkspace.shared.open(url) }.buttonStyle(.soft).font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                TextField("Code from the page", text: $code).textFieldStyle(CPField()).onSubmit { Task { await submit() } }
+            }
+            if let error { ErrorLine(text: error) }
+            HStack {
+                Spacer()
+                Button("Cancel") { login?.cancel(); dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                if error != nil && url == nil { Button("Try again") { Task { await begin() } }.buttonStyle(Pill(kind: .plain)) }
+                if url != nil { AsyncButton { await submit() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Finish") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || code.isEmpty) }
+            }
+        }.padding(20).frame(width: 460)
+        .task { await begin() }
+        .onDisappear { login?.cancel() }
+    }
+
+    private func begin() async {
+        starting = true; error = nil; url = nil; code = ""; defer { starting = false }
+        login?.cancel()
+        let l = AgyAdapter.Login(env); login = l
+        do { let u = try await l.begin(); url = u; NSWorkspace.shared.open(u) } catch { self.error = error.localizedDescription }
+    }
+
+    private func submit() async {
+        guard let login, !busy else { return }
+        busy = true; error = nil; defer { busy = false }
+        do {
+            try await login.finish(code: code)
+            AppModel.shared.show("Antigravity is signed in on \(env?.name ?? "this Mac")")
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription + " Start again to get a new link."
+            url = nil
+        }
+    }
+}
+
+struct AgentKeyTarget: Identifiable { let agent: AcpAgentConfig; let env: EnvironmentConfig?; let variable: String; var id: String { agent.id + "|" + (env?.id ?? "") } }
+
+/// An API key for an agent that only needs a key, kept in a private file on the machine the agent runs on.
+struct AgentKeySheet: View {
+    let target: AgentKeyTarget
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("API key for \(target.agent.name) on \(target.env?.name ?? "this Mac")").font(.system(size: 16, weight: .semibold))
+            SecureField("sk-…", text: $key).textFieldStyle(CPField()).onSubmit { Task { await save() } }
+            Text("Saved in a file only your account on \(target.env?.name ?? "this Mac") can read, and used only when \(target.agent.name) runs there, as \(target.variable). Usage is billed to the key.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error { ErrorLine(text: error) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                AsyncButton { await save() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Save key") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || key.isEmpty)
+            }
+        }.padding(20).frame(width: 460)
+    }
+
+    private func save() async {
+        busy = true; error = nil; defer { busy = false }
+        do { try await AgentKey.save(key, for: target.agent, on: target.env); dismiss() } catch { self.error = error.localizedDescription }
     }
 }

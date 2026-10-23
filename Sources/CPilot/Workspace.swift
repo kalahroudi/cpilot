@@ -317,9 +317,11 @@ final class SessionController: Identifiable {
 
     private func ensureAcp() async throws -> (AcpClient, String) {
         if let c = acp, c.isRunning, let s = acpSession { return (c, s) }
-        guard let id = meta.backend.acpAgent, let cfg = ws.acpAgents.first(where: { $0.id == id }) else {
+        guard let id = meta.backend.acpAgent, var cfg = ws.acpAgents.first(where: { $0.id == id }) else {
             throw ShellError.failed(command: "agent", status: 1, stderr: "This agent is no longer configured. Add it again in Settings → Agents.")
         }
+        // agy cannot ask before each action, so what it may do is decided from the session's access level before it starts.
+        if cfg.id == AgyAdapter.agentId { cfg.env["CPILOT_ACCESS"] = ws.policy.level(for: meta).rawValue }
         let client = AcpClient(config: cfg, cwd: URL(fileURLWithPath: meta.workingDirectory), environment: env) { [weak self] ev in
             Task { @MainActor in self?.handle(acp: ev) }
         }

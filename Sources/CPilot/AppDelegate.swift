@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     }
 
     @objc func newSession() { Nav.shared.showNewSession = true; showManager(pane: .sessions) }
+    @objc func quickSession() { QuickSession.launch() }
     @objc func closeTab() {
         if Nav.shared.pane == .sessions, let id = Workspace.shared.selected, managerWindow?.isKeyWindow == true { Workspace.shared.closeTab(id) }
         else { NSApp.keyWindow?.performClose(nil) }

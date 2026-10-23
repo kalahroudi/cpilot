@@ -47,7 +47,7 @@ public enum AgentInstaller {
         return nil
     }
 
-    static func safeName(_ s: String) -> String { String(s.map { $0.isLetter || $0.isNumber || "._+-".contains($0) ? $0 : "_" }) }
+    public static func safeName(_ s: String) -> String { String(s.map { $0.isLetter || $0.isNumber || "._+-".contains($0) ? $0 : "_" }) }
     public static func folder(id: String, version: String, root: URL = AgentInstaller.root) -> URL {
         root.appendingPathComponent(safeName(id)).appendingPathComponent(safeName(version.isEmpty ? "current" : version))
     }

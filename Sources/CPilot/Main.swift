@@ -80,6 +80,7 @@ enum CPilotMain {
         ]
         add("Session", [
             item("New Session…", #selector(AppDelegate.newSession), "n", target: delegate),
+            item("Quick Session", #selector(AppDelegate.quickSession), "n", [.command, .option], target: delegate),
             item("Close Tab", #selector(AppDelegate.closeTab), "w", target: delegate),
             item("Next Tab", #selector(AppDelegate.nextTab), "]", [.command, .shift], target: delegate),
             item("Previous Tab", #selector(AppDelegate.previousTab), "[", [.command, .shift], target: delegate),

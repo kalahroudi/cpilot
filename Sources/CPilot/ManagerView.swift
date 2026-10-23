@@ -186,6 +186,8 @@ struct SessionSidebar: View {
             HStack {
                 Text("Sessions").font(.system(size: 13, weight: .semibold))
                 Spacer()
+                Button { QuickSession.launch() } label: { Image(systemName: "bolt.fill") }.buttonStyle(.soft).foregroundStyle(.secondary)
+                    .help("Quick session: Claude, Sonnet, Full access, own worktree on a new branch, in this repository (⌥⌘N)").accessibilityLabel("Quick session")
                 Button { nav.showNewSession = true } label: { Image(systemName: "plus") }.buttonStyle(.soft).foregroundStyle(.secondary)
                     .help("New session (⌘N)").accessibilityLabel("New session")
             }.padding(.horizontal, 12).padding(.top, 36).padding(.bottom, 8)
@@ -243,6 +245,8 @@ struct TabStrip: View {
                     }
                 }
             }
+            Button { QuickSession.launch() } label: { Image(systemName: "bolt.fill").font(.system(size: 13)).frame(width: 28, height: 26) }
+                .buttonStyle(.soft).foregroundStyle(.secondary).help("Quick session (⌥⌘N)").accessibilityLabel("Quick session")
             Button { nav.showNewSession = true } label: { Image(systemName: "plus").font(.system(size: 13)).frame(width: 28, height: 26) }
                 .buttonStyle(.soft).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
             Button { showHistory.toggle() } label: { Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).frame(width: 28, height: 26) }
@@ -301,7 +305,10 @@ struct Welcome: View {
             Image(nsImage: AppIcon.image(size: 64)).resizable().frame(width: 64, height: 64)
             Text("Start a session").font(.system(size: 20, weight: .semibold))
             Text("Pick a folder, an agent and how much it may do. Everything resumes later with its context.").font(.system(size: 13)).foregroundStyle(.secondary)
-            Button("New session") { nav.showNewSession = true }.buttonStyle(Pill(kind: .primary)).keyboardShortcut("n", modifiers: .command)
+            HStack(spacing: 8) {
+                Button("New session") { nav.showNewSession = true }.buttonStyle(Pill(kind: .primary)).keyboardShortcut("n", modifiers: .command)
+                Button("Quick session") { QuickSession.launch() }.buttonStyle(Pill(kind: .plain)).help("Claude, Sonnet, Full access, own worktree on a new branch, in the chosen repository")
+            }
             let waiting = ws.needingYou
             if !waiting.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
