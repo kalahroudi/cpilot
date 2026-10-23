@@ -23,6 +23,9 @@ final class SessionController: Identifiable {
     var items: [ChatItem] = []
     var draft = ""
     var attachments: [Attachment] = []
+    /// Messages sent while the agent was busy; each goes out, in order, when the turn ends.
+    var queued: [QueuedMessage] = []
+    struct QueuedMessage: Identifiable { let id = UUID(); let text: String; let attachments: [Attachment] }
     var state: RunState = .asleep
     var pending: [Pending] = []
     var cost: Double = 0
@@ -152,11 +155,23 @@ final class SessionController: Identifiable {
     // MARK: Sending
 
     func send() {
-        guard canSend, !isBusy else { return }
-        loadIfNeeded()
+        guard canSend else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
-        draft = ""; attachments = []; meta.draft = nil; recapVisible = false
+        draft = ""; attachments = []; meta.draft = nil
+        if isBusy { queued.append(QueuedMessage(text: text, attachments: atts)); return }
+        start(text, atts)
+    }
+
+    private func sendNextQueued() {
+        guard !queued.isEmpty, !isBusy else { return }
+        let next = queued.removeFirst()
+        start(next.text, next.attachments)
+    }
+
+    private func start(_ text: String, _ atts: [Attachment]) {
+        loadIfNeeded()
+        recapVisible = false
         suggestTask?.cancel(); suggestion = nil
         let composed = Capture.compose(message: text, attachments: atts)
         let isFirst = !items.contains { $0.kind == .user }
@@ -414,6 +429,7 @@ final class SessionController: Identifiable {
         meta.updatedAt = .now; ws.save(meta)
         ws.turnFinished(self)
         onTurnEnd?(self)
+        if case .failed = state {} else if state == .idle, !queued.isEmpty { sendNextQueued(); return }
         scheduleSleep()
         suggestNext()
     }

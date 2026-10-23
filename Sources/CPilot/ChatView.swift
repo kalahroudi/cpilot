@@ -516,13 +516,25 @@ struct Composer: View {
                     }
                 }.background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
             }
+            if !session.queued.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(session.queued) { q in
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock").font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text(q.text.isEmpty ? "Attachment" : q.text).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer()
+                            Button { session.queued.removeAll { $0.id == q.id } } label: { Image(systemName: "xmark").font(.system(size: 9)) }.buttonStyle(.plain).help("Remove from the queue")
+                        }
+                    }
+                }.padding(8).background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
+            }
             TextField(placeholder, text: $session.draft, axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 13.5)).lineLimit(1...10).focused($focused)
                 .onKeyPress(.tab) {
                     guard session.draft.isEmpty, let s = session.suggestion else { return .ignored }
                     session.draft = s; session.suggestion = nil; return .handled
                 }
-                .onSubmit { if let first = slashMatches.first { pick(first) } else if session.canSend, !session.isBusy { session.send() } }
+                .onSubmit { if let first = slashMatches.first { pick(first) } else if session.canSend { session.send() } }
             HStack(spacing: 8) {
                 Menu {
                     Button("Capture a region…") { CaptureCoordinator.shared.capture(into: session, window: false) }
@@ -539,6 +551,7 @@ struct Composer: View {
                 Spacer()
                 if session.isBusy {
                     Button { session.interrupt() } label: { Label("Stop", systemImage: "stop.fill") }.buttonStyle(Pill(kind: .plain))
+                    Button("Queue") { session.send() }.buttonStyle(Pill(kind: .primary)).disabled(!session.canSend).keyboardShortcut(.return, modifiers: .command).help("Send this when the current reply finishes")
                 } else {
                     Button("Send") { session.send() }.buttonStyle(Pill(kind: .primary)).disabled(!session.canSend).keyboardShortcut(.return, modifiers: .command)
                 }
