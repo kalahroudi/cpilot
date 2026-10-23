@@ -28,6 +28,8 @@ struct NewSessionSheet: View {
     private var env: EnvironmentConfig? { ws.environment(envId) }
 
     private var folderLabel: String { env == nil ? folder.replacingOccurrences(of: NSHomeDirectory(), with: "~") : folder }
+    /// Servers never offer Full access, except for agy, which cannot ask before each action and so cannot run commands without it.
+    private var fullAccessAllowed: Bool { env == nil || backend.acpAgent == AgyAdapter.agentId }
     private var agentName: String { agentOptions.first { $0.0 == backend }?.1 ?? "Claude" }
 
     var body: some View {
@@ -48,8 +50,8 @@ struct NewSessionSheet: View {
                             .onChange(of: envId) { _, _ in
                                 folder = env.map { ($0.folders.first ?? $0.remoteHome).replacingOccurrences(of: "~", with: $0.remoteHome) } ?? (UserDefaults.standard.string(forKey: "lastFolder") ?? NSHomeDirectory())
                                 worktree = env == nil ? Prefs.shared.useWorktrees : worktree
-                                if env != nil, access == .fullAccess { access = .askFirst }
                                 backend = .claude
+                                if !fullAccessAllowed, access == .fullAccess { access = .askFirst }
                             }
                     } note: { env.map { "The agent, files and git run on \($0.name). Approvals and captures stay on this Mac." } }
                     Divider()
@@ -72,7 +74,7 @@ struct NewSessionSheet: View {
                     // Agents wrap onto more lines as you add them, so the sheet never grows wider than the window.
                     FlowLayout(spacing: 6) {
                         ForEach(agentOptions, id: \.0) { o in
-                            Button { backend = o.0 } label: {
+                            Button { backend = o.0; if !fullAccessAllowed, access == .fullAccess { access = .askFirst } } label: {
                                 Text(o.1).font(.system(size: 12, weight: backend == o.0 ? .semibold : .regular)).lineLimit(1)
                                     .padding(.horizontal, 11).padding(.vertical, 4)
                                     .foregroundStyle(backend == o.0 ? Color.primary : .secondary)
@@ -88,7 +90,7 @@ struct NewSessionSheet: View {
                 }
                 Divider()
                 field("Access") {
-                    Segmented(options: AccessLevel.allCases.filter { env == nil || $0 != .fullAccess }.map { ($0, $0.label) }, selection: $access)
+                    Segmented(options: AccessLevel.allCases.filter { fullAccessAllowed || $0 != .fullAccess }.map { ($0, $0.label) }, selection: $access)
                 } note: { access.detail }
             }
 

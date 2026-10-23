@@ -177,7 +177,7 @@ struct ChatHeader: View {
 /// Turning on Full access needs a fingerprint or password, so an agent can never grant itself more.
 @MainActor enum AccessGate {
     static func set(_ level: AccessLevel, for session: SessionController) {
-        if level == .fullAccess, session.env != nil { session.addNotice("Full access is not available on servers. Agents there always ask first."); return }
+        if level == .fullAccess, session.env != nil, session.meta.backend.acpAgent != AgyAdapter.agentId { session.addNotice("Full access is not available on servers. Agents there always ask first."); return }
         guard level == .fullAccess, Workspace.shared.policy.requireTouchIDForFullAccess else { session.setAccess(level); return }
         Biometrics.confirm("Allow \"\(session.meta.title)\" to run without asking") { ok in if ok { session.setAccess(.fullAccess) } }
     }
