@@ -312,6 +312,17 @@ struct SoftButton: ButtonStyle {
 }
 extension ButtonStyle where Self == SoftButton { static var soft: SoftButton { SoftButton() } }
 
+/// A tooltip set straight on an AppKit view laid over the control. SwiftUI's `.help` goes missing on buttons in the strip under the transparent title bar.
+private struct TipView: NSViewRepresentable {
+    let text: String
+    private final class Passive: NSView { override func hitTest(_ point: NSPoint) -> NSView? { nil } }
+    func makeNSView(context: Context) -> NSView { let v = Passive(); v.toolTip = text; return v }
+    func updateNSView(_ v: NSView, context: Context) { v.toolTip = text }
+}
+extension View {
+    func tip(_ text: String) -> some View { overlay { TipView(text: text) }.accessibilityLabel(text) }
+}
+
 /// A button for an async action. While the action runs it shows a spinner in place of its label (same size, no jump)
 /// and ignores further clicks, so a slow action can never be started twice.
 struct AsyncButton<Label: View>: View {

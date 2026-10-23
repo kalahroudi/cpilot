@@ -246,11 +246,11 @@ struct TabStrip: View {
                 }
             }
             Button { QuickSession.launch() } label: { Image(systemName: "bolt.fill").font(.system(size: 13)).frame(width: 28, height: 26) }
-                .buttonStyle(.soft).foregroundStyle(.secondary).help("Quick session (⌥⌘N)").accessibilityLabel("Quick session")
+                .buttonStyle(.soft).foregroundStyle(.secondary).tip("Quick session (⌥⌘N)")
             Button { nav.showNewSession = true } label: { Image(systemName: "plus").font(.system(size: 13)).frame(width: 28, height: 26) }
-                .buttonStyle(.soft).foregroundStyle(.secondary).help("New session (⌘N)").accessibilityLabel("New session")
+                .buttonStyle(.soft).foregroundStyle(.secondary).tip("New session (⌘N)")
             Button { showHistory.toggle() } label: { Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).frame(width: 28, height: 26) }
-                .buttonStyle(.soft).foregroundStyle(.secondary).help("All sessions").accessibilityLabel("All sessions")
+                .buttonStyle(.soft).foregroundStyle(.secondary).tip("Session history")
                 .popover(isPresented: $showHistory, arrowEdge: .bottom) { SessionHistory { showHistory = false } }
         }
         .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 0)
