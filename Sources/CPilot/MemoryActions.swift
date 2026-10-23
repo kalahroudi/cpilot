@@ -200,14 +200,20 @@ struct TasksStrip: View {
 struct ArtifactsButton: View {
     let session: SessionController
     @State private var open = false
+    @State private var rendering: RenderTarget?
     var body: some View {
-        let files = Artifacts.files(from: session.items)
+        let root = session.meta.workingDirectory
+        let files = Artifacts.shown(from: session.items, root: root) { session.env != nil || FileManager.default.fileExists(atPath: $0) }
         if !files.isEmpty {
             Button { open.toggle() } label: {
                 HStack(spacing: 4) { Image(systemName: "doc.on.doc").font(.system(size: 10)); Text("\(files.count) file\(files.count == 1 ? "" : "s")") }
                     .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 7).padding(.vertical, 2).background(Theme.fill, in: Capsule())
             }.buttonStyle(.soft).help("Files this session wrote or changed")
-            .popover(isPresented: $open, arrowEdge: .bottom) { ArtifactsList(session: session, files: files).frame(width: 420) }
+            .popover(isPresented: $open, arrowEdge: .bottom) { ArtifactsList(session: session, files: files) { f in
+                open = false
+                rendering = RenderTarget(file: f, root: root, env: session.env)
+            }.frame(width: 420) }
+            .sheet(item: $rendering) { RenderSheet(target: $0) }
         }
     }
 }
@@ -215,6 +221,7 @@ struct ArtifactsButton: View {
 struct ArtifactsList: View {
     let session: SessionController
     let files: [ArtifactFile]
+    var onRender: (ArtifactFile) -> Void = { _ in }
     @State private var preview: String?
     @State private var previewText = ""
     @State private var diff: [DiffFile] = []
@@ -238,7 +245,8 @@ struct ArtifactsList: View {
                                 Badge(text: f.created ? "Created" : "Edited ×\(f.touches)", kind: f.created ? .ok : .neutral)
                             }
                             HStack(spacing: 10) {
-                                AsyncButton("Preview") { await load(f) }.buttonStyle(.soft)
+                                if f.isRenderable { Button("Render") { onRender(f) }.buttonStyle(.soft) }
+                                if !f.isRenderable || !f.isImage { AsyncButton("Preview") { await load(f) }.buttonStyle(.soft) }
                                 AsyncButton("Changes") { await loadDiff(f) }.buttonStyle(.soft)
                                 if session.env == nil { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) }.buttonStyle(.soft)
                                     Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: f.path)) }.buttonStyle(.soft) }
