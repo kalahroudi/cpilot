@@ -9,7 +9,7 @@ public enum AgyAdapter {
     public static let agentId = "agy"
     public static let name = "Antigravity CLI (agy)"
     /// Bumped whenever `source` changes, so servers that have an older copy are set up again.
-    public static let version = 1
+    public static let version = 2
 
     /// The same on this Mac and on a server: everything lives under ~/.cpilot, resolved by the shell that runs it.
     public static var config: AcpAgentConfig {
@@ -124,7 +124,7 @@ public enum AgyAdapter {
     /// ACP on one side, `agy -p --output-format stream-json` on the other. A single Node.js file with no dependencies.
     public static let source = #"""
 #!/usr/bin/env node
-// ADAPTER_VERSION = 1
+// ADAPTER_VERSION = 2
 // Lets CPilot talk to the Antigravity command line (agy) as an ACP agent.
 //
 //   adapter.mjs            ACP over stdin/stdout (what CPilot starts)
@@ -149,7 +149,7 @@ const say = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 // ---- Signed in? true, false, or null when agy is not on this machine ----
 function signedIn() {
   return new Promise((resolve) => {
-    execFile(AGY, ['models', '--output-format', 'json'], { timeout: 30000, env: process.env }, (err, stdout, stderr) => {
+    execFile(AGY, ['models'], { timeout: 30000, env: process.env }, (err, stdout, stderr) => {
       if (err && err.code === 'ENOENT') return resolve(null);
       const said = strip(String(stdout) + String(stderr));
       resolve(!err && !/sign in|not signed in|log ?in/i.test(said));
@@ -203,7 +203,7 @@ if (process.argv[2] === 'check') {
 } else if (process.argv[2] === 'login') {
   login();
 } else if (process.argv[2] === 'version') {
-  console.log('agy-adapter 1');
+  console.log('agy-adapter 2');
 } else {
   acp();
 }
@@ -227,7 +227,7 @@ function acp() {
     try {
       switch (m.method) {
         case 'initialize':
-          return reply(m.id, { protocolVersion: 1, agentInfo: { name: 'agy-adapter', version: '1' }, agentCapabilities: { loadSession: true, promptCapabilities: { image: false } }, authMethods: [] });
+          return reply(m.id, { protocolVersion: 1, agentInfo: { name: 'agy-adapter', version: '2' }, agentCapabilities: { loadSession: true, promptCapabilities: { image: false } }, authMethods: [] });
         case 'session/new': {
           const ok = await signedIn();
           if (ok === null) return fail(m.id, MISSING);
@@ -277,7 +277,7 @@ function acp() {
       raw.write(line + '\n');
       let e; try { e = JSON.parse(line); } catch { return; }
       if (t.handle(e)) sawResult = true;
-      if (e && (e.is_error || e.error) && (e.type === 'result')) resultError = String(e.error?.message || e.error || e.result || 'agy reported an error');
+      if (e && e.event === 'result' && e.result && e.result.status && e.result.status !== 'SUCCESS') resultError = `agy ended with ${e.result.status}` + (e.result.response ? `: ${e.result.response}` : '');
     });
     child.on('close', (code) => {
       raw.end(); running.delete(sid);
@@ -295,62 +295,46 @@ function acp() {
     });
   }
 
-  // Turns agy's stream-json events into ACP updates. Only the shape documented for agy is relied on (init, step_update with a
-  // step_type, result); text and tool details are looked for under the usual names so a small change in field names does not blank the chat.
+  // Turns agy's stream-json events into ACP updates. Each line is {"event": "init" | "step_update" | "result", ...}; a step_update
+  // holds step_index, state (ACTIVE or DONE) and step_type: user_input, agent_response (with text_delta pieces), or tool (tool_name, tool_info).
   function translator(sid, s, onSpeak) {
-    const TEXT = ['text', 'content', 'response', 'message', 'delta', 'output'];
-    const str = (o, keys) => { for (const k of keys) if (o && typeof o[k] === 'string' && o[k]) return o[k]; return ''; };
-    const deep = (o, keys, depth = 0) => {
+    const find = (o, keys, depth = 0) => {
       if (!o || typeof o !== 'object' || depth > 3) return '';
-      const own = str(o, keys); if (own) return own;
-      for (const v of Object.values(o)) { if (v && typeof v === 'object') { const r = deep(v, keys, depth + 1); if (r) return r; } }
+      for (const k of keys) if (typeof o[k] === 'string' && o[k]) return o[k];
+      for (const v of Object.values(o)) { const r = find(v, keys, depth + 1); if (r) return r; }
       return '';
     };
-    const findConv = (o, depth = 0) => {
-      if (!o || typeof o !== 'object' || depth > 4) return '';
-      for (const [k, v] of Object.entries(o)) if (/^conversation_?id$/i.test(k) && typeof v === 'string' && v) return v;
-      for (const v of Object.values(o)) { const r = findConv(v, depth + 1); if (r) return r; }
-      return '';
-    };
-    const sent = new Map();      // step id -> text already sent
     const tools = new Set();
     let spoke = false;
-    const stream = (kind, key, full) => {
-      const before = sent.get(key) || '';
-      const piece = full.startsWith(before) ? full.slice(before.length) : full;
-      sent.set(key, full.startsWith(before) ? full : before + full);
-      if (!piece) return;
-      spoke = true; onSpeak();
-      update(sid, { sessionUpdate: kind, content: { type: 'text', text: piece } });
-    };
-    const toolKind = (t) => /command|terminal|shell|run|exec/.test(t) ? 'execute' : /edit|write|creat|replace|patch|delete/.test(t) ? 'edit'
-      : /search|grep|find/.test(t) ? 'search' : /view|read|list|open|directory/.test(t) ? 'read' : /web|fetch|browse|url/.test(t) ? 'fetch' : 'other';
+    const say_ = (kind, text) => { if (!text) return; spoke = true; onSpeak(); update(sid, { sessionUpdate: kind, content: { type: 'text', text } }); };
+    const toolKind = (t) => /command|terminal|shell|run/.test(t) ? 'execute' : /edit|write|creat|replace|patch|delete|move/.test(t) ? 'edit'
+      : /search|grep|find/.test(t) ? 'search' : /view|read|list|open|dir/.test(t) ? 'read' : /web|fetch|browse|url|browser/.test(t) ? 'fetch' : 'other';
     return {
       /** Returns true on the final result. */
       handle(e) {
         if (!e || typeof e !== 'object') return false;
-        const conv = findConv(e);
+        const ev = String(e.event || e.type || '').toLowerCase();
+        const conv = e.conversation_id || (e.step_update && e.step_update.conversation_id) || (e.result && e.result.conversation_id);
         if (conv && s.conv !== conv) { s.conv = conv; save(); }
-        const type = String(e.type || e.event || '').toLowerCase();
-        if (type === 'result') {
-          if (!spoke) { const r = typeof e.result === 'string' ? e.result : deep(e, TEXT); if (r) stream('agent_message_chunk', 'result', r); }
+        if (ev === 'result') {
+          if (!spoke) say_('agent_message_chunk', (e.result && e.result.response) || '');
           return true;
         }
-        if (type !== 'step_update') return false;
-        const step = (e.step && typeof e.step === 'object') ? e.step : e;
-        const kindName = String(step.step_type || step.stepType || e.step_type || '').toLowerCase();
-        const key = String(step.id ?? step.step_id ?? step.index ?? step.step_index ?? e.step_id ?? e.index ?? kindName);
-        const status = String(step.status || e.status || '').toLowerCase();
-        if (/user|input|checkpoint|ephemeral|conversation_history/.test(kindName)) return false;
-        if (/think|reason|thought/.test(kindName)) { const x = deep(step, TEXT); if (x) stream('agent_thought_chunk', 'think:' + key, x); return false; }
-        if (/response|message|answer|text|planner|model/.test(kindName) && !/tool|command|file|search/.test(kindName)) {
-          const x = deep(step, TEXT); if (x) stream('agent_message_chunk', 'text:' + key, x); return false;
-        }
-        const state = /fail|error|denied|cancel/.test(status) ? 'failed' : /done|complete|success|finish/.test(status) ? 'completed' : 'in_progress';
-        const title = str(step, ['title', 'description', 'command', 'path', 'name', 'query', 'url']) || deep(step, ['command', 'path', 'query', 'url', 'title']) || kindName || 'Tool';
-        const out = deep(step, ['output', 'stdout', 'result', 'text']);
-        const content = out ? [{ type: 'content', content: { type: 'text', text: out.slice(0, 4000) } }] : undefined;
-        if (!tools.has(key)) { tools.add(key); update(sid, { sessionUpdate: 'tool_call', toolCallId: key, title, kind: toolKind(kindName), status: state, ...(content ? { content } : {}) }); }
+        if (ev !== 'step_update') return false;
+        const u = e.step_update || {};
+        const type = String(u.step_type || '').toLowerCase();
+        if (type === 'agent_response') { say_('agent_message_chunk', u.text_delta); return false; }
+        if (/think|reason|thought/.test(type)) { say_('agent_thought_chunk', u.text_delta || u.text); return false; }
+        if (type !== 'tool') return false;
+        const info = u.tool_info || {};
+        const name = u.tool_name || info.name || 'tool';
+        const params = info.parameters && typeof info.parameters === 'object' ? Object.values(info.parameters).filter((v) => typeof v === 'string') : [];
+        const title = params.length ? `${name}: ${params[0].slice(0, 200)}` : name;
+        const key = String(u.step_index);
+        const state = u.state === 'DONE' ? 'completed' : 'in_progress';
+        const out = typeof info.output === 'string' ? info.output.replace(/\r/g, '').slice(0, 4000) : '';
+        const content = out ? [{ type: 'content', content: { type: 'text', text: out } }] : undefined;
+        if (!tools.has(key)) { tools.add(key); update(sid, { sessionUpdate: 'tool_call', toolCallId: key, title, kind: toolKind(name), status: state, ...(content ? { content } : {}) }); }
         else update(sid, { sessionUpdate: 'tool_call_update', toolCallId: key, title, status: state, ...(content ? { content } : {}) });
         return false;
       },
