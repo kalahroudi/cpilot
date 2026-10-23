@@ -307,6 +307,16 @@ final class SubagentTests: XCTestCase {
 }
 
 final class ArtifactTests: XCTestCase {
+    func testRenderableAndMentions() {
+        XCTAssertTrue(ArtifactFile(path: "/p/m.html", created: true, touches: 1, lastTouched: .now).isRenderable)
+        XCTAssertFalse(ArtifactFile(path: "/p/m.ts", created: true, touches: 1, lastTouched: .now).isRenderable)
+        let items = [ChatItem(kind: .assistant, text: "I opened `docs/mockup/reader.html` and ./a.svg, see https://x.dev/y.html and ../out.png"),
+                     ChatItem(kind: .user, text: "docs/user.html")]
+        let m = Artifacts.mentionedRenderable(in: items, root: "/w").map(\.path).sorted()
+        XCTAssertEqual(m, ["/w/a.svg", "/w/docs/mockup/reader.html"])
+        XCTAssertEqual(Artifacts.shown(from: items, root: "/w") { $0.hasSuffix("a.svg") }.map(\.path), ["/w/a.svg"])
+    }
+
     func testFilesFromToolRows() {
         let t0 = Date(timeIntervalSince1970: 100)
         let items = [ChatItem(kind: .tool, title: "Write", detail: "/p/a.md", status: .done, ts: t0),

@@ -212,7 +212,7 @@ final class SessionController: Identifiable {
         c.fork = meta.forkPending == true
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
-        c.appendSystemPrompt = ws.memory.context(forProject: meta.cwd)
+        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance].compactMap { $0 }.joined(separator: "\n\n")
         if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
         if let env {
             // On a server. A server-held agent that is still running is joined, not started again.
