@@ -98,7 +98,9 @@ final class PRCenter {
     private func refreshListImpl() async {
         guard let dir = repoDir else { return }
         loading = true; defer { loading = false }
-        do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { AppModel.shared.failQuietly(error, action: "Load pull requests") }
+        do { prs = try await GitHub.list(in: dir, state: "open"); cache[cacheKey(dir, env?.id)] = (prs, .now) } catch { AppModel.shared.failQuietly(error, action: "Load pull requests"); return }
+        // The pull request on screen was open and is not in the open list any more: it was merged or closed elsewhere (GitHub, auto-merge, another session).
+        if let n = selected, detail?.number == n, detail?.isOpen == true, !prs.contains(where: { $0.number == n }) { selected = nil; detail = nil; files = []; checks = [] }
     }
 
     /// Reads the open list and the selected pull request again, after something outside this screen moved their branches.
@@ -398,7 +400,7 @@ struct PullRequestsView: View {
             }
         }
         .background(Theme.pane)
-        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.currentRepo { Task { await center.open(r) } } }
+        .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.currentRepo { Task { await center.open(r) } } else if center.selected != nil { Task { await center.refreshOpen() } } }
         .onChange(of: Project.shared.current) { _, r in if let r, r != center.currentRepo { Task { await center.open(r) } } }
         .sheet(isPresented: Bindable(center).showCreate) {
             if let dir = center.repoDir {
