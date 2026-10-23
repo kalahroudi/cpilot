@@ -16,6 +16,8 @@ final class PRCenter {
     var detail: PullRequest?
     var files: [DiffFile] = []
     var checks: [PullRequest.Check] = []
+    /// The commits the pull request carries, newest first.
+    var commits: [Git.Commit] = []
     var scan: SecurityResult?
     var scanning = false
     var scanLog: [String] = []
@@ -118,14 +120,16 @@ final class PRCenter {
 
     private func selectImpl(_ n: Int) async {
         guard let dir = repoDir else { return }
-        selected = n; detail = nil; files = []; checks = []; scan = nil; scanLog = []; duplicates = []; recommended = nil
+        selected = n; detail = nil; files = []; checks = []; commits = []; scan = nil; scanLog = []; duplicates = []; recommended = nil
         do {
             async let pr = GitHub.view(n, in: dir)
             async let diff = GitHub.diff(n, in: dir)
             async let chk = GitHub.checks(n, in: dir)
+            async let cm = GitHub.commits(n, in: dir)
             let (p, d, c) = try await (pr, diff, chk)
+            let cl = await cm
             guard selected == n else { return }
-            detail = p; files = DiffParser.parse(d); checks = c
+            detail = p; files = DiffParser.parse(d); checks = c; commits = cl
             scan = scanStore.result(for: scanKey(dir, p))
             titleDraft = p.title
             if p.isOpen { await findDuplicates(p, dir: dir) }
@@ -465,6 +469,7 @@ struct PRDetail: View {
                     if let b = pr.body.map(Stacks.withoutFooter), !b.isEmpty { Text(b).font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).card() }
                     SecurityPanel()
                     ChecksRow()
+                    CommitsList()
                     DiffList()
                 }.padding(20).frame(maxWidth: 900, alignment: .leading)
             }
@@ -518,6 +523,25 @@ struct ChecksRow: View {
                 }
                 Spacer()
             }
+        }
+    }
+}
+
+struct CommitsList: View {
+    let center = PRCenter.shared
+    var body: some View {
+        if !center.commits.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Commits (\(center.commits.count))").font(.system(size: 12, weight: .semibold))
+                ForEach(center.commits) { c in
+                    HStack(spacing: 8) {
+                        Text(c.sha).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+                        Text(c.subject).font(.system(size: 12.5)).lineLimit(1)
+                        Spacer()
+                        Text(c.when).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
         }
     }
 }
