@@ -525,6 +525,9 @@ public enum Stacks {
     public static func cleanUp(_ stack: Stack, in dir: String) async {
         let current = (try? await git(["branch", "--show-current"], in: dir)) ?? ""
         for b in stack.branches where b.isMerged && b.name != current {
+            // Deleting the branch deletes its settings, so what a merged combined pull request replaced is kept apart for the specs.
+            let replaced = (try? await git(["config", "branch.\(b.name).cpilot-replaces"], in: dir)) ?? ""
+            for old in replaced.split(separator: ",") { _ = try? await git(["config", "--add", "cpilot.landed", String(old)], in: dir) }
             _ = try? await Shell.run("git", ["branch", "-D", b.name], cwd: cwd(dir))
             await untrack(b.name, in: dir)
         }
@@ -641,6 +644,11 @@ public enum Stacks {
         _ = try? await Shell.run("git", ["worktree", "remove", "--force", job.path], cwd: cwd(dir))
         _ = try? await Shell.run("git", ["worktree", "prune"], cwd: cwd(dir))
         return number
+    }
+
+    /// Branches that went in with a combined pull request which has since merged and been cleaned up.
+    public static func landedBranches(in dir: String) async -> Set<String> {
+        Set(((try? await git(["config", "--get-all", "cpilot.landed"], in: dir)) ?? "").split(separator: "\n").map(String.init))
     }
 
     /// Combined branch to the branches it replaced.

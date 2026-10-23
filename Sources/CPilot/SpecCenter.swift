@@ -221,6 +221,7 @@ final class SpecCenter {
         merged = Set(stacks.flatMap(\.branches).filter(\.isMerged).map(\.name))
         // A combined pull request that merged carries every branch it replaced.
         for (combined, old) in await Exec.with(e, { await Stacks.replacedBranches(in: r.dir) }) where merged.contains(combined) { merged.formUnion(old) }
+        merged.formUnion(await Exec.with(e) { await Stacks.landedBranches(in: r.dir) })
         started = Set(stacks.flatMap(\.branches).map(\.name))
         coded = Set(stacks.flatMap(\.branches).filter { $0.commits > 0 }.map(\.name))
         unsubmitted = Set(stacks.flatMap(\.unsubmitted).map(\.name))
