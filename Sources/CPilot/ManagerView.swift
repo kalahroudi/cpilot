@@ -24,8 +24,41 @@ enum Pane: String, CaseIterable, Identifiable {
 @MainActor @Observable
 final class Nav {
     static let shared = Nav()
-    var pane: Pane = .sessions
+    var pane: Pane = .sessions { didSet { if pane != oldValue { visit() } } }
     var showNewSession = false
+
+    /// Where the user has been, as pane plus the open session, so the mouse's back and forward buttons can retrace it.
+    struct Place: Equatable { var pane: Pane; var session: String? }
+    private var back: [Place] = []
+    private var forward: [Place] = []
+    private var restoring = false
+    private var current = Place(pane: .sessions, session: Workspace.shared.selected)
+    var canGoBack: Bool { !back.isEmpty }
+    var canGoForward: Bool { !forward.isEmpty }
+
+    /// Called when the pane or the open session changed on its own; a restore must not record itself.
+    func visit() {
+        guard !restoring else { return }
+        let here = Place(pane: pane, session: Workspace.shared.selected)
+        guard here != current else { return }
+        back.append(current); if back.count > 50 { back.removeFirst() }
+        forward.removeAll(); current = here
+    }
+
+    func goBack() { go(from: &back, to: &forward) }
+    func goForward() { go(from: &forward, to: &back) }
+
+    private func go(from source: inout [Place], to other: inout [Place]) {
+        // Skip places whose session was since deleted.
+        while let p = source.popLast() {
+            if let s = p.session, !Workspace.shared.sessions.contains(where: { $0.id == s }) { continue }
+            other.append(current); current = p
+            restoring = true; defer { restoring = false }
+            pane = p.pane
+            if let s = p.session, s != Workspace.shared.selected { Workspace.shared.select(s) }
+            return
+        }
+    }
 }
 
 /// The Manager window: a slim icon rail, then the pane. Sessions are tabs along the top and the chat fills the rest.
