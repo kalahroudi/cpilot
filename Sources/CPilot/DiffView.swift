@@ -67,8 +67,11 @@ struct DiffFileView: View {
 struct CreatePRSheet: View {
     let dir: String
     var env: EnvironmentConfig?
+    /// Hands a request to the agent already working in this folder. Without one, a session of its own is started.
+    var askAgent: ((String) -> Void)?
     var onCreated: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var standing: Git.BaseCheck?
     @State private var title = ""
     @State private var prBody = ""
     @State private var base = "main"
@@ -105,6 +108,20 @@ struct CreatePRSheet: View {
                         .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 9))
             }
+            if let standing, !standing.conflicts.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("\(base) has moved and conflicts with this branch", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.warn)
+                    Text(standing.conflicts.prefix(4).joined(separator: ", ") + (standing.conflicts.count > 4 ? " and \(standing.conflicts.count - 4) more" : ""))
+                        .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
+                    Text("Opening the pull request now would leave it stuck on GitHub. Claude can bring \(base) into the branch and resolve this here first.")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button { resolveWithClaude(standing) } label: { Label("Resolve with Claude", systemImage: "sparkles") }.buttonStyle(Pill(kind: .primary))
+                }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 9))
+            } else if let standing, standing.behind > 0 {
+                Label("\(base) is \(standing.behind) commit\(standing.behind == 1 ? "" : "s") ahead. It is brought in cleanly before the pull request opens.", systemImage: "arrow.triangle.merge")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
             TextEditor(text: $prBody).font(.system(size: 12.5)).frame(height: 140).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             HStack {
                 Toggle("Draft", isOn: $draft)
@@ -118,7 +135,7 @@ struct CreatePRSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
                 AsyncButton { await create() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Create") } }
-                    .buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || busy).keyboardShortcut(.defaultAction)
+                    .buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || busy || !(standing?.conflicts.isEmpty ?? true)).keyboardShortcut(.defaultAction)
             }
         }
         .padding(20).frame(width: 520)
@@ -133,9 +150,25 @@ struct CreatePRSheet: View {
                 if !mine.isEmpty {
                     title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 }
+                standing = await Git.checkAgainstBase(dir, base: base, branch: branch)
                 sameChange = await Git.alreadyOnBase(dir, base: base, head: "HEAD", subjects: Dictionary(mine.map { ($0.sha, $0.subject) }, uniquingKeysWith: { a, _ in a }))
             }
         }
+    }
+
+    private func resolveWithClaude(_ c: Git.BaseCheck) {
+        let how = c.pushed
+            ? "This branch is already on the remote, so run `git merge origin/\(base)` (do not rebase or force-push)."
+            : "This branch has not been pushed, so run `git rebase origin/\(base)`."
+        let prompt = "I am about to open a pull request from \(branch) into \(base), but \(base) has moved and conflicts with this branch in: \(c.conflicts.joined(separator: ", ")). \(how) Resolve the conflicts so both sides' intent is kept, run the tests, `git add` the files and finish the \(c.pushed ? "merge" : "rebase"). Do not push and do not open the pull request: I will do that from CPilot once it is clean."
+        if let askAgent { askAgent(prompt) }
+        else {
+            let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
+            Task { do { try await Workspace.shared.create(.init(folder: dir, access: level, firstMessage: prompt, environment: env?.id, title: "Resolve conflict: \(branch)")) }
+                   catch { AppModel.shared.fail(error, action: "Start the session that resolves the conflict") } }
+        }
+        AppModel.shared.show("Claude is resolving the conflict. Create the pull request when it is done.")
+        dismiss()
     }
 
     private func writeWithClaude() async {
@@ -163,6 +196,12 @@ struct CreatePRSheet: View {
             if await Git.commitsAhead(dir, of: "origin/\(base)") == 0 {
                 error = "This branch has no changes compared with \(base), so there is nothing to open a pull request for."
                 return
+            }
+            // Settle the base first: a pull request opened over a conflict sits on GitHub, flagged, until someone notices.
+            if let check = await Git.checkAgainstBase(dir, base: base, branch: branch) {
+                standing = check
+                if !check.conflicts.isEmpty { return }
+                if check.behind > 0 { try await Git.catchUp(dir, base: base, pushed: check.pushed); standing?.behind = 0 }
             }
             try await Git.push(dir, branch: branch)
             let url = try await GitHub.create(title: title, body: prBody, base: base, draft: draft, in: dir)
@@ -203,6 +242,13 @@ struct SessionPRBar: View {
                 if pr.state == "MERGED" { Badge(text: "Merged", kind: .ok) }
                 else if pr.state == "CLOSED" { Badge(text: "Closed", kind: .neutral) }
                 else if pr.autoMerge { Badge(text: "Auto-merge", kind: .ok) }
+                else if pr.isOpen, pr.mergeStateStatus == "DIRTY" {
+                    Button { session.draft = conflictPrompt(pr); session.send() } label: { Badge(text: "Conflicts · Fix with Claude", kind: .danger) }
+                        .buttonStyle(.soft).help("Ask the agent to bring \(pr.baseRefName) into the branch and resolve the conflicts")
+                } else if pr.isOpen, pr.mergeStateStatus == "UNSTABLE" {
+                    Button { session.draft = checksPrompt(pr); session.send() } label: { Badge(text: "Checks failing · Fix with Claude", kind: .danger) }
+                        .buttonStyle(.soft).help("Ask the agent to read the failing checks and fix them")
+                }
             }
             if !commits.isEmpty {
                 Button { showCommits.toggle() } label: {
@@ -236,7 +282,15 @@ struct SessionPRBar: View {
         // every so often, and whenever you come back to the app.
         .task(id: pr?.number) { while !Task.isCancelled, pr?.isOpen == true { try? await Task.sleep(for: .seconds(45)); if !Task.isCancelled { await load() } } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
-        .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory, env: session.env) { _ in Task { await load() } } }
+        .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory, env: session.env, askAgent: { session.draft = $0; session.send() }) { _ in Task { await load(); CIWatcher.shared.nudge() } } }
+    }
+
+    private func conflictPrompt(_ pr: PullRequest) -> String {
+        "Pull request #\(pr.number) conflicts with \(pr.baseRefName). Run `git fetch origin` and `git merge origin/\(pr.baseRefName)` (do not rebase or force-push, the branch is already on GitHub), resolve the conflicts so both sides' intent is kept, run the tests, commit the merge and push."
+    }
+
+    private func checksPrompt(_ pr: PullRequest) -> String {
+        "The checks on pull request #\(pr.number) are failing. Run `gh pr checks \(pr.number)` and read the failing logs with `gh run view --log-failed`, fix the cause, run the tests locally, then commit and push to this branch."
     }
 
     private func open(_ n: Int) {
