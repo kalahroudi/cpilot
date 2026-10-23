@@ -8,7 +8,14 @@ import CPilotKit
 @MainActor @Observable
 final class Project {
     static let shared = Project()
-    var current: PRCenter.Repo? { didSet { if current != oldValue, !quiet { let r = current; Task { await PRCenter.shared.warm(r) } } } }
+    var current: PRCenter.Repo? {
+        didSet {
+            guard current != oldValue else { return }
+            // Whatever pane is showing, the open session must belong to the repository, or the Sessions pane comes back with a stranger's chat and no tab.
+            Workspace.shared.keepSelectionInRepo()
+            if !quiet { let r = current; Task { await PRCenter.shared.warm(r) } }
+        }
+    }
     private(set) var known: [String] = UserDefaults.standard.stringArray(forKey: "knownRepos") ?? []
     /// The top folder git reports for each folder (by `RepoRef.key`), so a session started in a subfolder is the same repository.
     private(set) var roots: [String: String] = [:]
@@ -40,6 +47,7 @@ final class Project {
             }
             roots.merge(found) { $1 }
             resolving = false
+            Workspace.shared.keepSelectionInRepo()
             // The active repository may itself be a subfolder: move it to the top folder so the menu and the panes agree.
             if let c = current, let root = roots[RepoRef(dir: c.dir, environment: c.environment).key], root != c.dir { current = PRCenter.Repo(dir: root, environment: c.environment) }
         }

@@ -165,7 +165,6 @@ struct SessionsPane: View {
 
     @ViewBuilder private var content: some View {
         Group { if let s = ws.current { ChatView(session: s).id(s.id) } else { Welcome() } }.animation(.easeOut(duration: 0.15), value: ws.selected)
-            .onChange(of: Project.shared.current) { _, _ in ws.keepSelectionInRepo() }
     }
 }
 

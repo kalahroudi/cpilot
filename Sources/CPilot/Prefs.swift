@@ -39,6 +39,8 @@ final class Prefs {
     var recapAuto: Bool { didSet { d.set(recapAuto, forKey: "recapAuto") } }
     /// Let Claude rewrite recaps in friendlier language (a small, cheap call).
     var recapWithClaude: Bool { didSet { d.set(recapWithClaude, forKey: "recapWithClaude") } }
+    /// Let Claude suggest your next message from the agent's last one; Tab fills it in (a small, cheap call after each turn).
+    var suggestPrompts: Bool { didSet { d.set(suggestPrompts, forKey: "suggestPrompts") } }
     /// How much the agent does by itself when turning an idea into a spec and a stack: "step", "plan" or "hands".
     /// Offers "Merge all as admin" on a stack whose pull requests GitHub's rules block.
     var adminMergeAll: Bool { didSet { d.set(adminMergeAll, forKey: "adminMergeAll") } }
@@ -70,7 +72,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -86,6 +88,7 @@ final class Prefs {
         conflictWaitMinutes = d.integer(forKey: "conflictWaitMinutes")
         recapAuto = d.bool(forKey: "recapAuto")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
+        suggestPrompts = d.bool(forKey: "suggestPrompts")
         recall = d.bool(forKey: "recall")
         memoryEngine = d.string(forKey: "memoryEngine") ?? "files"
         memoryEngineURL = d.string(forKey: "memoryEngineURL") ?? MemoryEngine.defaultURL

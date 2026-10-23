@@ -506,8 +506,12 @@ struct Composer: View {
                     }
                 }.background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
             }
-            TextField("Message \(session.meta.backend.kind == .claude ? "Claude" : "the agent")…  / for skills, ⌘V pastes images", text: $session.draft, axis: .vertical)
+            TextField(placeholder, text: $session.draft, axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 13.5)).lineLimit(1...10).focused($focused)
+                .onKeyPress(.tab) {
+                    guard session.draft.isEmpty, let s = session.suggestion else { return .ignored }
+                    session.draft = s; session.suggestion = nil; return .handled
+                }
                 .onSubmit { if let first = slashMatches.first { pick(first) } else if session.canSend, !session.isBusy { session.send() } }
             HStack(spacing: 8) {
                 Menu {
@@ -541,6 +545,11 @@ struct Composer: View {
         .onAppear { focused = true }
         .onChange(of: session.draft) { _, _ in session.saveDraftSoon() }
         .sheet(isPresented: $delegate) { DelegateSheet(parent: session) }
+    }
+
+    private var placeholder: String {
+        if session.draft.isEmpty, let s = session.suggestion { return s + "   ⇥ Tab to use" }
+        return "Message \(session.meta.backend.kind == .claude ? "Claude" : "the agent")…  / for skills, ⌘V pastes images"
     }
 
     /// Typing "/" lists the skills on this Mac; picking one asks for it by name (or pastes its instructions for agents without skills).

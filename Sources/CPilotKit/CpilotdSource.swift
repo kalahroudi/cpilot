@@ -68,7 +68,8 @@ if (cmd === 'version') {
   sup.unref();
   const t0 = Date.now();
   const wait = () => {
-    if (fs.existsSync(sockPath(id)) || fs.existsSync(file(id, 'status.json'))) { const st = state(id); say(st && st.error ? { ok: false, error: st.error } : { ok: true }); process.exit(0); }
+    // A command that does not exist reports its failure a moment after the socket is up, so give it that moment before saying ok.
+    if (fs.existsSync(file(id, 'status.json')) || (fs.existsSync(sockPath(id)) && Date.now() - t0 > 500)) { const st = state(id); say(st && st.error ? { ok: false, error: st.error } : { ok: true }); process.exit(0); }
     if (Date.now() - t0 > 8000) { say({ ok: false, error: 'The agent did not start in time.' }); process.exit(1); }
     setTimeout(wait, 50);
   };
