@@ -213,7 +213,7 @@ struct ChatRow: View {
 
     var body: some View {
         switch item.kind {
-        case .user: UserBubble(item: item).frame(maxWidth: .infinity, alignment: .trailing)
+        case .user: UserBubble(item: item, project: session.meta.cwd).frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant: AssistantText(text: item.text, streaming: item.status == .running, project: session.meta.cwd)
         case .thinking: ThinkingRow(item: item)
         case .tool: ToolCard(item: item, children: children)
@@ -228,16 +228,39 @@ struct ChatRow: View {
 
 struct UserBubble: View {
     let item: ChatItem
+    var project: String?
+    @State private var hover = false
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             if !item.attachments.isEmpty { AttachmentStrip(attachments: item.attachments, removable: nil) }
+            if !item.text.isEmpty {
+                HStack(alignment: .center, spacing: 6) {
+                    // Always takes its space, so the bubble does not jump when the button appears.
+                    Button { Workspace.shared.remember(item.text, project: project) } label: { Label("Remember", systemImage: "brain") }
+                        .buttonStyle(Pill(kind: .plain)).help("Save this message as a note for future sessions").opacity(hover ? 1 : 0)
+                    bubble
+                }
+            }
+        }.frame(maxWidth: 620, alignment: .trailing)
+        .animation(.easeInOut(duration: 0.15), value: hover)
+        .onHover { hover = $0 }
+        .contextMenu {
+            if !item.text.isEmpty {
+                Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.text, forType: .string) }
+                Button("Remember this") { Workspace.shared.remember(item.text, project: project) }
+            }
+        }
+    }
+
+    private var bubble: some View {
+        VStack(alignment: .trailing, spacing: 6) {
             if !item.text.isEmpty {
                 Text(item.text).font(.system(size: 13.5)).textSelection(.enabled)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Theme.accent, in: UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14, bottomTrailingRadius: 4, topTrailingRadius: 14))
                     .foregroundStyle(Theme.onAccent)
             }
-        }.frame(maxWidth: 620, alignment: .trailing)
+        }
     }
 }
 

@@ -229,6 +229,10 @@ struct SessionPRBar: View {
         .padding(.horizontal, 16).padding(.vertical, 7).background(Theme.sidebar.opacity(0.6))
         // Reload when the branch changes and whenever a turn ends, since that is when the agent may have pushed or switched.
         .task(id: "\(session.meta.branch ?? "")|\(session.state)") { await load() }
+        // A pull request is often merged somewhere else (GitHub, the Pull requests pane), which changes nothing here, so an open one is looked at again
+        // every so often, and whenever you come back to the app.
+        .task(id: pr?.number) { while !Task.isCancelled, pr?.isOpen == true { try? await Task.sleep(for: .seconds(45)); if !Task.isCancelled { await load() } } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
         .sheet(isPresented: $showCreate) { CreatePRSheet(dir: session.meta.workingDirectory, env: session.env) { _ in Task { await load() } } }
     }
 
