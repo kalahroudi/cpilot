@@ -114,6 +114,21 @@ final class PRCenter {
         }
     }
 
+    /// Quietly reads the open list, the selected pull request and its checks again, without blanking what is on screen,
+    /// so a check that finishes shows up while the pane is open.
+    func refreshLive() async {
+        guard let dir = repoDir, !AppModel.shared.demo, !loading else { return }
+        await Exec.with(env) {
+            await refreshListImpl()
+            guard let n = selected, detail?.number == n, detail?.isOpen == true else { return }
+            async let pr = try? GitHub.view(n, in: dir)
+            async let chk = GitHub.checks(n, in: dir)
+            let (p, c) = await (pr, chk)
+            guard selected == n, let p else { return }
+            detail = p; checks = c
+        }
+    }
+
     func select(_ n: Int) async {
         await Exec.with(env) { await selectImpl(n) }
     }
@@ -404,6 +419,12 @@ struct PullRequestsView: View {
             }
         }
         .background(Theme.pane)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                await center.refreshLive()
+            }
+        }
         .onAppear { Project.shared.ensureDefault(); if let r = Project.shared.current, r != center.currentRepo { Task { await center.open(r) } } else if center.selected != nil { Task { await center.refreshOpen() } } }
         .onChange(of: Project.shared.current) { _, r in if let r, r != center.currentRepo { Task { await center.open(r) } } }
         .sheet(isPresented: Bindable(center).showCreate) {
