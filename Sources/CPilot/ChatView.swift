@@ -236,8 +236,12 @@ struct UserBubble: View {
             if !item.text.isEmpty {
                 HStack(alignment: .center, spacing: 6) {
                     // Always takes its space, so the bubble does not jump when the button appears.
-                    Button { Workspace.shared.remember(item.text, project: project) } label: { Label("Remember", systemImage: "brain") }
-                        .buttonStyle(Pill(kind: .plain)).help("Save this message as a note for future sessions").opacity(hover ? 1 : 0)
+                    if Workspace.shared.isRemembered(item.text) {
+                        Image(systemName: "brain").foregroundStyle(Theme.ok).help("Remembered in your memory notes").accessibilityLabel("Remembered")
+                    } else {
+                        Button { Workspace.shared.remember(item.text, project: project) } label: { Label("Remember", systemImage: "brain") }
+                            .buttonStyle(Pill(kind: .plain)).help("Save this message as a note for future sessions").opacity(hover ? 1 : 0)
+                    }
                     bubble
                 }
             }
@@ -247,7 +251,7 @@ struct UserBubble: View {
         .contextMenu {
             if !item.text.isEmpty {
                 Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.text, forType: .string) }
-                Button("Remember this") { Workspace.shared.remember(item.text, project: project) }
+                if !Workspace.shared.isRemembered(item.text) { Button("Remember this") { Workspace.shared.remember(item.text, project: project) } }
             }
         }
     }
@@ -281,7 +285,9 @@ struct AssistantText: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .opacity(streaming && text.isEmpty ? 0.4 : 1)
                 .overlay(alignment: .topTrailing) {
-                    if hover, finished {
+                    if finished, Workspace.shared.isRemembered(text) {
+                        Image(systemName: "brain").foregroundStyle(Theme.ok).padding(4).help("Remembered in your memory notes").accessibilityLabel("Remembered")
+                    } else if hover, finished {
                         Button { Workspace.shared.remember(text, project: project) } label: { Label("Remember", systemImage: "brain") }
                             .buttonStyle(Pill(kind: .plain)).help("Save this reply as a note for future sessions")
                             .transition(.opacity)
@@ -302,7 +308,7 @@ struct AssistantText: View {
         .onHover { hover = $0 }
         .contextMenu {
             Button("Copy") { copy() }
-            Button("Remember this") { Workspace.shared.remember(text, project: project) }
+            if !Workspace.shared.isRemembered(text) { Button("Remember this") { Workspace.shared.remember(text, project: project) } }
         }
     }
 
