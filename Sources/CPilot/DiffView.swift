@@ -127,9 +127,12 @@ struct CreatePRSheet: View {
             await Exec.with(env) {
                 branch = await Git.info(dir)?.branch ?? ""
                 base = await Git.defaultBranch(dir)
-                title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 baseLog = await Git.baseLog(dir, base: base)
                 mine = await Git.commits(dir, since: "origin/\(base)")
+                // Only a commit of this branch can name the pull request. With none yet, HEAD is the base's own last commit, whose title is not ours.
+                if !mine.isEmpty {
+                    title = ((try? await Shell.check("git", ["log", "-1", "--format=%s"], cwd: URL(fileURLWithPath: dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                }
                 sameChange = await Git.alreadyOnBase(dir, base: base, head: "HEAD", subjects: Dictionary(mine.map { ($0.sha, $0.subject) }, uniquingKeysWith: { a, _ in a }))
             }
         }
