@@ -19,10 +19,12 @@ public struct CIPullRequest: Decodable, Equatable, Sendable {
     public var url: String
     public var headRefOid: String
     public var statusCheckRollup: [Item]?
-    public init(number: Int, title: String, url: String, headRefOid: String, statusCheckRollup: [Item]?) {
-        self.number = number; self.title = title; self.url = url; self.headRefOid = headRefOid; self.statusCheckRollup = statusCheckRollup
+    /// MERGEABLE, CONFLICTING, or UNKNOWN while GitHub is still working it out.
+    public var mergeable: String?
+    public init(number: Int, title: String, url: String, headRefOid: String, statusCheckRollup: [Item]?, mergeable: String? = nil) {
+        self.number = number; self.title = title; self.url = url; self.headRefOid = headRefOid; self.statusCheckRollup = statusCheckRollup; self.mergeable = mergeable
     }
-    public static let fields = "number,title,url,headRefOid,statusCheckRollup"
+    public static let fields = "number,title,url,headRefOid,statusCheckRollup,mergeable"
 }
 
 public enum CIVerdict: Equatable, Sendable {
@@ -56,25 +58,37 @@ public enum CIVerdict: Equatable, Sendable {
     var isFinal: Bool { switch self { case .passed, .failed: return true; default: return false } }
 }
 
-/// Remembers what each pull request's checks looked like and reports only the moment they finish, once per commit.
+/// Remembers what each pull request's checks looked like and reports only the moment they finish, once per commit,
+/// and the moment a pull request starts to conflict with its base.
 public struct CIWatch: Sendable {
-    public struct Event: Equatable, Sendable { public var pr: CIPullRequest; public var verdict: CIVerdict }
+    public struct Event: Equatable, Sendable {
+        public var pr: CIPullRequest; public var verdict: CIVerdict
+        /// True when this event is "the pull request now conflicts", not about its checks.
+        public var conflict = false
+        public init(pr: CIPullRequest, verdict: CIVerdict, conflict: Bool = false) { self.pr = pr; self.verdict = verdict; self.conflict = conflict }
+    }
     private var seen: [String: (oid: String, verdict: CIVerdict)] = [:]
+    private var conflicting: Set<String> = []
     public private(set) var hasPending = false
     public init() {}
 
     public mutating func observe(_ prs: [CIPullRequest]) -> [Event] {
         var events: [Event] = [], now: [String: (oid: String, verdict: CIVerdict)] = [:]
         hasPending = false
+        var stillConflicting: Set<String> = []
         for pr in prs {
             let v = CIVerdict.of(pr.statusCheckRollup)
             now[pr.url] = (pr.headRefOid, v)
-            if v == .pending { hasPending = true }
+            if v == .pending || pr.mergeable == "UNKNOWN" { hasPending = true }
+            if pr.mergeable == "CONFLICTING" {
+                stillConflicting.insert(pr.url)
+                if !conflicting.contains(pr.url) { events.append(Event(pr: pr, verdict: v, conflict: true)) }
+            }
             guard v.isFinal, let before = seen[pr.url] else { continue }
             // Seen running, or a new commit that has already finished between two looks. A PR first met finished is not news.
             if before.oid != pr.headRefOid || before.verdict == .pending { events.append(Event(pr: pr, verdict: v)) }
         }
-        seen = now
+        seen = now; conflicting = stillConflicting
         return events
     }
 }

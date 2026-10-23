@@ -123,6 +123,48 @@ public enum Git {
         return Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
+    /// How a branch stands against the latest base: commits it lacks, the files that would conflict, and whether it was ever pushed.
+    public struct BaseCheck: Equatable, Sendable {
+        public var behind: Int
+        public var conflicts: [String]
+        public var pushed: Bool
+        public init(behind: Int, conflicts: [String], pushed: Bool) { self.behind = behind; self.conflicts = conflicts; self.pushed = pushed }
+    }
+
+    /// Fetches, then asks git what bringing `origin/<base>` into HEAD would do, without touching the working tree. Nil when it cannot tell
+    /// (offline, or a git older than 2.38 without `merge-tree --write-tree`), which callers treat as "go ahead".
+    public static func checkAgainstBase(_ dir: String, base: String, branch: String) async -> BaseCheck? {
+        guard (try? await Shell.run("git", ["fetch", "origin", base], cwd: url(dir), timeout: 60))?.ok == true else { return nil }
+        let behind = Int(((try? await Shell.check("git", ["rev-list", "--count", "HEAD..origin/\(base)"], cwd: url(dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        let pushed = (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(branch)"], cwd: url(dir)))?.ok == true
+        if behind == 0 { return BaseCheck(behind: 0, conflicts: [], pushed: pushed) }
+        guard let r = try? await Shell.run("git", ["merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/\(base)"], cwd: url(dir), timeout: 60) else { return nil }
+        if r.ok { return BaseCheck(behind: behind, conflicts: [], pushed: pushed) }
+        // Exit 1 is a conflict: the first line is a tree, then the conflicted names up to a blank line. Anything else means git could not run it.
+        guard r.status == 1 else { return nil }
+        return BaseCheck(behind: behind, conflicts: conflictedNames(r.stdout), pushed: pushed)
+    }
+
+    static func conflictedNames(_ out: String) -> [String] {
+        Array(out.components(separatedBy: "\n").dropFirst().prefix { !$0.isEmpty })
+    }
+
+    /// Brings the latest base into a branch that merges cleanly. A branch nobody has seen is rebased, which keeps its history straight and needs no
+    /// force-push; one already on the remote gets a merge instead, so that nothing it published is rewritten. Returns what it did.
+    @discardableResult
+    public static func catchUp(_ dir: String, base: String, pushed: Bool) async throws -> String {
+        if pushed {
+            try await Shell.check("git", ["merge", "--no-edit", "origin/\(base)"], cwd: url(dir), timeout: 120)
+            return "Merged the latest \(base) into the branch."
+        }
+        let r = try await Shell.run("git", ["rebase", "origin/\(base)"], cwd: url(dir), timeout: 120)
+        if !r.ok {
+            _ = try? await Shell.run("git", ["rebase", "--abort"], cwd: url(dir))
+            throw ShellError.failed(command: "git rebase", status: r.status, stderr: r.stderr)
+        }
+        return "Rebased the branch onto the latest \(base)."
+    }
+
     public static func commitAll(_ dir: String, message: String) async throws {
         try await Shell.check("git", ["add", "-A"], cwd: url(dir))
         try await Shell.check("git", ["commit", "-m", message], cwd: url(dir))

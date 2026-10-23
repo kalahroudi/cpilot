@@ -41,4 +41,20 @@ final class CIWatchTests: XCTestCase {
         _ = w.observe([])
         XCTAssertTrue(w.observe([pr("a", green)]).isEmpty)
     }
+
+    func testConflictIsAnnouncedOnceWhenItAppears() {
+        var w = CIWatch()
+        func conflicted(_ m: String) -> CIPullRequest { CIPullRequest(number: 5, title: "T", url: "u/5", headRefOid: "a", statusCheckRollup: green, mergeable: m) }
+        XCTAssertTrue(w.observe([conflicted("MERGEABLE")]).isEmpty)
+        XCTAssertEqual(w.observe([conflicted("CONFLICTING")]).map(\.conflict), [true])
+        XCTAssertTrue(w.observe([conflicted("CONFLICTING")]).isEmpty)    // not again
+        XCTAssertTrue(w.observe([conflicted("MERGEABLE")]).isEmpty)
+        XCTAssertEqual(w.observe([conflicted("CONFLICTING")]).count, 1)  // a new conflict is news again
+        _ = w.observe([conflicted("UNKNOWN")])
+        XCTAssertTrue(w.hasPending)                                      // GitHub has not decided yet: keep looking
+    }
+
+    func testConflictNamesFromMergeTree() {
+        XCTAssertEqual(Git.conflictedNames("abc123\na.swift\nb/c.swift\n\nAuto-merging a.swift\n"), ["a.swift", "b/c.swift"])
+    }
 }

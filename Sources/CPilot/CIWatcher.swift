@@ -13,6 +13,15 @@ final class CIWatcher {
     private var watches: [String: CIWatch] = [:]
     private var topLevels: [String: String?] = [:]
     private var schedule = PollSchedule()
+    /// Until then, look every minute: a pull request just opened is when conflicts and failing checks show up, and GitHub needs a moment to say.
+    private var eagerUntil = Date.distantPast
+
+    /// Called when a pull request was just opened: look now and keep looking closely for a few minutes.
+    func nudge() {
+        eagerUntil = Date().addingTimeInterval(600)
+        schedule = PollSchedule()
+        start()
+    }
 
     func start() {
         task?.cancel(); task = nil
@@ -40,8 +49,9 @@ final class CIWatcher {
             let first = watches[key] == nil
             let events = watch.observe(prs)
             watches[key] = watch
-            schedule.record(key, hasPending: watch.hasPending)
-            if watch.hasPending { running = true }
+            let eager = Date() < eagerUntil
+            schedule.record(key, hasPending: watch.hasPending || eager)
+            if watch.hasPending || eager { running = true }
             if first { continue }
             for e in events { await announce(e, in: key) }
         }
@@ -74,6 +84,10 @@ final class CIWatcher {
     }
 
     private func announce(_ e: CIWatch.Event, in repo: String) async {
+        if e.conflict {
+            AppModel.shared.notify("#\(e.pr.number) has merge conflicts", body: "\(e.pr.title). It can't merge until the conflict is resolved.")
+            return
+        }
         switch e.verdict {
         case .passed:
             if await isMergedByCPilot(e.pr.number, in: repo) { return }

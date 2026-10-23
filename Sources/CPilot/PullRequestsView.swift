@@ -430,7 +430,7 @@ struct PullRequestsView: View {
         .sheet(isPresented: Bindable(center).showCreate) {
             if let dir = center.repoDir {
                 CreatePRSheet(dir: dir, env: center.env) { n in
-                    Task { await center.refreshList(); await center.select(n) }
+                    Task { await center.refreshList(); await center.select(n); CIWatcher.shared.nudge() }
                 }
             }
         }
