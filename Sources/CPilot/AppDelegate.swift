@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         if CommandLine.arguments.contains("--bench") { Bench.run(delegate: self) }
         NSSetUncaughtExceptionHandler { e in AppLog.info("UNCAUGHT \(e.name.rawValue): \(e.reason ?? "")\n\(e.callStackSymbols.prefix(20).joined(separator: "\n"))") }
         Prefs.shared.applyTheme()
+        installNavigationEvents()
         Prefs.shared.applyDockIcon()
         NSApp.applicationIconImage = AppIcon.image(size: 512, padded: true)
 
@@ -65,6 +66,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         if Nav.shared.pane == .sessions, let id = Workspace.shared.selected, managerWindow?.isKeyWindow == true { Workspace.shared.closeTab(id) }
         else { NSApp.keyWindow?.performClose(nil) }
     }
+    /// The mouse's side buttons (4 back, 5 forward) and a two-finger swipe step through the Manager's history, as in a browser.
+    private func installNavigationEvents() {
+        NSEvent.addLocalMonitorForEvents(matching: [.otherMouseUp, .swipe]) { [weak self] event in
+            guard let self, event.window === self.managerWindow, event.window?.attachedSheet == nil else { return event }
+            switch event.type {
+            case .otherMouseUp where event.buttonNumber == 3: Nav.shared.goBack(); return nil
+            case .otherMouseUp where event.buttonNumber == 4: Nav.shared.goForward(); return nil
+            case .swipe where event.deltaX > 0: Nav.shared.goBack(); return nil
+            case .swipe where event.deltaX < 0: Nav.shared.goForward(); return nil
+            default: return event
+            }
+        }
+    }
+    @objc func goBack() { Nav.shared.goBack() }
+    @objc func goForward() { Nav.shared.goForward() }
     @objc func nextTab() { moveTab(1) }
     @objc func previousTab() { moveTab(-1) }
     @objc func captureRegion() { CaptureCoordinator.shared.capture(window: false) }

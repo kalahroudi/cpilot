@@ -587,6 +587,7 @@ final class Workspace {
         if Prefs.shared.followSession, let m = sessions.first(where: { $0.id == id }) { Project.shared.follow(dir: m.cwd, environment: m.environment) }
         if let p = previous, p != id { controllers[p]?.unloadIfIdle() }
         persistTabs()
+        Nav.shared.visit()
     }
 
     /// Whether a session belongs to the repository chosen in the switcher.

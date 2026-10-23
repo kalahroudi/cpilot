@@ -116,6 +116,7 @@ struct ProgressRing: View {
 struct IssueList: View {
     var center: SpecCenter { SpecCenter.shared }
     @Binding var query: String
+    @State private var noteFor: GitHub.Issue?
     var body: some View {
         VStack(spacing: 0) {
             SearchBox(prompt: "Search issues", text: $query).padding(.horizontal, 10).padding(.bottom, 8).onSubmit { Task { await center.loadIssues(search: query) } }
@@ -127,7 +128,7 @@ struct IssueList: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(i.number) \(i.title)").font(.system(size: 12.5, weight: .medium)).lineLimit(2)
                             HStack(spacing: 4) { ForEach((i.labels ?? []).prefix(3), id: \.name) { Badge(text: $0.name) }; Spacer()
-                                AsyncButton("Create spec") { await createSpec(i) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
+                                Button("Create spec") { noteFor = i }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
                         }.padding(.horizontal, 12).padding(.vertical, 8)
                         Divider().opacity(0.5)
                     }
@@ -135,12 +136,43 @@ struct IssueList: View {
                 }
             }
         }.task { if center.issues.isEmpty { await center.loadIssues() } }
+        .sheet(item: $noteFor) { i in IssueNoteSheet(issue: i) { note in await createSpec(i, note: note) } }
     }
 
-    private func createSpec(_ i: GitHub.Issue) async {
+    private func createSpec(_ i: GitHub.Issue, note: String) async {
         guard let r = center.repo else { return }
         let full = (try? await Exec.with(center.env) { try await GitHub.issue(i.number, in: r.dir) }) ?? i
-        await center.start(SpecSource(label: "Issue #\(i.number)", title: i.title, requirement: full.requirementText()), autonomy: Autonomy(rawValue: Prefs.shared.specAutonomy) ?? .step)
+        await center.start(SpecSource(label: "Issue #\(i.number)", title: i.title, requirement: full.requirementText().withNote(note)), autonomy: Autonomy(rawValue: Prefs.shared.specAutonomy) ?? .step)
+    }
+}
+
+extension String {
+    /// The user's optional direction for a spec, appended to the requirement it steers.
+    func withNote(_ note: String) -> String {
+        let n = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? self : self + "\n\nThe user's note, to direct the spec (follow it where it conflicts with the text above):\n" + n
+    }
+}
+
+/// Asks for an optional note before a spec is drafted from an issue.
+struct IssueNoteSheet: View {
+    let issue: GitHub.Issue
+    let create: (String) async -> Void
+    @State private var note = ""
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Create a spec from #\(issue.number)").font(.system(size: 17, weight: .semibold))
+            Text(issue.title).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(2)
+            SectionLabel("Your note (optional)")
+            TextEditor(text: $note).font(.system(size: 13)).frame(height: 100).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            Text("Say what to focus on, leave out or decide in a particular way. Leave it empty to work from the issue alone.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                AsyncButton("Create spec") { dismiss(); await create(note) }.buttonStyle(Pill(kind: .primary)).keyboardShortcut(.defaultAction)
+            }
+        }.padding(20).frame(width: 480)
     }
 }
 
@@ -459,6 +491,8 @@ struct NewWorkSheet: View {
         switch entry {
         case .issue:
             Dropdown(options: center.issues.map { (Int?.some($0.number), "#\($0.number) \($0.title)") }, selection: $issue, placeholder: "Choose an issue")
+            TextEditor(text: $text).font(.system(size: 13)).frame(height: 70).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+            Text("Optional: a note to direct the spec, such as what to focus on or leave out.").font(.system(size: 11.5)).foregroundStyle(.secondary)
         case .text:
             TextEditor(text: $text).font(.system(size: 13)).frame(height: 110).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Text("Rough is fine. The agent asks about anything unclear.").font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -500,7 +534,7 @@ struct NewWorkSheet: View {
         case .issue:
             guard let n = issue, let r = center.repo else { return }
             guard let full = try? await Exec.with(center.env, { try await GitHub.issue(n, in: r.dir) }) else { error = "Could not read that issue."; return }
-            source = SpecSource(label: "Issue #\(n)", title: full.title, requirement: full.requirementText())
+            source = SpecSource(label: "Issue #\(n)", title: full.title, requirement: full.requirementText().withNote(text))
         case .text:
             let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
             source = SpecSource(label: center.preset?.label ?? "Described by you", title: center.preset?.title ?? String(t.split(separator: "\n").first?.prefix(60) ?? "New work"), requirement: t)

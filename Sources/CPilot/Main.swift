@@ -88,6 +88,10 @@ enum CPilotMain {
         ] + (1...9).map { n in
             let i = item("Tab \(n)", #selector(AppDelegate.gotoTab(_:)), String(n), target: delegate); i.tag = n - 1; return i
         } + [.separator()] + capture)
+        add("Go", [
+            item("Back", #selector(AppDelegate.goBack), "[", target: delegate),
+            item("Forward", #selector(AppDelegate.goForward), "]", target: delegate),
+        ])
         add("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
         ])
