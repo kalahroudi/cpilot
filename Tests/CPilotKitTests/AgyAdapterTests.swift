@@ -27,3 +27,17 @@ final class AgyAdapterTests: XCTestCase {
         XCTAssertTrue(AcpRegistry.withExtras([]).contains { $0.id == AgyAdapter.agentId && $0.config == AgyAdapter.config })
     }
 }
+
+final class AgentKeyTests: XCTestCase {
+    func testKeyAgentsStartThroughAShellThatLoadsTheKeyFile() {
+        let c = AgentKey.wrap(AcpAgentConfig(id: "deepseek-harness", name: "DeepSeek", command: "npx", args: ["-y", "pkg"]))
+        XCTAssertEqual(c.command, "sh")
+        XCTAssertTrue(c.args[1].contains(". \"$HOME/.cpilot/keys/deepseek-harness.env\""))
+        XCTAssertEqual(Array(c.args.suffix(3)), ["npx", "-y", "pkg"])
+    }
+
+    func testOtherAgentsAreLeftAlone() {
+        let a = AcpAgentConfig(id: "goose", name: "goose", command: "goose", args: ["acp"])
+        XCTAssertEqual(AgentKey.wrap(a), a)
+    }
+}

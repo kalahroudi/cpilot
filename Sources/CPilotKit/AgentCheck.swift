@@ -17,6 +17,10 @@ public enum AgentCheck {
         if env != nil || agent.id == AgyAdapter.agentId, !(await Provisioner.ready(agent, on: env)) {
             return Result(state: .notSetUp, detail: "\(agent.name) is not set up on \(env?.name ?? "this Mac") yet.")
         }
+        // An agent that only needs a key starts fine without one and fails on the first message, so the key is what the check looks for.
+        if let name = AgentKey.variable(for: agent.id), agent.env[name] == nil, !(await AgentKey.isSaved(for: agent.id, on: env)) {
+            return Result(state: .needsSignIn, detail: "Starts, but has no API key yet (\(name)).")
+        }
         return await start(agent, on: env, signIn: false, timeout: timeout)
     }
 

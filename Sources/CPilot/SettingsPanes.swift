@@ -196,6 +196,7 @@ struct AgentSettings: View {
     @State private var signingIn: Set<String> = []
     @State private var claudeSignIn: EnvironmentConfig?
     @State private var agySignIn: AgyTarget?
+    @State private var keyFor: AgentKeyTarget?
 
     /// Runs the agent's own sign-in in one place, then shows the new result.
     private func signIn(_ agent: AcpAgentConfig, place: EnvironmentConfig?) {
@@ -275,7 +276,8 @@ struct AgentSettings: View {
         let env = place.isEmpty ? nil : ws.environment(place)
         switch state {
         case .needsSignIn:
-            if let agent, agent.id == AgyAdapter.agentId { Button("Sign in…") { agySignIn = AgyTarget(env: env) }.buttonStyle(Pill(kind: .primary)) }
+            if let agent, let name = AgentKey.variable(for: agent.id) { Button("Add API key…") { keyFor = AgentKeyTarget(agent: agent, env: env, variable: name) }.buttonStyle(Pill(kind: .primary)) }
+            else if let agent, agent.id == AgyAdapter.agentId { Button("Sign in…") { agySignIn = AgyTarget(env: env) }.buttonStyle(Pill(kind: .primary)) }
             else if let agent { Button("Sign in…") { signIn(agent, place: env) }.buttonStyle(Pill(kind: .primary)) }
             else if let env { Button("Sign in…") { claudeSignIn = env }.buttonStyle(Pill(kind: .primary)) }
             else { Text("Run claude in Terminal once to sign in.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
@@ -319,6 +321,7 @@ struct AgentSettings: View {
         .sheet(isPresented: $showRegistry) { registrySheet }
         .sheet(isPresented: $custom) { CustomAgentSheet() }
         .sheet(item: $claudeSignIn, onDismiss: { test(nil) }) { e in ClaudeSignInSheet(env: e) }
+        .sheet(item: $keyFor, onDismiss: { if let a = ws.acpAgents.first(where: { AgentKey.variable(for: $0.id) != nil }) { test(a) } }) { t in AgentKeySheet(target: t) }
         .sheet(item: $agySignIn, onDismiss: { if let a = ws.acpAgents.first(where: { $0.id == AgyAdapter.agentId }) { test(a) } }) { t in AgySignInSheet(env: t.env) }
     }
 
@@ -477,5 +480,35 @@ struct AgySignInSheet: View {
             self.error = error.localizedDescription + " Start again to get a new link."
             url = nil
         }
+    }
+}
+
+struct AgentKeyTarget: Identifiable { let agent: AcpAgentConfig; let env: EnvironmentConfig?; let variable: String; var id: String { agent.id + "|" + (env?.id ?? "") } }
+
+/// An API key for an agent that only needs a key, kept in a private file on the machine the agent runs on.
+struct AgentKeySheet: View {
+    let target: AgentKeyTarget
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("API key for \(target.agent.name) on \(target.env?.name ?? "this Mac")").font(.system(size: 16, weight: .semibold))
+            SecureField("sk-…", text: $key).textFieldStyle(CPField()).onSubmit { Task { await save() } }
+            Text("Saved in a file only your account on \(target.env?.name ?? "this Mac") can read, and used only when \(target.agent.name) runs there, as \(target.variable). Usage is billed to the key.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error { ErrorLine(text: error) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                AsyncButton { await save() } label: { if busy { ProgressView().controlSize(.small) } else { Text("Save key") } }.buttonStyle(Pill(kind: .primary)).disabled(busy || key.isEmpty)
+            }
+        }.padding(20).frame(width: 460)
+    }
+
+    private func save() async {
+        busy = true; error = nil; defer { busy = false }
+        do { try await AgentKey.save(key, for: target.agent, on: target.env); dismiss() } catch { self.error = error.localizedDescription }
     }
 }
