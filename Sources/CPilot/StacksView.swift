@@ -330,20 +330,42 @@ final class StackCenter {
 
     func collapse(_ list: [Stack]) async {
         await run("Combining") { dir, host in
-            self.busy = "Combining into one branch"
-            let job = try await Stacks.startCollapse(list, in: dir)
-            self.busy = "Waiting for Claude to finish \(job.branch)"
-            let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
-            let session: SessionController
-            do { session = try await Workspace.shared.create(.init(folder: job.path, access: level, firstMessage: Stacks.collapsePrompt(job), environment: self.repo?.environment, title: "Combine: \(job.branch)")) }
-            catch { await Stacks.abortCollapse(job, in: dir); throw error }
-            self.notice = "Claude is combining \(job.sources.count) branches into \(job.branch). This carries on when it is done."
-            try await self.awaitCollapse(job, session, dir: dir)
-            self.busy = "Publishing \(job.branch)"
-            let n = try await Stacks.finishCollapse(job, in: dir, host: host)
-            AppModel.shared.notify("Combined into #\(n)", body: "\(job.prs.count) pull requests are now one.")
+            let (n, job) = try await self.combine(list, dir: dir, host: host)
             return "Combined \(job.prs.map { "#\($0)" }.joined(separator: ", ")) into #\(n) and closed them."
         }
+    }
+
+    /// Combines the stacks into one pull request, then merges that one as admin once its checks pass. For stacks GitHub's rules block,
+    /// where merging them one after another would only repeat the same bypass for every pull request.
+    func combineAndMergeAsAdmin(_ list: [Stack]) async {
+        await run("Combining") { [method] dir, host in
+            let (n, job) = try await self.combine(list, dir: dir, host: host)
+            let replaced = job.prs.map { "#\($0)" }.joined(separator: ", ")
+            self.notice = "Combined \(replaced) into #\(n). Merging it as admin when its checks pass."
+            self.busy = "Merging #\(n)"
+            do {
+                try await self.waitUntilReady(n, dir: dir, merged: [])
+                guard let stack = await Stacks.load(in: dir, host: host).first(where: { $0.bottomOpen?.pr == n }) else { throw StackError.message("#\(n) is not in a stack yet. Refresh, then merge it.") }
+                _ = try await self.mergeOne(stack, admin: true, method: method, dir: dir, host: host)
+            } catch { throw StackError.message("Combined \(replaced) into #\(n), but did not merge it. " + error.localizedDescription) }
+            return "Combined \(replaced) into #\(n) and merged it as admin."
+        }
+    }
+
+    private func combine(_ list: [Stack], dir: String, host: StackHost) async throws -> (Int, Stacks.CollapseJob) {
+        self.busy = "Combining into one branch"
+        let job = try await Stacks.startCollapse(list, in: dir)
+        self.busy = "Waiting for Claude to finish \(job.branch)"
+        let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
+        let session: SessionController
+        do { session = try await Workspace.shared.create(.init(folder: job.path, access: level, firstMessage: Stacks.collapsePrompt(job), environment: self.repo?.environment, title: "Combine: \(job.branch)")) }
+        catch { await Stacks.abortCollapse(job, in: dir); throw error }
+        self.notice = "Claude is combining \(job.sources.count) branches into \(job.branch). This carries on when it is done."
+        try await self.awaitCollapse(job, session, dir: dir)
+        self.busy = "Publishing \(job.branch)"
+        let n = try await Stacks.finishCollapse(job, in: dir, host: host)
+        AppModel.shared.notify("Combined into #\(n)", body: "\(job.prs.count) pull requests are now one.")
+        return (n, job)
     }
 
     /// Waits until Claude says the combined branch is finished. If its turn ends without that, stops and leaves the folder for a look.
@@ -432,6 +454,7 @@ struct StacksView: View {
     let pr = PRCenter.shared
     @State private var newName = ""
     @State private var confirmBypassEvery = false
+    @State private var confirmCombineEvery = false
     @State private var splitting = false
     @State private var startOpen = false
     @State private var worktreesOpen = false
@@ -514,15 +537,22 @@ struct StacksView: View {
                 Image(systemName: "lock.fill").foregroundStyle(Theme.warn)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("GitHub's rules block \(blocked.count) stacks").font(.system(size: 12.5, weight: .semibold))
-                    Text("Merge all \(total) pull requests as admin, one after another.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    Text("Combine all \(total) pull requests into one and merge it as admin, or merge them one after another.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Merge all \(total) as admin…") { confirmBypassEvery = true }.buttonStyle(Pill(kind: .plain))
+                Button("Merge one by one…") { confirmBypassEvery = true }.buttonStyle(Pill(kind: .plain))
                     .confirmationDialog("Bypass the repository's rules to merge \(total) pull requests?", isPresented: $confirmBypassEvery, titleVisibility: .visible) {
                         Button("Merge all \(total) as admin", role: .destructive) { Task { await center.mergeEveryAsAdmin(blocked) } }
                         Button("Cancel", role: .cancel) {}
                     } message: {
                         Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. \(center.overlaps.isEmpty ? "" : "Some change the same files: a conflict is resolved in a temporary copy\(Prefs.shared.autoResolveConflicts ? " by Claude, and merging carries on" : " and waits for you"). ")The merges are recorded as bypasses. You can turn this button off in Settings.")
+                    }
+                Button("Combine all into one PR and merge as admin…") { confirmCombineEvery = true }.buttonStyle(Pill(kind: .primary))
+                    .confirmationDialog("Combine \(total) pull requests into one and merge it as admin?", isPresented: $confirmCombineEvery, titleVisibility: .visible) {
+                        Button("Combine and merge as admin", role: .destructive) { Task { await center.combineAndMergeAsAdmin(blocked) } }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Claude merges the changes of all \(total) pull requests into one new branch and checks it builds. One pull request is opened and the old ones are closed. Once its checks pass it is merged once, overriding GitHub's rules, and the merge is recorded as a bypass. The old branches are kept.")
                     }
             }.padding(12).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 10))
         }
