@@ -406,14 +406,18 @@ final class StackCenter {
         if error == nil { notice = "Removed \(URL(fileURLWithPath: w.path).lastPathComponent)." }
     }
 
-    /// What can go without losing anything: records of missing folders, and copies nothing uses and that hold no work.
-    var removable: [WorktreeInfo] { worktrees.filter { $0.kind != .main && $0.kind != .session && !$0.holdsWork && !$0.rebasing || $0.missing } }
+    /// What can go without losing anything: records of missing folders, and every copy, a session's included, that holds no work. Never your own folder.
+    var removable: [WorktreeInfo] { worktrees.filter { $0.kind != .main && ($0.missing || !$0.holdsWork && !$0.rebasing) } }
 
     func cleanUpWorktrees() async {
         guard let r = repo else { return }
         let list = removable
+        // Nothing in these holds work, so a session can be deleted without asking.
+        let owners = list.compactMap { w in session(for: w).map { (w.path, $0.id) } }
+        for (_, id) in owners { Workspace.shared.delete(id) }
+        let owned = Set(owners.map(\.0))
         await Exec.with(env) {
-            for w in list { try? await Worktrees.remove(w, in: r.dir, deleteBranch: false) }
+            for w in list where !owned.contains(w.path) { try? await Worktrees.remove(w, in: r.dir, deleteBranch: false) }
             await Worktrees.prune(in: r.dir)
         }
         await refresh()
@@ -547,7 +551,8 @@ struct StacksView: View {
                     } message: {
                         Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. \(center.overlaps.isEmpty ? "" : "Some change the same files: a conflict is resolved in a temporary copy\(Prefs.shared.autoResolveConflicts ? " by Claude, and merging carries on" : " and waits for you"). ")The merges are recorded as bypasses. You can turn this button off in Settings.")
                     }
-                Button("Combine all into one PR and merge as admin…") { confirmCombineEvery = true }.buttonStyle(Pill(kind: .primary))
+                Button("Combine and Merge as admin…") { confirmCombineEvery = true }.buttonStyle(Pill(kind: .primary))
+                    .help("Combine all \(total) pull requests into one, then merge it as admin once its checks pass")
                     .confirmationDialog("Combine \(total) pull requests into one and merge it as admin?", isPresented: $confirmCombineEvery, titleVisibility: .visible) {
                         Button("Combine and merge as admin", role: .destructive) { Task { await center.combineAndMergeAsAdmin(blocked) } }
                         Button("Cancel", role: .cancel) {}
@@ -636,7 +641,7 @@ extension StacksView {
                         Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0))
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Worktrees (\(list.count - 1))").font(.system(size: 13, weight: .semibold))
-                            Text(unused > 0 ? "\(unused) unused cop\(unused == 1 ? "y" : "ies") can go without losing anything." : "Copies of this repository that sessions and restacks work in.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                            Text(unused > 0 ? "\(unused) cop\(unused == 1 ? "y" : "ies") can go without losing anything." : "Copies of this repository that sessions and restacks work in.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                         }
                         Spacer()
                         if unused > 0 { Badge(text: "\(unused) unused", kind: .warn) }
@@ -645,13 +650,13 @@ extension StacksView {
                 if open {
                     Divider()
                     HStack {
-                        Text("Remove what nothing uses, and clear records of folders that are gone.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Text("Remove every copy that holds no unsaved work, sessions included, and clear records of folders that are gone. Your own folder stays.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Clean up unused…") { confirmCleanUp = true }.buttonStyle(Pill(kind: .plain)).disabled(unused == 0 && !list.contains(where: \.missing))
-                            .confirmationDialog("Remove \(unused) unused cop\(unused == 1 ? "y" : "ies")?", isPresented: $confirmCleanUp, titleVisibility: .visible) {
-                                Button("Remove", role: .destructive) { Task { await center.cleanUpWorktrees() } }
+                        Button("Clean up all…") { confirmCleanUp = true }.buttonStyle(Pill(kind: .plain)).disabled(unused == 0 && !list.contains(where: \.missing))
+                            .confirmationDialog("Remove \(unused) cop\(unused == 1 ? "y" : "ies")?", isPresented: $confirmCleanUp, titleVisibility: .visible) {
+                                Button("Remove all", role: .destructive) { Task { await center.cleanUpWorktrees() } }
                                 Button("Cancel", role: .cancel) {}
-                            } message: { Text("Only copies with no uncommitted changes and no unpushed commits, and none with a conflict waiting. Sessions are never touched here.") }
+                            } message: { Text("Only copies with no uncommitted changes and no unpushed commits, and none with a conflict waiting. Sessions that use a copy are deleted with it. Your own folder is never touched.") }
                     }.padding(.vertical, 8)
                     ForEach(list) { w in
                         Divider()
