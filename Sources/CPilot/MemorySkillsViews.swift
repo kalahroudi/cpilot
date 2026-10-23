@@ -87,7 +87,7 @@ struct MemoryView: View {
     }
 
     private var filtered: [MemoryNote] { query.isEmpty ? notes : notes.filter { ($0.name + $0.body).localizedCaseInsensitiveContains(query) } }
-    private func reload() { notes = ws.memory.allNotes() }
+    private func reload() { notes = ws.memory.allNotes(); ws.refreshRemembered() }
 }
 
 /// Skills already on this Mac. Claude loads them itself; this lists them and shows what each does.

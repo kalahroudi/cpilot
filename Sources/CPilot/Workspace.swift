@@ -489,11 +489,14 @@ final class Workspace {
     var sessions: [SessionMeta] = []
     var tabs: [String] = []
     var selected: String?
+    /// Bodies of the saved notes, so a message that is already remembered shows a green brain instead of offering Remember again.
+    private(set) var rememberedTexts: Set<String> = []
     private var controllers: [String: SessionController] = [:]
 
     private init() {
         memory = MemoryStore(index: index)
         sessions = store.list()
+        refreshRemembered()
         let saved = UserDefaults.standard.stringArray(forKey: "openTabs") ?? []
         tabs = saved.filter { id in sessions.contains { $0.id == id } }
         selected = UserDefaults.standard.string(forKey: "selectedTab").flatMap { tabs.contains($0) ? $0 : nil } ?? tabs.first
@@ -832,10 +835,17 @@ final class Workspace {
         select(parent.id)
     }
 
+    func isRemembered(_ text: String) -> Bool { rememberedTexts.contains(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+
+    /// Re-reads the notes; called when they change.
+    func refreshRemembered() { rememberedTexts = Set(memory.allNotes().map { $0.body.trimmingCharacters(in: .whitespacesAndNewlines) }) }
+
     func remember(_ text: String, project: String?, name: String? = nil) {
+        guard !isRemembered(text) else { return }
         let first = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Note"
         let title = name ?? String(first.prefix(48))
         memory.save(scope: project.map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope, name: title, body: text)
+        refreshRemembered()
         AppModel.shared.show("Saved to memory")
     }
 
