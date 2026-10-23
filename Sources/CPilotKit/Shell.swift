@@ -89,25 +89,39 @@ public enum Shell {
         process.standardError = errPipe
         let inPipe = Pipe()
         process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
-        outPipe.fileHandleForReading.readabilityHandler = { out.append($0.availableData) }
-        errPipe.fileHandleForReading.readabilityHandler = {
-            err.append($0.availableData)
-            // Tailscale SSH prints "To authenticate, visit: <link>" and then waits; pass the link on once, while ssh is still running.
-            if let onAuthURL, notified.string.isEmpty, let url = Shell.tailscaleLink(in: err.string) { notified.append(Data("1".utf8)); onAuthURL(url) }
-        }
         let command = ([tool] + args).joined(separator: " ")
 
         return try await withCheckedThrowingContinuation { cont in
             let timedOut = Buffer()
+            // Output is read to the end on threads of their own, and the result waits for both. Reading it from the termination handler
+            // while a read handler was still holding data it had taken from the pipe lost that data, so a command could come back empty.
+            let drained = DispatchGroup()
+            drained.enter(); drained.enter()
             process.terminationHandler = { proc in
-                outPipe.fileHandleForReading.readabilityHandler = nil
-                errPipe.fileHandleForReading.readabilityHandler = nil
-                out.append(outPipe.fileHandleForReading.readDataToEndOfFile())
-                err.append(errPipe.fileHandleForReading.readDataToEndOfFile())
-                if !timedOut.string.isEmpty { cont.resume(throwing: ShellError.timedOut(command)); return }
-                cont.resume(returning: ShellResult(stdout: out.string, stderr: err.string, status: proc.terminationStatus))
+                DispatchQueue.global().async {
+                    // A background process that inherited the pipe (an ssh connection kept open) must not hold the result up for ever.
+                    _ = drained.wait(timeout: .now() + 5)
+                    if !timedOut.string.isEmpty { cont.resume(throwing: ShellError.timedOut(command)); return }
+                    cont.resume(returning: ShellResult(stdout: out.string, stderr: err.string, status: proc.terminationStatus))
+                }
             }
             do { try process.run() } catch { cont.resume(throwing: error); return }
+            // The write ends belong to the child now; closing ours is what lets the reads see the end.
+            try? outPipe.fileHandleForWriting.close(); try? errPipe.fileHandleForWriting.close()
+            DispatchQueue.global().async {
+                let h = outPipe.fileHandleForReading
+                while case let d = h.availableData, !d.isEmpty { out.append(d) }
+                drained.leave()
+            }
+            DispatchQueue.global().async {
+                let h = errPipe.fileHandleForReading
+                while case let d = h.availableData, !d.isEmpty {
+                    err.append(d)
+                    // Tailscale SSH prints "To authenticate, visit: <link>" and then waits; pass the link on once, while ssh is still running.
+                    if let onAuthURL, notified.string.isEmpty, let url = Shell.tailscaleLink(in: err.string) { notified.append(Data("1".utf8)); onAuthURL(url) }
+                }
+                drained.leave()
+            }
             if let input { try? inPipe.fileHandleForWriting.write(contentsOf: input); try? inPipe.fileHandleForWriting.close() }
             if let timeout {
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
