@@ -32,6 +32,9 @@ final class SessionController: Identifiable {
     /// The "while you were away" card is showing.
     var recapVisible = false
     var recapBusy = false
+    /// A guess at your next message, shown in the empty message box; Tab accepts it.
+    var suggestion: String?
+    private var suggestTask: Task<Void, Never>?
 
     private let ws: Workspace
     private var runner: ClaudeRunner?
@@ -154,6 +157,7 @@ final class SessionController: Identifiable {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
         draft = ""; attachments = []; meta.draft = nil; recapVisible = false
+        suggestTask?.cancel(); suggestion = nil
         let composed = Capture.compose(message: text, attachments: atts)
         let isFirst = !items.contains { $0.kind == .user }
         let row = ChatItem(kind: .user, text: text, attachments: atts, ts: .now)
@@ -411,6 +415,20 @@ final class SessionController: Identifiable {
         ws.turnFinished(self)
         onTurnEnd?(self)
         scheduleSleep()
+        suggestNext()
+    }
+
+    /// Asks Claude, in the background, what you would most likely say next. Quietly gives up on any failure.
+    func suggestNext() {
+        suggestTask?.cancel(); suggestion = nil
+        guard Prefs.shared.suggestPrompts, state == .idle, items.last(where: { $0.kind == .user || $0.kind == .assistant })?.kind == .assistant,
+              Shell.find("claude") != nil else { return }
+        let digest = ContextDigest.build(items: items, budget: 4000), dir = env == nil ? meta.workingDirectory : NSHomeDirectory(), rows = items.count
+        suggestTask = Task { @MainActor in
+            let out = await ClaudeOneShot.run(PromptSuggestion.prompt(digest: digest), in: dir, timeout: 40)
+            guard !Task.isCancelled, items.count == rows, let text = out.flatMap(PromptSuggestion.clean) else { return }
+            suggestion = text
+        }
     }
 
     private func fail(_ message: String) {

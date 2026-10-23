@@ -390,3 +390,14 @@ final class LocalModelTests: XCTestCase {
         XCTAssertFalse(none.deep); XCTAssertTrue(none.environment.isEmpty); XCTAssertTrue(none.note.contains("offline plan"))
     }
 }
+
+final class PromptSuggestionTests: XCTestCase {
+    func testCleanStripsQuotesAndLabels() {
+        XCTAssertEqual(PromptSuggestion.clean("\"Go with option B.\"\nBecause it is simpler."), "Go with option B.")
+        XCTAssertEqual(PromptSuggestion.clean("User: Run the tests"), "Run the tests")
+    }
+    func testCleanRejectsNothing() {
+        XCTAssertNil(PromptSuggestion.clean("NONE"))
+        XCTAssertNil(PromptSuggestion.clean("  \n"))
+    }
+}

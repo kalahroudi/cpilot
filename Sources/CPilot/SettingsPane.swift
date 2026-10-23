@@ -90,6 +90,9 @@ struct SettingsPane: View {
                 SettingRow("Recap when you return", "Opening a session you have been away from for a while shows where things stand: the latest ask, what got done, and anything waiting on you.") { toggle($p.recapAuto) }
                 if prefs.recapAuto { SettingRow("Let Claude write recaps", "A small, cheap call that rewrites the recap in a few friendly lines. Off keeps it to the plain version built on your Mac.") { toggle($p.recapWithClaude) } }
             }
+            SettingsGroup("Sessions") {
+                SettingRow("Suggest your next message", "After each turn Claude drafts a reply to what the agent just said, shown faintly in the message box. Press Tab to use it. A small, cheap call.") { toggle($p.suggestPrompts) }
+            }
             SettingsGroup("Specs and stacks") {
                 SettingRow("Default autonomy", Autonomy(rawValue: prefs.specAutonomy)?.detail ?? "") {
                     Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
