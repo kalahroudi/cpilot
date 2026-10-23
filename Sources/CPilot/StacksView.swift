@@ -547,7 +547,8 @@ struct StacksView: View {
                     } message: {
                         Text("Merges every open pull request in these stacks one after another, lowest number first, overriding GitHub's rules on each. Every one still has to pass its checks, and it stops at the first problem. \(center.overlaps.isEmpty ? "" : "Some change the same files: a conflict is resolved in a temporary copy\(Prefs.shared.autoResolveConflicts ? " by Claude, and merging carries on" : " and waits for you"). ")The merges are recorded as bypasses. You can turn this button off in Settings.")
                     }
-                Button("Combine all into one PR and merge as admin…") { confirmCombineEvery = true }.buttonStyle(Pill(kind: .primary))
+                Button("Combine and Merge as admin…") { confirmCombineEvery = true }.buttonStyle(Pill(kind: .primary))
+                    .help("Combine all \(total) pull requests into one, then merge it as admin once its checks pass")
                     .confirmationDialog("Combine \(total) pull requests into one and merge it as admin?", isPresented: $confirmCombineEvery, titleVisibility: .visible) {
                         Button("Combine and merge as admin", role: .destructive) { Task { await center.combineAndMergeAsAdmin(blocked) } }
                         Button("Cancel", role: .cancel) {}
