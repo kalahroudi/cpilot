@@ -15,6 +15,7 @@ struct ChatView: View {
     @State private var userScrolling = false
     /// Long transcripts show only the latest rows at first; laying out thousands of rows at once is what made opening a session slow and blank.
     @State private var shown = 60
+    @State private var dropping = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +28,15 @@ struct ChatView: View {
             Composer(session: session)
         }
         .background(Theme.pane)
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { CaptureCoordinator.shared.drop($0, into: session) }
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 12).stroke(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                    .background(Theme.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay { Label("Drop to attach", systemImage: "paperclip").font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.accent) }
+                    .padding(8).allowsHitTesting(false)
+            }
+        }
         .onAppear { session.loadInBackground() }
         .onChange(of: session.loaded) { _, now in if now { session.showRecapIfAway() } }
         .transition(.opacity)
@@ -541,7 +551,6 @@ struct Composer: View {
         .frame(maxWidth: 820)
         .frame(maxWidth: .infinity)
         .onPasteCommand(of: [.image, .fileURL]) { providers in CaptureCoordinator.shared.paste(providers, into: session) }
-        .dropDestination(for: URL.self) { urls, _ in CaptureCoordinator.shared.addFiles(urls, to: session); return !urls.isEmpty }
         .onAppear { focused = true }
         .onChange(of: session.draft) { _, _ in session.saveDraftSoon() }
         .sheet(isPresented: $delegate) { DelegateSheet(parent: session) }

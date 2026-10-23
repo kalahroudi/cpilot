@@ -83,9 +83,10 @@ final class CaptureCoordinator {
         }
     }
 
-    func paste(_ providers: [NSItemProvider], into s: SessionController) {
+    func paste(_ providers: [NSItemProvider], into s: SessionController, preferFile: Bool = false) {
         for p in providers {
-            if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            let isFile = p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) && !(preferFile && isFile) {
                 p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
                     guard let data, let png = NSImage(data: data)?.pngData() else { return }
                     Task { @MainActor in self.saveImage(png, to: s) }
@@ -94,6 +95,18 @@ final class CaptureCoordinator {
                 _ = p.loadObject(ofClass: URL.self) { url, _ in if let url { Task { @MainActor in self.addFiles([url], to: s) } } }
             }
         }
+    }
+
+    /// Dropped items: files keep their path (images included); images with no file behind them (from a browser or Photos) are saved as pasted ones.
+    func drop(_ providers: [NSItemProvider], into s: SessionController) -> Bool {
+        var took = false
+        for p in providers {
+            if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) || p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                took = true
+                paste([p], into: s, preferFile: true)
+            }
+        }
+        return took
     }
 
     func addFiles(_ urls: [URL], to s: SessionController?) {
