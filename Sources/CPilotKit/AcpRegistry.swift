@@ -66,6 +66,9 @@ public enum AcpRegistry {
                       version: "0.2.1-rc.2",
                       config: AcpAgentConfig(id: "deepseek-harness", name: "DeepSeek Harness (dsh)", command: "npx", args: ["-y", "@deepseek-ai/dsh@0.2.1-rc.2", "--profile", "acp"]),
                       needsRuntime: "npx"),
+        RegistryAgent(id: AgyAdapter.agentId, name: AgyAdapter.name,
+                      detail: "Google's Antigravity command line, run through an adapter CPilot installs (Node.js and agy come with it). Works on servers where the registry's Antigravity does not start, such as a Raspberry Pi 5. It cannot ask before each action, so Access decides what it may do: Full access runs commands, Edit files edits only, the rest only plans.",
+                      version: String(AgyAdapter.version), config: AgyAdapter.config, needsRuntime: nil),
     ]
 
     /// The registry's agents plus the extras it does not list, by name.

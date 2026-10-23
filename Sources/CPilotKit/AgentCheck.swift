@@ -8,13 +8,14 @@ public enum AgentCheck {
         public enum State: Equatable, Sendable { case ok, needsSignIn, notSetUp, failed }
         public var state: State
         public var detail: String
+        public init(state: State, detail: String) { self.state = state; self.detail = detail }
     }
 
     /// `agent` nil checks Claude. `env` nil checks this Mac. An agent that is not on the server yet is reported at once, not started.
     public static func run(_ agent: AcpAgentConfig?, on env: EnvironmentConfig?, timeout: TimeInterval = 60) async -> Result {
         guard let agent else { return await claude(on: env) }
-        if let env, !(await Provisioner.ready(agent, on: env)) {
-            return Result(state: .notSetUp, detail: "\(agent.name) is not set up on \(env.name) yet.")
+        if env != nil || agent.id == AgyAdapter.agentId, !(await Provisioner.ready(agent, on: env)) {
+            return Result(state: .notSetUp, detail: "\(agent.name) is not set up on \(env?.name ?? "this Mac") yet.")
         }
         return await start(agent, on: env, signIn: false, timeout: timeout)
     }
