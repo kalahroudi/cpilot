@@ -28,7 +28,11 @@ Today you start sessions one at a time and watch them. These ideas make a whole 
 
 - **Start from events.** A labelled GitHub issue, a failing check on your pull request, a review comment, a schedule or a command from the CLI starts a session with the right context, subject to the same approvals.
 - **A `cpilot` command line** to start, list, send to and wait on sessions from scripts and CI, mirroring the MCP tools.
-- **Approve from your phone.** A push notification with the approval card, so a fleet does not stall while you are away from your desk. Approvals stay signed by your Mac, and Full access is never remote.
+- **Control sessions from your phone.** A small page served by the Mac, off by default, reachable only over Tailscale (no cloud service, no account, nothing to install on the phone beyond adding the page to the Home Screen). Pair a device once with a QR code; each device gets its own revocable token.
+  - Start new work any time: pick a known repository, an agent and model, and a prompt, or start from a GitHub issue or a spec task. Every phone-started session gets its own worktree and branch, so your working folder is never touched.
+  - Watch sessions by state, read recent messages, send a message, stop one, and allow once or deny an approval card.
+  - Guardrails: access is capped at Edit files and Full access still needs Touch ID at the Mac; there is no "always allow" from the phone; only repositories CPilot already knows can be used; new sessions from remote devices are rate limited; every remote action is logged with the device name and the Mac notifies you when one starts.
+  - An optional notification (ntfy, which can be self-hosted) says only that a session needs you and links to the page, so no code leaves the Mac.
 - **A cost and time ledger** per session, task, spec and agent, so you can see which agents and prompts earn their cost.
 
 ## Local CI
