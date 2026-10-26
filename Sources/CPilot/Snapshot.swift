@@ -30,7 +30,7 @@ enum SnapshotMode {
 
     @MainActor static var shots: [Shot] {
         func manager(_ p: Pane, dark: Bool = false, agents: Bool = false) -> Shot {
-            Shot(name: "manager-\(p.rawValue)\(agents ? "-agents" : "")\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 1000, height: 700)) {
+            Shot(name: "manager-\(p.rawValue)\(agents ? "-agents" : "")\(dark ? "-dark" : "")", dark: dark, size: CGSize(width: 1400, height: 900)) {
                 Nav.shared.pane = p
                 return AnyView(ManagerView(agentsTab: agents))
             }
@@ -133,12 +133,14 @@ struct PopoverShot: View {
                 ChatItem(kind: .tool, title: "Grep", detail: "waitForResponse", status: .done, parent: "agent1"),
                 ChatItem(kind: .tool, title: "Read", detail: "tests/checkout.spec.ts", status: .done, parent: "agent1"),
                 ChatItem(kind: .tool, title: "Read", detail: "tests/helpers.ts", status: .running, parent: "agent1"),
+                ChatItem(kind: .assistant, text: "Run `npm test -- login` to watch it pass twenty times in a row.", status: .done),
                 ChatItem(id: "perm-demo", kind: .permission, text: "src/api/session.ts", title: "Edit", detail: "/Users/demo/code/shop/src/api/session.ts", status: .pending,
                          preview: EditPreview.encode(EditPreview.lines(tool: "Edit", inputJSON: #"{"file_path":"/x","old_string":"res.cookie('sid', id, { httpOnly: true })","new_string":"res.cookie('sid', id, { httpOnly: true, secure: true, sameSite: 'lax' })"}"#))),
             ]
             s.state = .waiting
             s.pending = []
             s.recapVisible = true
+            s.queued = [.init(text: "Then open a pull request for it", attachments: [])]
         }
         ws.controller(e.id)?.state = .running
         for (i, id) in [b.id, c.id].enumerated() { ws.controller(id)?.state = i == 0 ? .running : .idle }
@@ -198,5 +200,7 @@ struct PopoverShot: View {
         ib.mine = [GitHub.InboxItem(number: 223, title: "T003: Keep offset clients working", repository: .init(nameWithOwner: "octo/shop", name: "shop"), author: .init(login: "octo"), updatedAt: nil, url: "u", isDraft: false)]
 
         ws.memory.save(scope: MemoryStore.globalScope, name: "Writing style", body: "Plain language. Short sentences.")
+        ws.memory.save(scope: MemoryStore.scope(forProject: "/Users/demo/code/shop"), name: "Run the tests", body: "Use `npm test`. The login suite needs the local database up: `docker compose up -d db`.")
+        ws.memory.save(scope: MemoryStore.scope(forProject: "/Users/demo/code/shop"), name: "Pagination is cursor based", body: "List endpoints return `next_cursor`. Offset parameters stay for two releases, then go.")
     }
 }

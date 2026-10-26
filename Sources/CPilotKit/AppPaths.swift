@@ -8,8 +8,9 @@ public struct AppPaths: Sendable {
     public let root: URL
 
     public init(root: URL? = nil) {
-        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CPilot", isDirectory: true)
+        // CPILOT_DATA_DIR points the app at another data folder, so `--snapshot` never touches the user's own notes and sessions.
+        self.root = root ?? ProcessInfo.processInfo.environment["CPILOT_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CPilot", isDirectory: true)
     }
 
     public var updateDir: URL { root.appendingPathComponent("update", isDirectory: true) }

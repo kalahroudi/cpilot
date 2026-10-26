@@ -112,6 +112,7 @@ final class StackCenter {
 
     /// Shows what is known right away. Reads again only when that is older than 30 seconds, or when `force` says something changed.
     func open(_ r: PRCenter.Repo, force: Bool = false) async {
+        guard !AppModel.shared.demo else { return }
         if r != repo {
             repo = r; conflicts = []; error = nil; notice = nil
             let c = cache[cacheKey(r)]
@@ -123,7 +124,7 @@ final class StackCenter {
 
     /// Two steps, so the screen is useful early: the stacks and their pull requests as they are now, then the fetch and the check results.
     func refresh(manual: Bool = false) async {
-        guard let r = repo, !loading else { return }
+        guard let r = repo, !loading, !AppModel.shared.demo else { return }
         loading = true; defer { loading = false }
         // A restack resolved in its own folder (by Claude or by hand) is taken in first, and the rest of its stack follows.
         let resolved = await Exec.with(env) { () -> (landed: [String], problems: [String]) in
