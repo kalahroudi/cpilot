@@ -56,6 +56,7 @@ final class PRCenter {
     var currentRepo: Repo? { repoDir.map { Repo(dir: $0, environment: env?.id) } }
 
     func open(repo: String, environment: String? = nil) async {
+        guard !AppModel.shared.demo else { return }
         switchRepo(repo, environment)
         if let c = cache[cacheKey(repo, environment)], Date().timeIntervalSince(c.at) < 20 { return }
         await refreshList()
@@ -107,7 +108,7 @@ final class PRCenter {
 
     /// Reads the open list and the selected pull request again, after something outside this screen moved their branches.
     func refreshOpen() async {
-        guard repoDir != nil else { return }
+        guard repoDir != nil, !AppModel.shared.demo else { return }
         await Exec.with(env) {
             await refreshList()
             if let n = selected { await selectImpl(n) }
