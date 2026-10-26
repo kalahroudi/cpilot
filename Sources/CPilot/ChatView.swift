@@ -224,7 +224,11 @@ struct ChatRow: View {
     var body: some View {
         switch item.kind {
         case .user: UserBubble(item: item, project: session.meta.cwd).frame(maxWidth: .infinity, alignment: .trailing)
-        case .assistant: AssistantText(text: item.text, streaming: item.status == .running, project: session.meta.cwd)
+        case .assistant:
+            VStack(alignment: .leading, spacing: 4) {
+                AssistantText(text: item.text, streaming: item.status == .running, project: session.meta.cwd)
+                if item.status != .running { RunChips(text: item.text, session: session) }
+            }
         case .thinking: ThinkingRow(item: item)
         case .tool: ToolCard(item: item, children: children)
         case .permission: ApprovalCard(item: item, session: session)
