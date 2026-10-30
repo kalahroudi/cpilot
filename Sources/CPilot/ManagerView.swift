@@ -192,7 +192,10 @@ struct SessionsPane: View {
                 content
             }
         } else {
+            // The chat must always have its tab: re-check whenever the selection or the pane changes, not only when the strip first appears.
             VStack(spacing: 0) { TabStrip(); content }
+                .onChange(of: ws.selected) { ws.ensureSelectedTab() }
+                .onChange(of: nav.pane) { ws.ensureSelectedTab() }
         }
     }
 

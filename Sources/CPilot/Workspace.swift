@@ -617,6 +617,7 @@ final class Workspace {
 
     /// Back on the tab strip: the session on screen gets its tab, the rest stay as they were.
     func ensureSelectedTab() {
+        keepSelectionInRepo()
         guard let id = selected, !tabs.contains(id) else { return }
         tabs.append(id); persistTabs()
     }
@@ -638,7 +639,7 @@ final class Workspace {
     func closeTab(_ id: String) {
         controllers[id]?.close(); controllers[id] = nil
         tabs.removeAll { $0 == id }
-        if selected == id { selected = tabs.last; if let s = selected { controller(s)?.loadIfNeeded() } }
+        if selected == id { selected = tabs.last(where: inRepo); if let s = selected { controller(s)?.loadIfNeeded() } }
         persistTabs()
     }
 
