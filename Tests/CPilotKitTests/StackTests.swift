@@ -298,22 +298,30 @@ final class StackTests: XCTestCase {
         let remote = try await sh(["branch", "-r"]); XCTAssertTrue(remote.contains("origin/c"))
     }
 
-    func testSubmitRefusesToOverwriteCommitsOnOrigin() async throws {
+    func testSubmitKeepsCommitsThatOnlyOriginHas() async throws {
         try await buildStack()
         let host = FakeHost()
         var stack = await Stacks.load(in: dir, host: host)[0]
         _ = try await Stacks.submit(stack, in: dir, host: host)
-        // A review session adds a commit to c and pushes it; the stack's own c stays behind.
-        try await sh(["checkout", "c"]); let tip = try await sh(["rev-parse", "HEAD"])
-        try await commit("review.txt", "fix\n", "review fix"); try await sh(["push", "origin", "c"])
+        // A review session adds a commit to b and pushes it; the stack's own b stays behind, and c sits on top of the old b.
+        try await sh(["checkout", "b"]); let tip = try await sh(["rev-parse", "HEAD"])
+        try await commit("review.txt", "fix\n", "review fix"); try await sh(["push", "origin", "b"])
         let reviewed = try await sh(["rev-parse", "HEAD"])
         try await sh(["reset", "--hard", tip])
+        try await commit("mine.txt", "mine\n", "my own commit on b")
+        try await sh(["checkout", "c"])
         stack = await Stacks.load(in: dir, host: host)[0]
-        host.calls = []
-        do { _ = try await Stacks.submit(stack, in: dir, host: host); XCTFail("submit should refuse") }
-        catch let e as StackError { XCTAssertTrue(e.localizedDescription.contains("1 commit")) }
-        XCTAssertTrue(host.calls.isEmpty)
-        let remote = try await sh(["rev-parse", "origin/c"]); XCTAssertEqual(remote, reviewed)   // nothing was overwritten
+        _ = try await Stacks.submit(stack, in: dir, host: host)
+        for b in ["b", "c"] {
+            let files = try await sh(["ls-tree", "-r", "--name-only", "origin/\(b)"])
+            XCTAssertTrue(files.contains("review.txt"), "\(b) lost the review commit")
+        }
+        let bFiles = try await sh(["ls-tree", "-r", "--name-only", "origin/b"])
+        XCTAssertTrue(bFiles.contains("mine.txt"))
+        let contained = await Stacks.gitOK(["merge-base", "--is-ancestor", reviewed, "origin/c"], in: dir)
+        XCTAssertTrue(contained)
+        let after = await Stacks.load(in: dir, host: host)[0]
+        XCTAssertFalse(after.needsRestack)
     }
 
     func testMergeBottomRetargetsChildFirst() async throws {
