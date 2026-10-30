@@ -474,9 +474,48 @@ public enum Stacks {
         return String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Pushes every branch, creates or updates its pull request on top of its parent's, and writes the stack list into each.
+    /// Commits on origin whose change the local branch lacks (a review session pushed them, or a teammate did).
+    /// A restack rewrites commits legitimately, so only commits whose change is missing locally count.
+    static func remoteOnlyCommits(_ branch: String, in dir: String) async -> Int {
+        guard await gitOK(["fetch", "origin", branch], in: dir), await gitOK(["rev-parse", "--verify", "-q", "refs/remotes/origin/\(branch)"], in: dir) else { return 0 }
+        return ((try? await git(["cherry", branch, "origin/\(branch)"], in: dir)) ?? "").split(separator: "\n").filter { $0.hasPrefix("+") }.count
+    }
+
+    /// Takes origin's commits into each local branch before anything is pushed, so the force push can never delete them.
+    /// The branch is rebased in a folder of its own (your own commits go on top), then the branches above it follow.
+    /// Returns the stack as it is afterwards. A conflict stops here like a restack conflict does, and nothing is pushed.
+    static func takeInRemoteWork(_ stack: Stack, in dir: String, host: StackHost) async throws -> Stack {
+        var current = stack
+        for name in stack.branches.filter({ !$0.isMerged }).map(\.name) {
+            guard await remoteOnlyCommits(name, in: dir) > 0, let b = current.branches.first(where: { $0.name == name }) else { continue }
+            if let folder = await checkoutFolder(of: name, in: dir), !(try await git(["status", "--porcelain", "--untracked-files=no"], in: folder)).isEmpty {
+                throw StackError.message("\(name) has commits on origin that are not here, and uncommitted changes in \(folder). Commit or stash them there, then submit again.")
+            }
+            let parent = current.branches.first(where: { $0.name == b.parent && !$0.isMerged })?.name ?? current.trunk
+            let parentTip = try await git(["rev-parse", parent], in: dir)
+            let oldTip = try await git(["rev-parse", name], in: dir)
+            let job = try await startJob(branch: name, oldTip: oldTip, newBase: parentTip, parent: parent, in: dir)
+            let r = try await Shell.run("git", ["rebase", "origin/\(name)"], cwd: cwd(job.path), timeout: 120)
+            if !r.ok {
+                guard await rebaseInProgress(in: job.path) else {
+                    await dropJob(job, in: dir)
+                    throw StackError.message("Could not take in origin's commits on \(name): \(r.stderr.split(separator: "\n").first.map(String.init) ?? "git could not rebase it.")")
+                }
+                throw StackError.conflict(branch: name, files: await conflictedFiles(in: job.path))
+            }
+            try await land(job, in: dir)
+            // The branches above were built on the old tip; move them onto the new one before looking at the next branch.
+            guard let fresh = await load(in: dir, host: host).first(where: { $0.id == stack.id }) else { break }
+            try await restack(fresh, in: dir)
+            current = await load(in: dir, host: host).first(where: { $0.id == stack.id }) ?? fresh
+        }
+        return current
+    }
+
+    /// Takes in anything origin has that the branches lack, then pushes every branch, creates or updates its pull request on top of its parent's, and writes the stack list into each.
     @discardableResult
-    public static func submit(_ stack: Stack, in dir: String, host: StackHost, draft: Bool = false) async throws -> [String: Int] {
+    public static func submit(_ original: Stack, in dir: String, host: StackHost, draft: Bool = false) async throws -> [String: Int] {
+        let stack = try await takeInRemoteWork(original, in: dir, host: host)
         var numbers: [String: Int] = [:]
         for b in stack.branches where !b.isMerged { numbers[b.name] = b.pr }
         for b in stack.branches where !b.isMerged {
