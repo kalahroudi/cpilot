@@ -298,6 +298,24 @@ final class StackTests: XCTestCase {
         let remote = try await sh(["branch", "-r"]); XCTAssertTrue(remote.contains("origin/c"))
     }
 
+    func testSubmitRefusesToOverwriteCommitsOnOrigin() async throws {
+        try await buildStack()
+        let host = FakeHost()
+        var stack = await Stacks.load(in: dir, host: host)[0]
+        _ = try await Stacks.submit(stack, in: dir, host: host)
+        // A review session adds a commit to c and pushes it; the stack's own c stays behind.
+        try await sh(["checkout", "c"]); let tip = try await sh(["rev-parse", "HEAD"])
+        try await commit("review.txt", "fix\n", "review fix"); try await sh(["push", "origin", "c"])
+        let reviewed = try await sh(["rev-parse", "HEAD"])
+        try await sh(["reset", "--hard", tip])
+        stack = await Stacks.load(in: dir, host: host)[0]
+        host.calls = []
+        do { _ = try await Stacks.submit(stack, in: dir, host: host); XCTFail("submit should refuse") }
+        catch let e as StackError { XCTAssertTrue(e.localizedDescription.contains("1 commit")) }
+        XCTAssertTrue(host.calls.isEmpty)
+        let remote = try await sh(["rev-parse", "origin/c"]); XCTAssertEqual(remote, reviewed)   // nothing was overwritten
+    }
+
     func testMergeBottomRetargetsChildFirst() async throws {
         try await buildStack()
         let host = FakeHost()

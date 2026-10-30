@@ -474,11 +474,24 @@ public enum Stacks {
         return String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Commits on origin that the local branch lacks (a review session pushed them, or a teammate did) would be thrown away by the force push.
+    /// A restack rewrites commits legitimately, so only commits whose change is missing locally count. Checked for every branch before any push.
+    static func refuseToDiscardRemoteWork(_ stack: Stack, in dir: String) async throws {
+        for b in stack.branches where !b.isMerged {
+            guard await gitOK(["fetch", "origin", b.name], in: dir), await gitOK(["rev-parse", "--verify", "-q", "refs/remotes/origin/\(b.name)"], in: dir) else { continue }
+            let missing = ((try? await git(["cherry", b.name, "origin/\(b.name)"], in: dir)) ?? "").split(separator: "\n").filter { $0.hasPrefix("+") }
+            if !missing.isEmpty {
+                throw StackError.message("origin/\(b.name) has \(missing.count) commit\(missing.count == 1 ? "" : "s") that \(b.name) does not (for example from a review session). Submitting would delete them. Bring them in first: git checkout \(b.name) && git pull --rebase origin \(b.name).")
+            }
+        }
+    }
+
     /// Pushes every branch, creates or updates its pull request on top of its parent's, and writes the stack list into each.
     @discardableResult
     public static func submit(_ stack: Stack, in dir: String, host: StackHost, draft: Bool = false) async throws -> [String: Int] {
         var numbers: [String: Int] = [:]
         for b in stack.branches where !b.isMerged { numbers[b.name] = b.pr }
+        try await refuseToDiscardRemoteWork(stack, in: dir)
         for b in stack.branches where !b.isMerged {
             try await git(["push", "--force-with-lease", "-u", "origin", b.name], in: dir, timeout: 120)
             let base = stack.branches.first(where: { $0.name == b.parent && !$0.isMerged })?.name ?? stack.trunk
