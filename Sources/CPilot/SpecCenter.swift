@@ -278,7 +278,13 @@ final class SpecCenter {
     // MARK: Starting new work
 
     func start(_ source: SpecSource, autonomy: Autonomy, allowGit: Bool = false) async {
-        guard let r = repo else { return }
+        guard let id = await begin(source, autonomy: autonomy, allowGit: allowGit) else { return }
+        await run(id, .specify, requirement: source.requirement, label: source.label, images: source.images)
+    }
+
+    /// Creates the spec's folder and its first job, and returns its id. The specify stage is left to the caller.
+    func begin(_ source: SpecSource, autonomy: Autonomy, allowGit: Bool = false) async -> String? {
+        guard let r = repo else { return nil }
         let e = env
         let number = Specs.nextNumber(existing: docs.map(\.id) + archived)
         let id = Specs.folderName(number: number, title: source.title)
@@ -287,13 +293,13 @@ final class SpecCenter {
                 if constitution == nil { try await Specs.write("\(Specs.folder)/constitution.md", Specs.defaultConstitution, in: r.dir, tracked: tracked) }
                 try await Specs.write("\(Specs.folder)/\(id)/source.md", "> Source: \(source.label)\n\n\(source.requirement)\n", in: r.dir, tracked: tracked)
             }
-        } catch { AppModel.shared.failQuietly(error, action: "Create the spec"); return }
+        } catch { AppModel.shared.failQuietly(error, action: "Create the spec"); return nil }
         if allowGit, autonomy == .hands { Workspace.shared.allowCommands(["git add", "git commit", "git status", "git diff"], for: r.dir) }
         await refresh()
         selected = id
         jobs[id] = Job(autonomy: autonomy)
         saveRun(id)
-        await run(id, .specify, requirement: source.requirement, label: source.label, images: source.images)
+        return id
     }
 
     // MARK: Stages

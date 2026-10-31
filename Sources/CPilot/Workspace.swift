@@ -212,8 +212,9 @@ final class SessionController: Identifiable {
         c.fork = meta.forkPending == true
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
-        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance].compactMap { $0 }.joined(separator: "\n\n")
+        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd) : nil].compactMap { $0 }.joined(separator: "\n\n")
         if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
+        if meta.chief == true, env == nil { c.mcpConfigPath = ChiefPilot.mcpConfig(server: AgentIntegrations.serverPath(), session: id, existing: c.mcpConfigPath) }
         if let env {
             // On a server. A server-held agent that is still running is joined, not started again.
             if env.persistent {
@@ -700,12 +701,14 @@ final class Workspace {
         var handoff: String?
         var environment: String?
         var title: String?
+        var chief = false
     }
 
     @discardableResult
     func create(_ n: NewSession) async throws -> SessionController {
         var meta = SessionMeta(title: n.title ?? "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
         meta.parentId = n.parentId; meta.handoff = n.handoff; meta.environment = n.environment
+        if n.chief { meta.chief = true }
         let remote = environment(n.environment)
         let isRepo = await Exec.with(remote) { await Git.isRepo(n.folder) }
         if let wanted = n.branch, !wanted.isEmpty, isRepo {
@@ -773,6 +776,21 @@ final class Workspace {
                            useWorktree: isRepo && worktree, firstMessage: prompt, parentId: parent.id,
                            handoff: ContextDigest.handoff(ContextDigest.build(items: parent.items), from: parent.meta.title))
         return try await create(n)
+    }
+
+    /// The repository's chief pilot, if one is open. There is one per repository.
+    func chiefSession(repo: String, environment: String?) -> SessionMeta? {
+        sessions.first { $0.chief == true && !$0.archived && $0.cwd == repo && $0.environment == environment }
+    }
+
+    /// Opens the repository's chief pilot, starting it the first time. Read only by access level: it directs other sessions and never edits files.
+    @discardableResult
+    func openChief(repo: String, environment: String?) async throws -> SessionController {
+        guard environment == nil else { throw ShellError.failed(command: "chief pilot", status: 1, stderr: "The chief pilot works on repositories on this Mac. CPilot's tools are not available on a server.") }
+        if let m = chiefSession(repo: repo, environment: environment), let c = controller(m.id) { select(m.id); return c }
+        let c = try await create(NewSession(folder: repo, access: .askFirst, environment: environment, title: "\(ChiefPilot.title) · \(URL(fileURLWithPath: repo).lastPathComponent)", chief: true))
+        c.addNotice("This is the chief pilot for this repository. Tell it the outcome you want; it writes the spec, starts the tasks, and takes the stack to merged pull requests. It asks you before it pushes or merges.")
+        return c
     }
 
     func session(forBranch branch: String, repo: String, environment: String?) -> SessionMeta? {

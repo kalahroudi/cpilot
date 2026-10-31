@@ -58,6 +58,11 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
 
     /// Decide one tool request without bothering the user when the rules already answer it.
     public func decide(_ req: PermissionRequest, session: SessionMeta, sessionGrants: Set<String> = []) -> AccessDecision {
+        if session.chief == true {
+            // CPilot's own tools ask the user where it matters (pushing, merging), so they run here without a card. Nothing else may change anything.
+            if req.tool.hasPrefix(ChiefPilot.toolPrefix) { return .allow(reason: "Chief pilot") }
+            if !Self.readTools.contains(req.tool) { return .deny(reason: "The chief pilot directs other sessions; it does not edit files or run commands itself.") }
+        }
         let level = level(for: session)
         if level == .fullAccess { return .allow(reason: "Full access") }
         if level == .readOnly, !Self.readTools.contains(req.tool) { return .deny(reason: "This session is read only.") }

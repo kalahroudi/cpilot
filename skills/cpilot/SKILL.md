@@ -36,6 +36,10 @@ CPilot is a menu bar app that runs AI coding sessions for the user, with notes i
 | `send_message {session_id, text}` | yes, user approves in the app |
 | `delete_session {session_id, confirm_title}` | yes, ask the user first |
 
+## The chief pilot
+
+Inside a CPilot chief pilot session (opened from the Specs pane) these extra tools drive the repository: `spec_create`, `spec_stage`, `spec_job`, `spec_approve`, `task_start`, `stack_restack`, `stack_submit` and `pr_merge`. Everywhere else they answer that they are only available there. `stack_submit` and `pr_merge` ask the user in the app; never retry after a decline.
+
 ## Installing CPilot (ask the user first)
 
 Only install when `/Applications/CPilot.app` does not exist.

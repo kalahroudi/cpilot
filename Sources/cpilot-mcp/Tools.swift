@@ -52,7 +52,7 @@ private let memory = MemoryStore(index: MemoryIndex())
 private func int(_ a: Args, _ k: String, _ d: Int) -> Int { (a[k] as? Int) ?? d }
 
 /// Asks the running CPilot app to do something. The app asks the user first.
-private func control(_ path: String, _ body: [String: Any]) async throws -> String {
+private func control(_ path: String, _ body: [String: Any], timeout: TimeInterval = 120) async throws -> String {
     guard let data = try? Data(contentsOf: AppPaths().controlFile),
           let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let port = info["port"] as? Int, let token = info["token"] as? String,
@@ -60,7 +60,7 @@ private func control(_ path: String, _ body: [String: Any]) async throws -> Stri
         throw ToolError(message: "CPilot is not running. Open CPilot and try again.")
     }
     var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
-    req.httpMethod = "POST"; req.timeoutInterval = 120
+    req.httpMethod = "POST"; req.timeoutInterval = timeout
     req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     req.httpBody = try JSONSerialization.data(withJSONObject: body)
     guard let (out, resp) = try? await URLSession.shared.data(for: req) else { throw ToolError(message: "CPilot is not running. Open CPilot and try again.") }
@@ -155,6 +155,30 @@ let allTools: [Tool] = {
         store.delete(id)
         return "Deleted \(m.title)."
     })
+
+    // The chief pilot's tools. They exist for every client but only work in a chief pilot session (the app starts its MCP server with that session's id).
+    // The app checks the session on every call and asks the user before pushing or merging.
+    func chief(_ action: ChiefPilot.Action, _ description: String, _ properties: [String: Any] = [:], required: [String] = []) {
+        t.append(Tool(name: action.rawValue, description: description + " Only the chief pilot session can use this.", properties: properties, required: required) { a in
+            guard let sid = ProcessInfo.processInfo.environment[ChiefPilot.sessionEnvironment] else { throw ToolError(message: "This tool is only available in a CPilot chief pilot session.") }
+            var body = a; body["session_id"] = sid
+            return try await control("/v1/chief/\(action.rawValue)", body, timeout: 600)
+        })
+    }
+    let specId = prop("string", "Spec id from list_specs, such as 014-cursor-pagination.")
+    let stackBranch = prop("string", "A branch of the stack you mean. Optional when the repository has one stack.")
+    chief(.specCreate, "Start a new spec from a requirement. The spec is written in the background by a read-only agent; poll spec_job.",
+          ["title": prop("string", "Short title."), "requirement": prop("string", "What is wanted and why, with any constraints.")], required: ["title", "requirement"])
+    chief(.specStage, "Write the next document of a spec in the background. `answers` revises the spec with answers to its open questions.",
+          ["id": specId, "stage": prop("string", "Which document to write.", enumValues: ["specify", "plan", "tasks"]), "answers": prop("string", "Answers to the spec's open questions (specify only).")], required: ["id", "stage"])
+    chief(.specJob, "Where a spec stands: whether a stage is running, the draft waiting for approval, open questions, and each task with whether it is ready.", ["id": specId], required: ["id"])
+    chief(.specApprove, "Save the draft that spec_job shows as the spec, plan or tasks. Read it first. `text` replaces the draft with your edited version.",
+          ["id": specId, "text": prop("string", "Optional edited document.")], required: ["id"])
+    chief(.taskStart, "Start the tasks that are ready (or one task) as sessions on their own stacked branches, up to two at a time.",
+          ["id": specId, "task": prop("string", "One task id, such as T002. Omit to start everything that is ready.")], required: ["id"])
+    chief(.stackRestack, "Rebase the branches of a stack onto their parents and the trunk.", ["branch": stackBranch])
+    chief(.stackSubmit, "Push a stack's branches and open or update its pull requests, each on top of its parent. The user is asked to approve it in CPilot.", ["branch": stackBranch])
+    chief(.prMerge, "Merge the lowest open pull request of a stack, only if its checks and the merge rules pass, then restack the rest. Never an admin merge. The user is asked to approve it in CPilot.", ["branch": stackBranch])
 
     return t
 }()
