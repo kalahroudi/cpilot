@@ -64,6 +64,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var environment: String?
     /// The repository's chief pilot: it directs specs, stacks and pull requests through CPilot's tools and does not edit files itself.
     public var chief: Bool?
+    /// The pull request this session was assigned to review and fix (by the chief pilot).
+    public var reviewOf: Int?
     /// How much of a server-held agent's output CPilot has already seen.
     public var remoteLines: Int?
     public var createdAt: Date

@@ -43,13 +43,19 @@ enum ChiefDriver {
             return (200, ["id": id, "status": "Writing the \(stage.rawValue). Call spec_job until running is false, then read the draft."])
 
         case .specJob:
-            guard let id = text("id"), let d = specs.doc(id) else { return fail("No such spec.") }
-            return (200, job(specs, d))
+            guard let id = text("id"), specs.doc(id) != nil else { return fail("No such spec.") }
+            await wait(body) { specs.jobs[id]?.running != true }
+            return (200, job(specs, specs.doc(id)!))
 
         case .specApprove:
             guard let id = text("id"), let d = specs.doc(id) else { return fail("No such spec.") }
             guard let draft = specs.jobs[id]?.draft else { return fail("There is no draft waiting. Run a stage with spec_stage first.") }
-            await specs.approve(id, text: text("text") ?? draft.text)
+            let final = text("text") ?? draft.text
+            let open = draft.stage == .specify ? Specs.openQuestions(final) : []
+            if !open.isEmpty, body["accept_open_questions"] as? Bool != true {
+                return fail("The spec still has open questions:\n- " + open.joined(separator: "\n- ") + "\nAsk the user, then run spec_stage with `answers`. If the user told you to decide for them, call spec_approve again with accept_open_questions: true.")
+            }
+            await specs.approve(id, text: final)
             var out = job(specs, specs.doc(id) ?? d)
             out["saved"] = draft.stage.rawValue
             return (200, out)
@@ -70,8 +76,58 @@ enum ChiefDriver {
             let after = Set(Specs.ready(specs.doc(id)?.tasks ?? [], merged: specs.merged, coded: specs.coded).map(\.id))
             return (200, ["started": before.map(\.id).filter { !after.contains($0) }, "sessions": "Watch them with list_sessions and get_session."])
 
+        case .prReview:
+            guard let n = body["pr"] as? Int else { return fail("pr (the pull request number) is required.") }
+            guard let pr = try? await GitHub.view(n, in: repo.dir), pr.isOpen else { return fail("#\(n) is not an open pull request of this repository.") }
+            if let m = reviewer(of: n, in: repo), Workspace.shared.controller(m.id)?.isBusy == true { return fail("#\(n) already has a reviewer working on it.") }
+            do {
+                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName),
+                                                               title: "Review #\(n)", readOnly: false, show: false, reviewOf: n)
+                return (200, ["session_id": c.id, "status": "A reviewer is working on #\(n). Call pr_reviews with wait_seconds to follow it."])
+            } catch { return fail("Could not start the reviewer: \(error.localizedDescription)") }
+
+        case .prReviews:
+            await wait(body) { !Workspace.shared.sessions.filter { $0.reviewOf != nil && $0.cwd == repo.dir }.contains { Workspace.shared.controller($0.id)?.isBusy == true } }
+            let open = (try? await GitHub.list(in: repo.dir)) ?? []
+            return (200, ["pullRequests": open.map { pr -> [String: Any] in
+                var r: [String: Any] = ["pr": pr.number, "title": pr.title, "branch": pr.headRefName]
+                guard let m = reviewer(of: pr.number, in: repo) else { r["reviewer"] = "none"; return r }
+                r["session_id"] = m.id
+                r["reviewer"] = reviewState(m)
+                if let last = Workspace.shared.store.items(m.id, limit: 40).last(where: { $0.kind == .assistant && $0.status == .done }) { r["report"] = String(last.text.prefix(1500)) }
+                return r
+            }])
+
         case .stackRestack, .stackSubmit, .prMerge:
             return await stackAction(action, body, repo: repo, approve: approve)
+        }
+    }
+
+    /// Waits up to `wait_seconds` (at most 90) for `done`, so the chief pilot does not have to poll.
+    private static func wait(_ body: [String: Any], until done: () -> Bool) async {
+        let limit = min(max((body["wait_seconds"] as? Int) ?? 0, 0), 90)
+        var waited = 0
+        while waited < limit, !done() { try? await Task.sleep(for: .seconds(2)); waited += 2 }
+    }
+
+    /// The newest reviewer session assigned to a pull request.
+    private static func reviewer(of n: Int, in repo: PRCenter.Repo) -> SessionMeta? {
+        Workspace.shared.sessions.filter { $0.reviewOf == n && $0.cwd == repo.dir }.max { $0.updatedAt < $1.updatedAt }
+    }
+
+    private static func reviewState(_ m: SessionMeta) -> String {
+        guard let c = Workspace.shared.controller(m.id) else { return "done" }
+        if case .failed(let why) = c.state { return "failed: \(why)" }
+        return c.isBusy ? "working" : "done"
+    }
+
+    /// A pull request merges only after its reviewer has finished. Nil means it may go ahead.
+    private static func reviewProblem(_ n: Int, in repo: PRCenter.Repo) -> String? {
+        guard let m = reviewer(of: n, in: repo) else { return "#\(n) has no reviewer. Assign one with pr_review {pr: \(n)} and wait for it to finish." }
+        switch reviewState(m) {
+        case "working": return "#\(n)'s reviewer is still working. Wait with pr_reviews and wait_seconds."
+        case "done": return nil
+        default: return "#\(n)'s reviewer \(reviewState(m)). Read its session, then assign another with pr_review."
         }
     }
 
@@ -127,6 +183,7 @@ enum ChiefDriver {
             await sc.submit(stack)
         default:
             guard let bottom = stack.bottomOpen, let n = bottom.pr else { return fail("Nothing is open to merge. Submit the stack first.") }
+            if let problem = reviewProblem(n, in: repo) { return fail(problem) }
             guard await approve("The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(bottom.title ?? bottom.name) into \(stack.trunk)\nIt is merged only if its checks pass and the merge rules allow it.") else { return fail("The user declined.", 403) }
             await sc.mergeBottom(stack)
         }

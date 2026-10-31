@@ -171,14 +171,17 @@ let allTools: [Tool] = {
           ["title": prop("string", "Short title."), "requirement": prop("string", "What is wanted and why, with any constraints.")], required: ["title", "requirement"])
     chief(.specStage, "Write the next document of a spec in the background. `answers` revises the spec with answers to its open questions.",
           ["id": specId, "stage": prop("string", "Which document to write.", enumValues: ["specify", "plan", "tasks"]), "answers": prop("string", "Answers to the spec's open questions (specify only).")], required: ["id", "stage"])
-    chief(.specJob, "Where a spec stands: whether a stage is running, the draft waiting for approval, open questions, and each task with whether it is ready.", ["id": specId], required: ["id"])
+    let waitSeconds = prop("integer", "Wait up to this many seconds (at most 90) for the work to stop before answering, instead of calling again and again.")
+    chief(.specJob, "Where a spec stands: whether a stage is running, the draft waiting for approval, open questions, and each task with whether it is ready.", ["id": specId, "wait_seconds": waitSeconds], required: ["id"])
     chief(.specApprove, "Save the draft that spec_job shows as the spec, plan or tasks. Read it first. `text` replaces the draft with your edited version.",
-          ["id": specId, "text": prop("string", "Optional edited document.")], required: ["id"])
+          ["id": specId, "text": prop("string", "Optional edited document."), "accept_open_questions": prop("boolean", "Approve a spec that still has open questions. Only when the user told you to decide for them.")], required: ["id"])
     chief(.taskStart, "Start the tasks that are ready (or one task) as sessions on their own stacked branches, up to two at a time.",
           ["id": specId, "task": prop("string", "One task id, such as T002. Omit to start everything that is ready.")], required: ["id"])
+    chief(.prReview, "Assign a reviewer to an open pull request: a separate session that reviews the diff, fixes its findings, and commits and pushes the fixes to the pull request's own branch.", ["pr": prop("integer", "Pull request number.")], required: ["pr"])
+    chief(.prReviews, "Each open pull request's reviewer: none, working, done or failed, with its last report.", ["wait_seconds": waitSeconds])
     chief(.stackRestack, "Rebase the branches of a stack onto their parents and the trunk.", ["branch": stackBranch])
     chief(.stackSubmit, "Push a stack's branches and open or update its pull requests, each on top of its parent. The user is asked to approve it in CPilot.", ["branch": stackBranch])
-    chief(.prMerge, "Merge the lowest open pull request of a stack, only if its checks and the merge rules pass, then restack the rest. Never an admin merge. The user is asked to approve it in CPilot.", ["branch": stackBranch])
+    chief(.prMerge, "Merge the lowest open pull request of a stack, only once its reviewer has finished and only if its checks and the merge rules pass, then restack the rest. Never an admin merge. The user is asked to approve it in CPilot.", ["branch": stackBranch])
 
     return t
 }()

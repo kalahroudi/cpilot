@@ -375,21 +375,29 @@ final class PRCenter {
 
     private func startSessionImpl(prompt: String, title: String, readOnly: Bool) async {
         guard let dir = repoDir, let pr = detail else { return }
+        do { _ = try await startSession(on: pr, dir: dir, prompt: prompt, title: title, readOnly: readOnly) }
+        catch { AppModel.shared.fail(error, action: "Start the session") }
+    }
+
+    /// A session on a pull request's branch, in a worktree of its own. `show: false` leaves the screen alone (the chief pilot starts these).
+    /// `reviewOf` marks it as the pull request's reviewer.
+    @discardableResult
+    func startSession(on pr: PullRequest, dir: String, prompt: String, title: String, readOnly: Bool, show: Bool = true, reviewOf: Int? = nil) async throws -> SessionController {
         let branch = "review-\(pr.number)-\(Int(Date().timeIntervalSince1970) % 100000)"
         let path = AppPaths().root.appendingPathComponent("worktrees/pr-\(pr.number)-\(branch)").path
-        do {
-            _ = try await Shell.check("git", ["fetch", "origin", pr.headRefName], cwd: URL(fileURLWithPath: dir), timeout: 120)
-            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try await Shell.check("git", ["worktree", "add", "-b", branch, path, "origin/\(pr.headRefName)"], cwd: URL(fileURLWithPath: dir))
-            let access: AccessLevel = readOnly ? .readOnly : (env == nil ? .fullAccess : .editFiles)
-            let meta = SessionMeta(title: title, cwd: dir, access: access, branch: pr.headRefName, worktree: path)
-            Workspace.shared.save(meta)
-            let c = Workspace.shared.controller(meta.id)!
-            c.loaded = true
-            Workspace.shared.select(meta.id)
-            c.draft = prompt; c.send()
-            AppDelegate.shared.showManager(pane: .sessions)
-        } catch { AppModel.shared.fail(error, action: "Start the session") }
+        _ = try await Shell.check("git", ["fetch", "origin", pr.headRefName], cwd: URL(fileURLWithPath: dir), timeout: 120)
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try await Shell.check("git", ["worktree", "add", "-b", branch, path, "origin/\(pr.headRefName)"], cwd: URL(fileURLWithPath: dir))
+        let access: AccessLevel = readOnly ? .readOnly : (env == nil ? .fullAccess : .editFiles)
+        var meta = SessionMeta(title: title, cwd: dir, access: access, branch: pr.headRefName, worktree: path)
+        meta.reviewOf = reviewOf
+        Workspace.shared.save(meta)
+        let c = Workspace.shared.controller(meta.id)!
+        c.loaded = true
+        if show { Workspace.shared.select(meta.id) }
+        c.draft = prompt; c.send()
+        if show { AppDelegate.shared.showManager(pane: .sessions) }
+        return c
     }
 }
 
