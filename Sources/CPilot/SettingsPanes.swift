@@ -62,11 +62,11 @@ struct AccessSettings: View {
                     }.buttonStyle(Pill(kind: .plain))
                 }
             }
-            if let repos = w.policy.specFullAccessRepos {
-                SettingsGroup("Spec sessions with Full access") {
+            if let repos = w.policy.specAskRepos {
+                SettingsGroup("Spec sessions without Full access") {
                     ForEach(repos, id: \.self) { r in
-                        SettingRow(r.replacingOccurrences(of: NSHomeDirectory(), with: "~"), "Task sessions started from specs here begin with no approval prompts. Each session can still be changed from its own header.") {
-                            Button("Turn off") { w.setSpecFullAccess(false, repo: r) }.buttonStyle(Pill(kind: .danger))
+                        SettingRow(r.replacingOccurrences(of: NSHomeDirectory(), with: "~"), "Task sessions started from specs here ask before running commands. Spec sessions start with Full access everywhere else.") {
+                            Button("Use Full access") { w.setSpecFullAccess(true, repo: r) }.buttonStyle(Pill(kind: .plain))
                         }
                     }
                 }

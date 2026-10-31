@@ -830,7 +830,7 @@ final class Workspace {
                    onTurnEnd: @escaping (SessionController) -> Void) async throws -> SessionController {
         let remote = self.environment(environment)
         var level: AccessLevel = policy.defaultLevel == .readOnly ? .editFiles : (policy.defaultLevel == .fullAccess ? .editFiles : policy.defaultLevel)
-        // Approved once for this repository; only the starting level, so each session can still be changed from its own header. Servers never get Full access.
+        // On unless turned off for this repository; only the starting level, so each session can still be changed from its own header. Servers never get Full access.
         if remote == nil, policy.specSessionsHaveFullAccess(repo) { level = .fullAccess }
         var meta = SessionMeta(title: title, cwd: repo, access: level, branch: branch)
         meta.environment = environment

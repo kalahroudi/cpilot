@@ -28,17 +28,17 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
     /// Anything outside the project folder asks, whatever the level (except Full access).
     public var askOutsideProject = true
     public var requireTouchIDForFullAccess = true
-    /// Repositories where the user approved Full access once for every session their specs start. Optional so older policy files still load.
-    public var specFullAccessRepos: [String]?
+    /// Repositories where the user turned off Full access for the sessions their specs start (it is on everywhere else). Optional so older policy files still load.
+    public var specAskRepos: [String]?
     public init() {}
 
-    public func specSessionsHaveFullAccess(_ repo: String) -> Bool { specFullAccessRepos?.contains(repo) ?? false }
+    public func specSessionsHaveFullAccess(_ repo: String) -> Bool { !(specAskRepos?.contains(repo) ?? false) }
 
     public mutating func setSpecFullAccess(_ on: Bool, repo: String) {
-        var l = specFullAccessRepos ?? []
+        var l = specAskRepos ?? []
         l.removeAll { $0 == repo }
-        if on { l.append(repo) }
-        specFullAccessRepos = l.isEmpty ? nil : l
+        if !on { l.append(repo) }
+        specAskRepos = l.isEmpty ? nil : l
     }
 
     static let readTools: Set<String> = ["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite", "ToolSearch"]
