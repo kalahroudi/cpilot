@@ -68,15 +68,15 @@ final class SessionTests: XCTestCase {
 
     func testSpecFullAccessRepos() throws {
         var pol = AccessPolicy()
-        XCTAssertFalse(pol.specSessionsHaveFullAccess("/code/shop"))
-        pol.setSpecFullAccess(true, repo: "/code/shop")
         XCTAssertTrue(pol.specSessionsHaveFullAccess("/code/shop"))
-        XCTAssertFalse(pol.specSessionsHaveFullAccess("/code/other"))
         pol.setSpecFullAccess(false, repo: "/code/shop")
-        XCTAssertNil(pol.specFullAccessRepos)
+        XCTAssertFalse(pol.specSessionsHaveFullAccess("/code/shop"))
+        XCTAssertTrue(pol.specSessionsHaveFullAccess("/code/other"))
+        pol.setSpecFullAccess(true, repo: "/code/shop")
+        XCTAssertNil(pol.specAskRepos)
         // An older policy file without the key still loads.
         let old = try JSONDecoder().decode(AccessPolicy.self, from: JSONEncoder().encode(AccessPolicy()))
-        XCTAssertNil(old.specFullAccessRepos)
+        XCTAssertNil(old.specAskRepos)
     }
 
     func testPolicy() {

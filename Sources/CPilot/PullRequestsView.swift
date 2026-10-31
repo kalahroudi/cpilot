@@ -368,6 +368,7 @@ final class PRCenter {
     }
 
     /// Starts a session on the pull request's branch, in its own worktree, asking the agent to review or to fix a finding.
+    /// Full access unless `readOnly`; servers never get Full access, so they start with Edit files.
     func startSession(prompt: String, title: String, readOnly: Bool) async {
         await Exec.with(env) { await startSessionImpl(prompt: prompt, title: title, readOnly: readOnly) }
     }
@@ -380,8 +381,8 @@ final class PRCenter {
             _ = try await Shell.check("git", ["fetch", "origin", pr.headRefName], cwd: URL(fileURLWithPath: dir), timeout: 120)
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try await Shell.check("git", ["worktree", "add", "-b", branch, path, "origin/\(pr.headRefName)"], cwd: URL(fileURLWithPath: dir))
-            var meta = SessionMeta(title: title, cwd: dir, access: readOnly ? .readOnly : .editFiles, branch: pr.headRefName, worktree: path)
-            meta.access = readOnly ? .readOnly : .editFiles
+            let access: AccessLevel = readOnly ? .readOnly : (env == nil ? .fullAccess : .editFiles)
+            let meta = SessionMeta(title: title, cwd: dir, access: access, branch: pr.headRefName, worktree: path)
             Workspace.shared.save(meta)
             let c = Workspace.shared.controller(meta.id)!
             c.loaded = true
@@ -616,6 +617,7 @@ struct ReviewAndMerge: View {
     let center = PRCenter.shared
 
     @State private var choosing = false
+    @State private var readOnly = false
 
     private static let styles: [(MergeMethod, String)] = [(.merge, "Create a merge commit"), (.squash, "Squash and merge"), (.rebase, "Rebase and merge")]
 
@@ -627,10 +629,11 @@ struct ReviewAndMerge: View {
     }
 
     private var review: some View {
-        SettingRow("Review", "Ask an agent to read the change in a fresh read-only session, or review it yourself.", separator: false) {
+        SettingRow("Review", "Ask an agent to review the change in a fresh session with Full access (or read only, if you prefer), or review it yourself.", separator: false) {
             HStack(spacing: 6) {
+                Toggle("Read only", isOn: $readOnly).toggleStyle(.switch).tint(Theme.accent).font(.system(size: 12))
                 Button("Review with Claude") {
-                    Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: true) }
+                    Task { await center.startSession(prompt: "Review pull request #\(pr.number) (\(pr.title)). Run `git diff origin/\(pr.baseRefName)...HEAD` and report correctness bugs, risky changes and missing tests. Be specific with file and line.", title: "Review #\(pr.number)", readOnly: readOnly) }
                 }.buttonStyle(Pill(kind: .plain))
                 let own = pr.author?.login.caseInsensitiveCompare(AppModel.shared.github?.login ?? "") == .orderedSame   // GitHub refuses both on your own PR
                 AsyncButton("Approve") { await center.review(.approve) }.buttonStyle(Pill(kind: .plain)).disabled(own).help(own ? "You can't approve your own pull request." : "")

@@ -434,7 +434,7 @@ struct NewWorkSheet: View {
     @State private var shots: [String] = []
     @State private var autonomy = Autonomy(rawValue: Prefs.shared.specAutonomy) ?? .step
     @State private var allowGit = false
-    @State private var fullAccess = false
+    @State private var fullAccess = true
     @State private var busy = false
     @State private var error: String?
 
@@ -465,7 +465,7 @@ struct NewWorkSheet: View {
                 if autonomy == .hands { Toggle("Allow git add and git commit without asking in this project", isOn: $allowGit).toggleStyle(.switch).tint(Theme.accent).font(.system(size: 12)) }
                 if center.env == nil, center.repo != nil {
                     Toggle("Start this repository's spec sessions with Full access", isOn: $fullAccess).toggleStyle(.switch).tint(Theme.accent).font(.system(size: 12))
-                    Text(fullAccess ? "Every task session starts with no approval prompts, now and for later specs here. Needs Touch ID once. You can still change any session from its own header, and turn this off in Settings." : "Task sessions ask before running commands, so a build can stop on each one.")
+                    Text(fullAccess ? "Task sessions start with no approval prompts, now and for later specs here. You can still change any session from its own header." : "Task sessions ask before running commands, so a build can stop on each one. This repository stays this way until you turn it back on.")
                         .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
             }
@@ -523,10 +523,6 @@ struct NewWorkSheet: View {
         busy = true; error = nil; defer { busy = false }
         Prefs.shared.specAutonomy = autonomy.rawValue
         if entry != .folder, let dir = center.repo?.dir, center.env == nil, fullAccess != ws.policy.specSessionsHaveFullAccess(dir) {
-            if fullAccess, ws.policy.requireTouchIDForFullAccess {
-                let ok = await withCheckedContinuation { c in Biometrics.confirm("Start this repository's spec sessions without asking") { c.resume(returning: $0) } }
-                if !ok { return }
-            }
             ws.setSpecFullAccess(fullAccess, repo: dir)
         }
         var source: SpecSource?
