@@ -40,3 +40,16 @@ final class ChiefPilotTests: XCTestCase {
         for a in ChiefPilot.Action.allCases { XCTAssertTrue(g.contains(a.rawValue), a.rawValue) }
     }
 }
+
+final class ServerPathTests: XCTestCase {
+    func testAppBundleDevelopmentBuildAndFallback() throws {
+        XCTAssertEqual(AgentIntegrations.serverPath(bundlePath: "/Applications/CPilot.app", executableDir: nil), "/Applications/CPilot.app/Contents/MacOS/cpilot-mcp")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        XCTAssertEqual(AgentIntegrations.serverPath(bundlePath: "/x/.build/debug", executableDir: dir.path), "/Applications/CPilot.app/Contents/MacOS/cpilot-mcp")   // nothing built next to it
+        let exe = dir.appendingPathComponent("cpilot-mcp")
+        try "#!/bin/sh\n".write(to: exe, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+        XCTAssertEqual(AgentIntegrations.serverPath(bundlePath: "/x/.build/debug", executableDir: dir.path), exe.path)
+    }
+}

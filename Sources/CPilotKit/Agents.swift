@@ -39,8 +39,11 @@ public enum AgentIntegrations {
     public static let serverName = "cpilot"
 
     /// Where the MCP server lives: inside the installed app, or the bundle that is running now.
-    public static func serverPath(bundlePath: String = Bundle.main.bundlePath) -> String {
-        bundlePath.hasSuffix(".app") ? bundlePath + "/Contents/MacOS/cpilot-mcp" : "/Applications/CPilot.app/Contents/MacOS/cpilot-mcp"
+    public static func serverPath(bundlePath: String = Bundle.main.bundlePath, executableDir: String? = Bundle.main.executableURL?.deletingLastPathComponent().path) -> String {
+        if bundlePath.hasSuffix(".app") { return bundlePath + "/Contents/MacOS/cpilot-mcp" }
+        // A development build (`swift run`) has no bundle: use the server built next to it, not whatever is installed.
+        if let dir = executableDir, FileManager.default.isExecutableFile(atPath: dir + "/cpilot-mcp") { return dir + "/cpilot-mcp" }
+        return "/Applications/CPilot.app/Contents/MacOS/cpilot-mcp"
     }
 
     // MARK: Locations

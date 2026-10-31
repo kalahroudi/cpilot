@@ -130,7 +130,11 @@ enum ChiefDriver {
             guard await approve("The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(bottom.title ?? bottom.name) into \(stack.trunk)\nIt is merged only if its checks pass and the merge rules allow it.") else { return fail("The user declined.", 403) }
             await sc.mergeBottom(stack)
         }
-        if let e = sc.error { return fail(e) }
+        if let e = sc.error {
+            // The sentence on the card is deliberately vague; the chief pilot needs the cause to decide what to do.
+            let cause = AppModel.shared.report(forMessage: e)?.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return fail(cause.map { "\(e)\n\($0.prefix(1200))" } ?? e)
+        }
         return (200, ["ok": true, "note": sc.notice ?? "Done."])
     }
 }
