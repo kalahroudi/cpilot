@@ -157,7 +157,7 @@ let allTools: [Tool] = {
     })
 
     // The chief pilot's tools. They exist for every client but only work in a chief pilot session (the app starts its MCP server with that session's id).
-    // The app checks the session on every call and asks the user before pushing or merging.
+    // The app checks the session on every call and, when the chief pilot is set to ask, asks the user before pushing or merging.
     func chief(_ action: ChiefPilot.Action, _ description: String, _ properties: [String: Any] = [:], required: [String] = []) {
         t.append(Tool(name: action.rawValue, description: description + " Only the chief pilot session can use this.", properties: properties, required: required) { a in
             guard let sid = ProcessInfo.processInfo.environment[ChiefPilot.sessionEnvironment] else { throw ToolError(message: "This tool is only available in a CPilot chief pilot session.") }

@@ -20,8 +20,27 @@ final class ChiefPilotTests: XCTestCase {
         XCTAssertEqual(pol.decide(req("mcp__cpilot__spec_create"), session: s), .allow(reason: "Full access"))      // a normal session is unchanged
     }
 
-    func testOnlyPushAndMergeAsk() {
+    func testOnlyPushAndMergeCanAsk() {
         XCTAssertEqual(Set(ChiefPilot.Action.allCases.filter(\.needsApproval)), [.stackSubmit, .prMerge])
+    }
+
+    func testLeadingIsTheDefaultAndNeverAsks() {
+        for a in ChiefPilot.Action.allCases { XCTAssertFalse(a.requiresApproval(.leads), a.rawValue) }
+        XCTAssertTrue(ChiefPilot.Action.prMerge.requiresApproval(.asks)); XCTAssertTrue(ChiefPilot.Action.stackSubmit.requiresApproval(.asks))
+        XCTAssertFalse(ChiefPilot.Action.taskStart.requiresApproval(.asks))
+    }
+
+    func testGuidanceFollowsTheAutonomy() {
+        let leads = ChiefPilot.guidance(repo: "/r"), asks = ChiefPilot.guidance(repo: "/r", autonomy: .asks)
+        XCTAssertEqual(leads, ChiefPilot.guidance(repo: "/r", autonomy: .leads))          // leading is the default
+        XCTAssertTrue(leads.contains("accept_open_questions: true")); XCTAssertTrue(leads.contains("Do not ask the user for permission to push or merge"))
+        XCTAssertFalse(leads.contains("ask the user first"))
+        XCTAssertTrue(asks.contains("ask the user first")); XCTAssertFalse(asks.contains("Do not ask the user for permission"))
+        for g in [leads, asks] { XCTAssertTrue(g.contains("CPilot wakes you")) }
+    }
+
+    func testOnlyWorkStartingActionsNeedAWake() {
+        XCTAssertEqual(Set(ChiefPilot.Action.allCases.filter { !$0.startsWork }), [.specApprove, .specJob, .prReviews])
     }
 
     func testMcpConfigNamesTheSessionAndKeepsOtherServers() throws {

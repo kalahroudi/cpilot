@@ -50,6 +50,9 @@ final class Prefs {
     /// Stacks that change the same files are combined into one pull request by themselves.
     var autoCollapse: Bool { didSet { d.set(autoCollapse, forKey: "autoCollapse") } }
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
+    /// How much the chief pilot does without asking ("leads" or "asks"; see `ChiefPilot.Autonomy`).
+    var chiefAutonomy: String { didSet { d.set(chiefAutonomy, forKey: "chiefAutonomy") } }
+    var chiefMode: ChiefPilot.Autonomy { ChiefPilot.Autonomy(rawValue: chiefAutonomy) ?? .leads }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
     /// Where the local model server answers (mlxplayer by default).
@@ -72,7 +75,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -82,6 +85,7 @@ final class Prefs {
         localModelURL = d.string(forKey: "localModelURL") ?? SecurityCage.defaultModelURL
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
+        chiefAutonomy = d.string(forKey: "chiefAutonomy") ?? "leads"
         adminMergeAll = d.bool(forKey: "adminMergeAll")
         autoResolveConflicts = d.bool(forKey: "autoResolveConflicts")
         autoCollapse = d.bool(forKey: "autoCollapse")

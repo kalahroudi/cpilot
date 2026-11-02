@@ -212,7 +212,7 @@ final class SessionController: Identifiable {
         c.fork = meta.forkPending == true
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
-        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd) : nil].compactMap { $0 }.joined(separator: "\n\n")
+        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd, autonomy: Prefs.shared.chiefMode) : nil].compactMap { $0 }.joined(separator: "\n\n")
         if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
         if meta.chief == true, env == nil { c.mcpConfigPath = ChiefPilot.mcpConfig(server: AgentIntegrations.serverPath(), session: id, existing: c.mcpConfigPath) }
         if let env {
@@ -789,7 +789,7 @@ final class Workspace {
         guard environment == nil else { throw ShellError.failed(command: "chief pilot", status: 1, stderr: "The chief pilot works on repositories on this Mac. CPilot's tools are not available on a server.") }
         if let m = chiefSession(repo: repo, environment: environment), let c = controller(m.id) { select(m.id); return c }
         let c = try await create(NewSession(folder: repo, access: .askFirst, environment: environment, title: "\(ChiefPilot.title) · \(URL(fileURLWithPath: repo).lastPathComponent)", chief: true))
-        c.addNotice("This is the chief pilot for this repository. Tell it the outcome you want; it writes the spec, starts the tasks, and takes the stack to merged pull requests. It asks you before it pushes or merges.")
+        c.addNotice("This is the chief pilot for this repository. Tell it the outcome you want; it writes the spec, starts the tasks, and takes the stack to merged pull requests, carrying on by itself when work finishes. \(Prefs.shared.chiefMode == .asks ? "It asks you before it pushes or merges." : "It pushes and merges by itself once the reviewer and the checks allow it; you can change that in Settings.")")
         return c
     }
 

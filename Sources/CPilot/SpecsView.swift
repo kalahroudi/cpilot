@@ -27,7 +27,7 @@ struct SpecsView: View {
                     }.buttonStyle(.soft).disabled(center.loading).help(center.fresh ? "Refreshed recently; wait a minute to avoid GitHub rate limits" : "Refresh").accessibilityLabel("Refresh")
                     AsyncButton("Chief pilot") { guard let r = center.repo else { return }; do { try await Workspace.shared.openChief(repo: r.dir, environment: r.environment); Nav.shared.pane = .sessions } catch { AppModel.shared.show("\(error.localizedDescription)", error: true) } }
                         .buttonStyle(Pill(kind: .plain)).disabled(center.repo == nil)
-                        .help("Opens this repository's chief pilot: one session that writes the spec, starts the tasks and takes the stack to merged pull requests. It asks before it pushes or merges.")
+                        .help("Opens this repository's chief pilot: one session that writes the spec, starts the tasks and takes the stack to merged pull requests. It carries on by itself; Settings decides whether it asks before it pushes or merges.")
                     Button("New work") { center.preset = nil; center.newWork = true }.buttonStyle(Pill(kind: .primary)).disabled(center.repo == nil)
                 }
             }

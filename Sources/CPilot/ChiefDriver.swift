@@ -12,7 +12,24 @@ enum ChiefDriver {
 
     private static func fail(_ message: String, _ code: Int = 400) -> Reply { (code, ["error": message]) }
 
+    /// Asks the user when the chief pilot is set to ask; otherwise goes ahead and leaves a line in the audit log and a notification.
+    private static func permitted(_ action: ChiefPilot.Action, _ title: String, _ detail: String, approve: Approve) async -> Bool {
+        if action.requiresApproval(Prefs.shared.chiefMode) { return await approve(title, detail) }
+        Workspace.shared.audit.record(AuditEntry(session: "chief", tool: action.rawValue, summary: detail.replacingOccurrences(of: "\n", with: " "), outcome: "allowed (chief pilot leads)"))
+        return true
+    }
+
     static func handle(_ path: String, _ body: [String: Any], approve: Approve) async -> Reply {
+        let reply = await perform(path, body, approve: approve)
+        // Anything that starts work the chief pilot cannot wait inside of: CPilot wakes it when that work finishes.
+        if let action = ChiefPilot.Action(rawValue: String(path.dropFirst("/v1/chief/".count))), action.startsWork,
+           let sid = body["session_id"] as? String, let session = Workspace.shared.controller(sid) {
+            ChiefWaker.shared.expect(repo: session.meta.cwd)
+        }
+        return reply
+    }
+
+    private static func perform(_ path: String, _ body: [String: Any], approve: Approve) async -> Reply {
         guard let action = ChiefPilot.Action(rawValue: String(path.dropFirst("/v1/chief/".count))) else { return fail("Unknown action.") }
         guard let sid = body["session_id"] as? String, let session = Workspace.shared.controller(sid), session.meta.chief == true, session.meta.environment == nil else {
             return fail("Only a chief pilot session can do this.", 403)
@@ -178,7 +195,7 @@ enum ChiefDriver {
         let gate = await PRCenter.shared.gateFor(n, dir: repo.dir)
         guard gate.ready else { return fail("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
         let name = URL(fileURLWithPath: repo.dir).lastPathComponent
-        guard await approve("The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(pr.title) into \(pr.baseRefName)\nIt is merged only if its checks pass and the merge rules allow it.") else { return fail("The user declined.", 403) }
+        guard await permitted(.prMerge, "The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(pr.title) into \(pr.baseRefName)\nIt is merged only if its checks pass and the merge rules allow it.", approve: approve) else { return fail("The user declined.", 403) }
         do {
             // The head the reviewer and the gate saw: if the branch moves before GitHub merges, the merge is refused.
             try await GitHub.merge(n, method: sc.method, auto: false, expectedHead: pr.headRefOid, in: repo.dir)
@@ -211,12 +228,12 @@ enum ChiefDriver {
             await sc.restack(stack)
         case .stackSubmit:
             let names = stack.branches.filter { !$0.isMerged }.map(\.name)
-            guard await approve("The chief pilot wants to push and open pull requests", "Repository: \(name)\nBranches: \(names.joined(separator: ", "))\nThis force-pushes with a lease and opens or updates one pull request per branch.") else { return fail("The user declined.", 403) }
+            guard await permitted(.stackSubmit, "The chief pilot wants to push and open pull requests", "Repository: \(name)\nBranches: \(names.joined(separator: ", "))\nThis force-pushes with a lease and opens or updates one pull request per branch.", approve: approve) else { return fail("The user declined.", 403) }
             await sc.submit(stack)
         default:
             guard let bottom = stack.bottomOpen, let n = bottom.pr else { return fail("Nothing is open to merge. Submit the stack first.") }
             if let problem = reviewProblem(n, in: repo) { return fail(problem) }
-            guard await approve("The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(bottom.title ?? bottom.name) into \(stack.trunk)\nIt is merged only if its checks pass and the merge rules allow it.") else { return fail("The user declined.", 403) }
+            guard await permitted(.prMerge, "The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(bottom.title ?? bottom.name) into \(stack.trunk)\nIt is merged only if its checks pass and the merge rules allow it.", approve: approve) else { return fail("The user declined.", 403) }
             await sc.mergeBottom(stack)
         }
         if let e = sc.error {

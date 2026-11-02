@@ -11,15 +11,31 @@ public enum ChiefPilot {
     /// Set in the environment of the MCP server a chief session starts, so the app can tell which session is calling.
     public static let sessionEnvironment = "CPILOT_CHIEF_SESSION"
 
-    /// What the chief pilot can do. Pushing and merging show the user an approval first; the rest runs inside the rules the user already set.
+    /// How much the chief pilot does without asking. `leads` is the default: it carries the work through like a tech lead would, and the merge rules
+    /// (finished reviewer, passing checks, GitHub's own rules) are what stop a bad merge. `asks` shows an approval before it pushes or merges.
+    public enum Autonomy: String, CaseIterable, Sendable {
+        case leads, asks
+        public var label: String { self == .leads ? "Leads on its own" : "Ask before push and merge" }
+        public var detail: String {
+            self == .leads
+                ? "The chief pilot carries the work from spec to merged pull requests by itself, and tells you what it did. Reviewers, passing checks and GitHub's rules still gate every merge."
+                : "The chief pilot asks you before it pushes a stack and before it merges each pull request."
+        }
+    }
+
+    /// What the chief pilot can do. The rest runs inside the rules the user already set; pushing and merging also show an approval when the autonomy is `asks`.
     public enum Action: String, CaseIterable, Sendable {
         case specCreate = "spec_create", specStage = "spec_stage", specJob = "spec_job", specApprove = "spec_approve"
         case taskStart = "task_start", stackRestack = "stack_restack", stackSubmit = "stack_submit", prMerge = "pr_merge"
         case prReview = "pr_review", prReviews = "pr_reviews"
+        /// Pushes and merges are the actions that reach outside the machine or change the main branch.
         public var needsApproval: Bool { self == .stackSubmit || self == .prMerge }
+        /// Actions after which the chief pilot has nothing to do until background work finishes, so it ends its turn and has to be woken.
+        public var startsWork: Bool { self != .specApprove && self != .specJob && self != .prReviews }
+        public func requiresApproval(_ autonomy: Autonomy) -> Bool { autonomy == .asks && needsApproval }
     }
 
-    public static func guidance(repo: String) -> String {
+    public static func guidance(repo: String, autonomy: Autonomy = .leads) -> String {
         """
         You are the chief pilot of the repository at \(repo). The user gives you an outcome; you carry it through CPilot's specs, task sessions, stacked branches and pull requests, and you report back. You do not edit files or run commands yourself: the sessions you start do the coding.
 
@@ -29,18 +45,37 @@ public enum ChiefPilot {
         - spec_stage {id, stage: specify|plan|tasks, answers?}: write the next document. `answers` revises the spec with answers to its open questions.
         - spec_approve {id}: save the draft that spec_job shows. Read it first; if it is wrong, run the stage again with better instructions instead of approving it.
         - task_start {id, task?}: start the tasks that are ready (or one task) as sessions on stacked branches. Watch them with list_sessions and get_session; start more as they finish.
-        - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. pr_merge {pr} merges one pull request by number, including one that is not in a stack (it refuses while the pull request is built on another open one). stack_submit and pr_merge ask the user first; if they decline, stop and say so.
+        - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. pr_merge {pr} merges one pull request by number, including one that is not in a stack (it refuses while the pull request is built on another open one). \(autonomy == .asks ? "stack_submit and pr_merge ask the user first; if they decline, stop and say so." : "They run without asking, because the user chose to let you lead; the reviewer, checks and merge rules still decide whether a merge happens.")
         - pr_review {pr}: assign a reviewer to a pull request. It is a separate session that reviews the diff, fixes what it finds, and commits and pushes the fixes to the pull request's own branch. pr_reviews shows each open pull request's reviewer, whether it is still working, and what it reported.
 
-        How to work:
-        1. Understand the outcome. Ask the user only what the repository cannot answer; put open questions from the spec to them, do not guess for them.
-        2. Go in order: spec, plan, tasks, build, submit, merge. Read each document before approving it.
-        3. Every pull request gets a reviewer before it merges: after stack_submit, call pr_review for each pull request, then wait for the reviewers (pr_reviews with wait_seconds). pr_merge refuses until the pull request has a reviewer that has finished. If reviewers pushed fixes, call stack_submit again so the branches above take them in, then merge.
-        4. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, tell the user why and wait.
-        5. After each step, tell the user in one or two lines what happened and what comes next. When you are waiting on something, say what.
-        6. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops; use that instead of calling again and again.
-        7. If a spec has open questions, ask the user unless they told you to decide for them; spec_approve refuses until then.
+        \(howToWork(autonomy))
         """
+    }
+
+
+    private static func howToWork(_ autonomy: Autonomy) -> String {
+        let common = """
+        How to work:
+        1. Go in order: spec, plan, tasks, build, submit, review, merge. Read each document before approving it.
+        2. Every pull request gets a reviewer before it merges: after stack_submit, call pr_review for each pull request, then pr_reviews with wait_seconds. pr_merge refuses until the pull request has a reviewer that has finished. If reviewers pushed fixes, call stack_submit again so the branches above take them in, then merge.
+        3. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
+        4. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
+        5. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn with one line saying what you are waiting for. CPilot wakes you when that work finishes, and again from time to time while you wait. You do not need to stay in a long wait.
+        6. After each step, tell the user in one or two lines what happened and what comes next.
+        """
+        switch autonomy {
+        case .leads:
+            return common + """
+
+            7. You lead this work the way a tech lead would: nobody has to tell you the next step. After a task finishes, start what is ready; when every task has code, submit; when a reviewer finishes, merge from the bottom; keep going until everything is merged. Do not ask the user for permission to push or merge, and do not stop to report between steps. Report when something is merged, and at the end.
+            8. Decide open questions yourself: pick the simplest option that fits the repository, call spec_approve with accept_open_questions: true, and list what you decided in your next update so the user can object. Ask the user only when the outcome itself is unclear in a way that would waste a lot of work, or when you are blocked and cannot unblock yourself.
+            """
+        case .asks:
+            return common + """
+
+            7. Push and merge each show the user an approval. Ask only what the repository cannot answer; put a spec's open questions to the user and do not guess for them, unless they told you to decide. spec_approve refuses until open questions are answered.
+            """
+        }
     }
 
     /// What a reviewer session is told. It works on the pull request's own branch and pushes fixes straight to it.
