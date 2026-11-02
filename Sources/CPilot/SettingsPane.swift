@@ -114,6 +114,16 @@ struct SettingsPane: View {
                 SettingRow("Notes", "Plain Markdown notes every session starts with. Always on. Edit them in the Memory screen.") { Badge(text: "always on", kind: .ok) }
                 SettingRow("Recall from earlier sessions", "Finished messages are kept in a small local index on this Mac. A new session starts with the best matches for its first message. Nothing is sent anywhere.") { toggle($p.recall) }
                 if prefs.recall { RecallStatsRow() }
+                SettingRow("Learn from finished runs", "When a chief pilot run is over, CPilot reads what its reviewers caught and what failed, asks Claude (one small call, no tools) for the few lessons worth keeping, and adds them to a note called \"lessons-from-past-runs\" for that repository. Every later session there starts with it. A run with nothing to learn from makes no call. Edit or delete the note in Memory.") { toggle($p.learnLessons) }
+                if prefs.learnLessons {
+                    SettingRow("Learn from recent runs now", "Looks at the current repository's reviewer reports and failures since the last look, without waiting for a run to end.") {
+                        AsyncButton("Learn now") {
+                            guard let r = Project.shared.current, r.environment == nil else { AppModel.shared.show("Open a repository on this Mac first.", error: true); return }
+                            let o = await LessonLearner.shared.learn(repo: r.dir, manual: true)
+                            AppModel.shared.show(o.message, error: { if case .failed = o { return true } else { return false } }())
+                        }.buttonStyle(Pill(kind: .plain))
+                    }
+                }
                 SettingRow("Long-term memory engine", "Optional. Connects a memory engine over MCP so sessions can recall what earlier sessions learned.") {
                     Segmented(options: [("files", "Off"), ("engine", "On")], selection: $p.memoryEngine)
                 }
