@@ -125,7 +125,9 @@ final class ControlServer {
         let alert = NSAlert()
         alert.messageText = title; alert.informativeText = detail
         alert.addButton(withTitle: "Allow once"); alert.addButton(withTitle: "Deny")
-        let timeout = Task { try? await Task.sleep(for: .seconds(90)); if !Task.isCancelled { NSApp.abortModal() } }
+        // A dispatch timer, not a Task: while the dialog is up the main actor is busy inside runModal, so a main-actor Task would never get to run.
+        let timeout = DispatchWorkItem { MainActor.assumeIsolated { NSApp.abortModal() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
         let result = alert.runModal()
         timeout.cancel()
         return result == .alertFirstButtonReturn
