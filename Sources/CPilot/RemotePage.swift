@@ -24,7 +24,7 @@ enum RemotePage {
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;-webkit-text-size-adjust:100%}
     body{max-width:680px;margin:0 auto;padding:0 16px calc(84px + env(safe-area-inset-bottom))}
-    body.insession{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
+    body.insession{padding-bottom:calc(var(--comp-h,72px) + 16px)}
     .ic{display:inline-flex;width:20px;height:20px;flex:none}.ic svg{width:100%;height:100%}
     button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
     /* header */
@@ -77,9 +77,14 @@ enum RemotePage {
     .note{text-align:center;font-size:12px;color:var(--dim);margin:10px 0}.err{border:1px solid color-mix(in srgb,var(--bad) 50%,var(--line));color:var(--bad);border-radius:12px;padding:8px 12px;margin:8px 0;font-size:14px}
     .dots{display:inline-flex;gap:4px;padding:8px 2px}.dots i{width:7px;height:7px;border-radius:50%;background:var(--dim);animation:blink 1.2s infinite both}.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
     @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-    .comp{position:fixed;left:0;right:0;bottom:0;z-index:6;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
-    .comp .in{display:flex;gap:8px;align-items:flex-end;max-width:680px;margin:0 auto}
-    .comp textarea{min-height:44px;max-height:160px;border-radius:22px;padding:11px 16px;resize:none;background:var(--card);line-height:1.35}
+    .comp{position:fixed;left:0;right:0;bottom:var(--kb,0px);z-index:7;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:8px 12px calc(10px + env(safe-area-inset-bottom));transition:box-shadow .18s}
+    .comp .in{display:flex;gap:8px;align-items:flex-end;max-width:680px;margin:0 auto}.comp .box{flex:1;min-width:0}
+    .comp textarea{display:block;min-height:44px;max-height:132px;border-radius:22px;padding:11px 16px;resize:none;background:var(--card);line-height:1.35;transition:min-height .18s,border-radius .18s,border-color .18s}
+    .comp.open{box-shadow:0 -10px 34px rgba(0,0,0,.16)}
+    .comp.open textarea{min-height:112px;max-height:min(46dvh,360px);border-radius:18px;border-color:var(--accent)}
+    .comp .foot{display:none;align-items:center;gap:10px;max-width:680px;margin:8px auto 0;font-size:12px;color:var(--dim)}.comp.open .foot{display:flex}
+    .comp .enter{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:5px 11px;font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap}
+    .dim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:6}.dim.on{display:block}
     .send{width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;flex:none}.send:disabled{background:var(--soft);color:var(--dim)}
     /* markdown */
     .md{word-break:break-word}.md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
@@ -231,6 +236,7 @@ enum RemotePage {
       const repo=h("select",{},st.repos.map(r=>h("option",{value:r.dir},r.name))),agent=h("select",{},st.agents.map(a=>h("option",{value:a.id},a.name)));
       const prompt=h("textarea",{placeholder:"What should the agent do?"});
       repo.value=draftNew.repo||st.repos[0].dir;repo.onchange=()=>draftNew.repo=repo.value;prompt.value=draftNew.prompt||"";prompt.oninput=()=>draftNew.prompt=prompt.value;
+      prompt.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();go.click()}});
       const go=h("button",{class:"btn primary block",onclick:()=>act(async()=>{go.disabled=true;try{const j=await api("POST","/v1/sessions",{repo:repo.value,agent:agent.value,access,prompt:prompt.value});draftNew={};openSession(j.session_id)}finally{go.disabled=false}})},ic("bolt"),"Start session");
       return h("div",{},pageHeader("New session"),...approvalCards(),h("div",{class:"card"},
         ...field("Repository",repo),...(st.agents.length>1?field("Agent",agent):[]),
@@ -243,6 +249,7 @@ enum RemotePage {
       if(!st.repos.length)return h("div",{},pageHeader("Chief pilot"),h("div",{class:"empty"},ic("compass"),h("b",{},"No repositories yet"),"Open a repository in CPilot on the Mac first."));
       const repo=h("select",{},st.repos.map(r=>h("option",{value:r.dir},r.name))),text=h("textarea",{placeholder:"The outcome you want, in a few lines"});
       repo.value=draftNew.crepo||st.repos[0].dir;repo.onchange=()=>draftNew.crepo=repo.value;text.value=draftNew.ctext||"";text.oninput=()=>draftNew.ctext=text.value;
+      text.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();go.click()}});
       const go=h("button",{class:"btn primary block",onclick:()=>act(async()=>{go.disabled=true;try{const j=await api("POST","/v1/chief",{repo:repo.value,text:text.value});draftNew.ctext="";openSession(j.session_id)}finally{go.disabled=false}})},ic("compass"),"Send to chief pilot");
       const chiefs=st.sessions.filter(s=>s.chief);
       return h("div",{},pageHeader("Chief pilot"),...approvalCards(),h("div",{class:"card"},...field("Repository",repo),...field("Outcome",text),h("div",{class:"gap"}),go,
@@ -268,16 +275,38 @@ enum RemotePage {
       if(m.kind==="notice")return h("div",{class:"note"},m.text);
       return null;
     }
+    const pref=(k,d)=>{try{const v=localStorage.getItem(k);return v==null?d:v==="1"}catch(e){return d}};
+    const setPref=(k,v)=>{try{localStorage.setItem(k,v?"1":"0")}catch(e){}};
+    let enterSends=pref("enterSends",true);
     function mountSession(){
       const box=h("textarea",{placeholder:"Message",rows:1,id:"composer"});
-      const sendBtn=h("button",{class:"send",disabled:true,"aria-label":"Send"},ic("up"));
-      const grow=()=>{box.style.height="auto";box.style.height=Math.min(box.scrollHeight,160)+"px";sendBtn.disabled=!box.value.trim()};
-      const send=()=>act(async()=>{const t=box.value.trim();if(!t)return;box.value="";grow();await api("POST","/v1/sessions/"+open+"/messages",{text:t});setTimeout(()=>window.scrollTo(0,document.body.scrollHeight),50)});
-      box.addEventListener("input",grow);box.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();send()}});sendBtn.addEventListener("click",send);
-      shell={bar:h("div",{class:"sbar"}),perms:h("div"),list:h("div"),comp:h("div",{class:"comp"},h("div",{class:"in"},box,sendBtn)),box};
-      $("#app").replaceChildren(shell.bar,shell.perms,shell.list);document.body.append(shell.comp);
+      const sendBtn=h("button",{class:"send",disabled:true,"aria-label":"Send",onpointerdown:e=>e.preventDefault()},ic("up"));
+      const dim=h("div",{class:"dim",onpointerdown:e=>{e.preventDefault();box.blur()}});
+      const hint=h("span",{class:"grow"}),toggle=h("button",{class:"enter",type:"button",onpointerdown:e=>e.preventDefault()});
+      const foot=h("div",{class:"foot"},hint,toggle);
+      const comp=h("div",{class:"comp"},h("div",{class:"in"},h("div",{class:"box"},box),sendBtn),foot);
+      const paintEnter=()=>{box.setAttribute("enterkeyhint",enterSends?"send":"enter");hint.textContent=enterSends?"Enter sends · Shift+Enter for a new line":"Enter adds a new line · use the arrow to send";toggle.replaceChildren(ic("check"),enterSends?"Enter sends":"Enter = new line")};
+      toggle.addEventListener("click",()=>{enterSends=!enterSends;setPref("enterSends",enterSends);paintEnter();box.focus()});
+      const isOpen=()=>comp.classList.contains("open");
+      const grow=()=>{box.style.height="auto";const max=isOpen()?Math.min(window.innerHeight*.46,360):132;box.style.height=Math.min(box.scrollHeight,max)+"px";sendBtn.disabled=!box.value.trim()};
+      const expand=()=>{comp.classList.add("open");dim.classList.add("on");grow();setTimeout(()=>window.scrollTo(0,document.body.scrollHeight),60)};
+      const collapse=()=>{comp.classList.remove("open");dim.classList.remove("on");grow()};
+      const send=()=>act(async()=>{const t=box.value.trim();if(!t)return;box.value="";box.blur();collapse();await api("POST","/v1/sessions/"+open+"/messages",{text:t});setTimeout(()=>window.scrollTo(0,document.body.scrollHeight),50)});
+      box.addEventListener("focus",expand);
+      box.addEventListener("blur",()=>setTimeout(()=>{if(document.activeElement!==box)collapse()},120));
+      box.addEventListener("input",grow);
+      box.addEventListener("keydown",e=>{
+        if(e.isComposing||e.keyCode===229)return;                       // a word is still being composed (IME)
+        if(e.key==="Enter"&&(e.metaKey||e.ctrlKey||(enterSends&&!e.shiftKey&&!e.altKey))){e.preventDefault();send()}
+        else if(e.key==="Escape")box.blur();
+      });
+      sendBtn.addEventListener("click",send);
+      paintEnter();
+      const ro=window.ResizeObserver?new ResizeObserver(()=>document.documentElement.style.setProperty("--comp-h",comp.offsetHeight+"px")):null;if(ro)ro.observe(comp);
+      shell={bar:h("div",{class:"sbar"}),perms:h("div"),list:h("div"),comp,dim,box,ro};
+      $("#app").replaceChildren(shell.bar,shell.perms,shell.list);document.body.append(dim,comp);
     }
-    function unmountSession(){if(shell){shell.comp.remove();shell=null}}
+    function unmountSession(){if(shell){if(shell.ro)shell.ro.disconnect();shell.comp.remove();shell.dim.remove();shell=null}}
     function updateSession(){
       if(!shell)return;
       const s=st.sessions.find(x=>x.id===open),near=window.innerHeight+window.scrollY>=document.body.scrollHeight-160;
@@ -314,6 +343,8 @@ enum RemotePage {
       $("#app").replaceChildren(tab==="new"?newView():tab==="chief"?chiefView():tab==="me"?meView():boardView());
     }
     async function boot(){try{me=await api("GET","/v1/me");st=await api("GET","/v1/state");paired=true;connect();draw();paintNav()}catch(e){draw()}}
+    // Keep the composer above the on-screen keyboard (the layout viewport does not shrink on iOS, the visual one does).
+    if(window.visualViewport){const kb=()=>{const v=window.visualViewport;document.documentElement.style.setProperty("--kb",Math.max(0,window.innerHeight-v.height-v.offsetTop)+"px")};visualViewport.addEventListener("resize",kb);visualViewport.addEventListener("scroll",kb)}
     boot();
     </script></body></html>
     """#
