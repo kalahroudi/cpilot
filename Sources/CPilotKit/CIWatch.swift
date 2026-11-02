@@ -21,10 +21,11 @@ public struct CIPullRequest: Decodable, Equatable, Sendable {
     public var statusCheckRollup: [Item]?
     /// MERGEABLE, CONFLICTING, or UNKNOWN while GitHub is still working it out.
     public var mergeable: String?
-    public init(number: Int, title: String, url: String, headRefOid: String, statusCheckRollup: [Item]?, mergeable: String? = nil) {
-        self.number = number; self.title = title; self.url = url; self.headRefOid = headRefOid; self.statusCheckRollup = statusCheckRollup; self.mergeable = mergeable
+    public var headRefName: String?
+    public init(number: Int, title: String, url: String, headRefOid: String, statusCheckRollup: [Item]?, mergeable: String? = nil, headRefName: String? = nil) {
+        self.number = number; self.title = title; self.url = url; self.headRefOid = headRefOid; self.statusCheckRollup = statusCheckRollup; self.mergeable = mergeable; self.headRefName = headRefName
     }
-    public static let fields = "number,title,url,headRefOid,statusCheckRollup,mergeable"
+    public static let fields = "number,title,url,headRefOid,statusCheckRollup,mergeable,headRefName"
 }
 
 public enum CIVerdict: Equatable, Sendable {

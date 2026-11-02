@@ -702,6 +702,8 @@ final class Workspace {
         var environment: String?
         var title: String?
         var chief = false
+        /// Bring the new session to the front. A session started by a trigger or a phone leaves your screen alone.
+        var select = true
     }
 
     @discardableResult
@@ -737,7 +739,7 @@ final class Workspace {
         save(meta)
         let c = controller(meta.id)!
         c.loaded = true
-        select(meta.id)
+        if n.select { select(meta.id) }
         if !n.firstMessage.isEmpty { c.draft = n.firstMessage; c.send() }
         return c
     }
@@ -785,10 +787,10 @@ final class Workspace {
 
     /// Opens the repository's chief pilot, starting it the first time. Read only by access level: it directs other sessions and never edits files.
     @discardableResult
-    func openChief(repo: String, environment: String?) async throws -> SessionController {
+    func openChief(repo: String, environment: String?, show: Bool = true) async throws -> SessionController {
         guard environment == nil else { throw ShellError.failed(command: "chief pilot", status: 1, stderr: "The chief pilot works on repositories on this Mac. CPilot's tools are not available on a server.") }
-        if let m = chiefSession(repo: repo, environment: environment), let c = controller(m.id) { select(m.id); return c }
-        let c = try await create(NewSession(folder: repo, access: .askFirst, environment: environment, title: "\(ChiefPilot.title) · \(URL(fileURLWithPath: repo).lastPathComponent)", chief: true))
+        if let m = chiefSession(repo: repo, environment: environment), let c = controller(m.id) { if show { select(m.id) }; return c }
+        let c = try await create(NewSession(folder: repo, access: .askFirst, environment: environment, title: "\(ChiefPilot.title) · \(URL(fileURLWithPath: repo).lastPathComponent)", chief: true, select: show))
         c.addNotice("This is the chief pilot for this repository. Tell it the outcome you want; it writes the spec, starts the tasks, and takes the stack to merged pull requests, carrying on by itself when work finishes. \(Prefs.shared.chiefMode == .asks ? "It asks you before it pushes or merges." : "It pushes and merges by itself once the reviewer and the checks allow it; you can change that in Settings.")")
         return c
     }

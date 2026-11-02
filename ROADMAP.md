@@ -25,7 +25,7 @@ Today you start sessions one at a time and watch them. These ideas make a whole 
 
 **Triggers and reach**
 
-- **Start from events.** A labelled GitHub issue, a failing check on your pull request, a review comment, a schedule or a command from the CLI starts a session with the right context, subject to the same approvals. GitHub events are found by polling through your own login while the app runs, so there is no webhook server or public address.
+- **More triggers.** Schedules, labelled issues and failing checks are built (Settings, Triggers). Still to come: a review comment on your pull request, and starting a trigger from the command line or CI. GitHub events are found by polling through your own login while the app runs, so there is no webhook server or public address.
 - **A `cpilot` command line** to start, list, send to and wait on sessions from scripts and CI, mirroring the MCP tools.
 - **Phone control, what is left.** Phone control itself is built (Settings, Remote). Still to come:
   - A second way in: a Cloudflare tunnel with Cloudflare Access in front, for a phone that cannot run Tailscale. The server already listens on loopback only, so this is one more transport.
