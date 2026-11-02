@@ -25,7 +25,17 @@ struct RemoteSettings: View {
                     if let url = server.url { Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }.buttonStyle(Pill(kind: .plain)) }
                 }
             }
-            if server.url != nil {
+            if let url = server.url {
+                SettingsGroup("Open on your phone") {
+                    HStack(alignment: .center, spacing: 16) {
+                        if let img = Self.qr(url.absoluteString) { Image(nsImage: img).interpolation(.none).resizable().frame(width: 130, height: 130) }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Scan to open CPilot on a phone that is on your tailnet.").font(.system(size: 13))
+                            Text("This only opens the page. To sign a phone in, pair it below. On an iPhone, use Share, then Add to Home Screen, and pair from the Home Screen icon.").font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                    }.padding(.vertical, 12)
+                }
                 SettingsGroup("Pair a phone") {
                     SettingRow("Pair a new device", "Asks for your fingerprint or password, then shows a code that works once and for two minutes. Scan it with the phone's camera, or open the address and type the code.") {
                         Button("Show pairing code") { Biometrics.confirm("Pair a phone with CPilot") { ok in if ok { makeCode() } } }.buttonStyle(Pill(kind: .primary))
