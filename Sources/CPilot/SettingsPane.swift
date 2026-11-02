@@ -12,7 +12,7 @@ struct SettingsPane: View {
     @State private var tab: Tab
     @State private var query = ""
     @State private var found = 1
-    enum Tab: Hashable { case general, sessions, access, github, agents, updates, about }
+    enum Tab: Hashable { case general, sessions, access, remote, github, agents, updates, about }
     init(initialTab: Tab = .general) { _tab = State(initialValue: initialTab) }
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -23,19 +23,20 @@ struct SettingsPane: View {
                 SearchBox(prompt: "Search settings", text: $query).frame(width: 240)
             } tabs: {
                 if !searching {
-                    TabBar(tabs: [(Tab.general, "General"), (Tab.sessions, "Sessions"), (Tab.access, "Access"), (Tab.github, "GitHub"), (Tab.agents, "Agents"), (Tab.updates, "Updates"), (Tab.about, "About")], selection: $tab)
+                    TabBar(tabs: [(Tab.general, "General"), (Tab.sessions, "Sessions"), (Tab.access, "Access"), (Tab.remote, "Remote"), (Tab.github, "GitHub"), (Tab.agents, "Agents"), (Tab.updates, "Updates"), (Tab.about, "About")], selection: $tab)
                 }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if searching {
-                        general; sessions; AccessSettings(); GitHubSettings(); AgentSettings()
+                        general; sessions; AccessSettings(); RemoteSettings(); GitHubSettings(); AgentSettings()
                         if found == 0 { Text("No setting matches \"\(query)\".").foregroundStyle(.secondary).font(.system(size: 13)).padding(.top, 8) }
                     } else {
                         switch tab {
                         case .general: general
                         case .sessions: sessions
                         case .access: AccessSettings()
+                        case .remote: RemoteSettings()
                         case .github: GitHubSettings()
                         case .agents: AgentSettings()
                         case .updates: UpdatesView()
@@ -96,6 +97,9 @@ struct SettingsPane: View {
             SettingsGroup("Specs and stacks") {
                 SettingRow("Default autonomy", Autonomy(rawValue: prefs.specAutonomy)?.detail ?? "") {
                     Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
+                }
+                SettingRow("Chief pilot", prefs.chiefMode.detail) {
+                    Segmented(options: ChiefPilot.Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.chiefAutonomy)
                 }
                 SettingRow("Offer \"Merge all as admin\"", "On a stack that GitHub's rules block, merges every open pull request in order past those rules, after one confirmation. Each still needs its checks to pass. Off keeps the one-at-a-time button.") { toggle($p.adminMergeAll) }
                 SettingRow("Combine stacks that change the same files", "When open pull requests in different stacks edit the same files, a session combines them into one pull request by itself, checks it builds, and closes the old ones. Off keeps it a button on each stack.") { toggle($p.autoCollapse) }

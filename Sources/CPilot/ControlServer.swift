@@ -7,7 +7,7 @@ import CPilotKit
 
 /// A loopback-only control API so the MCP server can ask the running app to start a session or send a message.
 /// It listens on 127.0.0.1 with a random port and a random bearer token kept in a file only you can read.
-/// Every request that changes anything shows a native approval dialog first and is denied if you do not answer.
+/// Every request that changes anything shows an approval first (on the Mac, and on paired phones) and is denied if you do not answer.
 @MainActor
 final class ControlServer {
     static let shared = ControlServer()
@@ -96,7 +96,7 @@ final class ControlServer {
     private func handle(_ r: Request) async -> (Int, [String: Any]) {
         guard !r.token.isEmpty, r.token == token else { return (401, ["error": "Bad token."]) }
         let ws = Workspace.shared
-        if r.path.hasPrefix("/v1/chief/") { return await ChiefDriver.handle(r.path, r.body) { [self] title, detail in await approve(title, detail: detail) } }
+        if r.path.hasPrefix("/v1/chief/") { return await ChiefDriver.handle(r.path, r.body) { [self] title, detail in await approve(title, detail: detail, high: true) } }
         switch r.path {
         case "/v1/start_session":
             guard let folder = r.body["folder"] as? String, FileManager.default.fileExists(atPath: folder) else { return (400, ["error": "folder is required and must exist."]) }
@@ -119,17 +119,8 @@ final class ControlServer {
         }
     }
 
-    /// A native dialog that denies if nobody answers within 90 seconds.
-    func approve(_ title: String, detail: String) async -> Bool {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = title; alert.informativeText = detail
-        alert.addButton(withTitle: "Allow once"); alert.addButton(withTitle: "Deny")
-        // A run-loop timer in the common modes: while the dialog is up the main actor is busy inside runModal, so a Task would never run, and a plain dispatch block is not serviced in the modal mode.
-        let timeout = Timer(timeInterval: 90, repeats: false) { _ in MainActor.assumeIsolated { NSApp.abortModal() } }
-        RunLoop.main.add(timeout, forMode: .common)
-        let result = alert.runModal()
-        timeout.invalidate()
-        return result == .alertFirstButtonReturn
+    /// Shows the approval on this Mac and on paired phones; denies if nobody answers within three minutes.
+    func approve(_ title: String, detail: String, high: Bool = false) async -> Bool {
+        await ApprovalBroker.shared.ask(title, detail: detail, high: high)
     }
 }

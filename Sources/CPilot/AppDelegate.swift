@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         Task { await model.refresh() }
         applyHotkey()
         ControlServer.shared.start()
+        if Prefs.shared.remoteEnabled || ProcessInfo.processInfo.environment["CPILOT_REMOTE_LOCAL"] != nil { Task { await RemoteServer.shared.start() } }
         PRCenter.shared.startWatcher()
         StackCenter.shared.startWatcher()
         CIWatcher.shared.start()
