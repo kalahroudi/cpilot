@@ -142,10 +142,16 @@ let allTools: [Tool] = {
 
     t.append(Tool(name: "start_session", description: "Start a new CPilot session in a folder and optionally send a first message. The user is asked to approve it in CPilot. Access can be read_only, ask_first or edit_files; full access cannot be requested.",
                   properties: ["folder": prop("string", "Working folder."), "message": prop("string", "First message."), "access": prop("string", "Access level.", enumValues: ["readOnly", "askFirst", "editFiles"])],
-                  required: ["folder"]) { a in try await control("/v1/start_session", a) })
+                  required: ["folder"]) { a in
+        if ProcessInfo.processInfo.environment[ChiefPilot.sessionEnvironment] != nil { throw ToolError(message: "You are the chief pilot: start work with task_start (tasks) or pr_review (a reviewer). start_session asks the user and is not for you.") }
+        return try await control("/v1/start_session", a)
+    })
 
     t.append(Tool(name: "send_message", description: "Send a message to an existing session. The user is asked to approve it in CPilot.",
-                  properties: ["session_id": prop("string", "Session id."), "text": prop("string", "The message.")], required: ["session_id", "text"]) { a in try await control("/v1/send_message", a) })
+                  properties: ["session_id": prop("string", "Session id."), "text": prop("string", "The message.")], required: ["session_id", "text"]) { a in
+        if ProcessInfo.processInfo.environment[ChiefPilot.sessionEnvironment] != nil { throw ToolError(message: "You are the chief pilot: use session_message to message a reviewer or task session. send_message asks the user and is not for you.") }
+        return try await control("/v1/send_message", a)
+    })
 
     t.append(Tool(name: "delete_session", description: "DESTRUCTIVE. Permanently deletes a session and its transcript. `confirm_title` must equal the session's exact title. Ask the user before calling.",
                   properties: ["session_id": prop("string", "Session id."), "confirm_title": prop("string", "Repeat the session's title.")], required: ["session_id", "confirm_title"]) { a in
@@ -177,7 +183,8 @@ let allTools: [Tool] = {
           ["id": specId, "text": prop("string", "Optional edited document."), "accept_open_questions": prop("boolean", "Approve a spec that still has open questions. Only when the user told you to decide for them.")], required: ["id"])
     chief(.taskStart, "Start the tasks that are ready (or one task) as sessions on their own stacked branches, up to two at a time.",
           ["id": specId, "task": prop("string", "One task id, such as T002. Omit to start everything that is ready.")], required: ["id"])
-    chief(.prReview, "Assign a reviewer to an open pull request: a separate session that reviews the diff, fixes its findings, and commits and pushes the fixes to the pull request's own branch.", ["pr": prop("integer", "Pull request number.")], required: ["pr"])
+    chief(.prReview, "Assign a reviewer to an open pull request: a separate session that reviews the diff, fixes its findings, and commits and pushes the fixes to the pull request's own branch.", ["pr": prop("integer", "Pull request number."), "focus": prop("string", "Something this reviewer must check and fix on top of the usual review, such as gaps an earlier reviewer left.")], required: ["pr"])
+    chief(.sessionMessage, "Send a follow-up to a reviewer or task session you started. It never asks the user. If the session is working, the message goes out when its turn ends.", ["target_session": prop("string", "Session id from pr_reviews or list_sessions."), "text": prop("string", "The message.")], required: ["target_session", "text"])
     chief(.prReviews, "Each open pull request's reviewer: none, working, done or failed, with its last report.", ["wait_seconds": waitSeconds])
     chief(.stackRestack, "Rebase the branches of a stack onto their parents and the trunk.", ["branch": stackBranch])
     chief(.stackSubmit, "Push a stack's branches and open or update its pull requests, each on top of its parent. The user is asked to approve it in CPilot.", ["branch": stackBranch])

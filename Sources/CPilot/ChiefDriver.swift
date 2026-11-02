@@ -98,10 +98,22 @@ enum ChiefDriver {
             guard let pr = try? await GitHub.view(n, in: repo.dir), pr.isOpen else { return fail("#\(n) is not an open pull request of this repository.") }
             if let m = reviewer(of: n, in: repo), Workspace.shared.controller(m.id)?.isBusy == true { return fail("#\(n) already has a reviewer working on it.") }
             do {
-                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName),
+                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus")),
                                                                title: "Review #\(n)", readOnly: false, show: false, reviewOf: n)
                 return (200, ["session_id": c.id, "status": "A reviewer is working on #\(n). Call pr_reviews with wait_seconds to follow it."])
             } catch { return fail("Could not start the reviewer: \(error.localizedDescription)") }
+
+        case .sessionMessage:
+            guard let target = text("target_session"), let message = text("text") else { return fail("target_session and text are required.") }
+            // Only the sessions the chief pilot starts: reviewers, and the task sessions of specs. Never the user's own sessions.
+            guard let m = Workspace.shared.sessions.first(where: { $0.id == target }), m.cwd == repo.dir, m.environment == nil, m.chief != true,
+                  m.reviewOf != nil || (m.branch ?? "").hasPrefix("spec-"), let c = Workspace.shared.controller(target) else {
+                return fail("target_session must be a reviewer or a task session of this repository. Find them with pr_reviews and list_sessions.")
+            }
+            let wasBusy = c.isBusy
+            c.loadIfNeeded(); c.draft = String(message.prefix(20_000)); c.send()
+            Workspace.shared.audit.record(AuditEntry(session: target, tool: "session_message", summary: "Chief pilot: " + message.prefix(120), outcome: "allowed (chief pilot)"))
+            return (200, ["ok": true, "status": wasBusy ? "It is working; the message goes out when its turn ends." : "Sent.", "note": "You will be woken when it finishes."])
 
         case .prReviews:
             await wait(body) { !Workspace.shared.sessions.filter { $0.reviewOf != nil && $0.cwd == repo.dir }.contains { Workspace.shared.controller($0.id)?.isBusy == true } }

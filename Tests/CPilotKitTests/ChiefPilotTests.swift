@@ -43,6 +43,22 @@ final class ChiefPilotTests: XCTestCase {
         XCTAssertEqual(Set(ChiefPilot.Action.allCases.filter { !$0.startsWork }), [.specApprove, .specJob, .prReviews])
     }
 
+    func testChiefOwnsCompletenessInEveryMode() {
+        for mode in ChiefPilot.Autonomy.allCases {
+            let g = ChiefPilot.guidance(repo: "/r", autonomy: mode)
+            XCTAssertTrue(g.contains("session_message")); XCTAssertTrue(g.contains("You own completeness"))
+            XCTAssertTrue(g.contains("do not hand the user a choice about how to proceed with a review"))
+        }
+        XCTAssertFalse(ChiefPilot.Action.sessionMessage.needsApproval)
+    }
+
+    func testReviewerIsToldToLoopAndTakesAFocus() {
+        let plain = ChiefPilot.reviewPrompt(number: 13, title: "t", head: "h", base: "main")
+        XCTAssertTrue(plain.contains("until a full pass finds nothing left")); XCTAssertFalse(plain.contains("asked for specifically"))
+        let focused = ChiefPilot.reviewPrompt(number: 13, title: "t", head: "h", base: "main", focus: "wait for both loops in connect")
+        XCTAssertTrue(focused.contains("asked for specifically: wait for both loops in connect"))
+    }
+
     func testMcpConfigNamesTheSessionAndKeepsOtherServers() throws {
         let memory = MemoryEngine.claudeConfig(base: "http://localhost:8888", bank: "shop")
         let json = ChiefPilot.mcpConfig(server: "/Applications/CPilot.app/Contents/MacOS/cpilot-mcp", session: "abc", existing: memory)
