@@ -96,6 +96,7 @@ final class ControlServer {
     private func handle(_ r: Request) async -> (Int, [String: Any]) {
         guard !r.token.isEmpty, r.token == token else { return (401, ["error": "Bad token."]) }
         let ws = Workspace.shared
+        if r.path.hasPrefix("/v1/chief/") { return await ChiefDriver.handle(r.path, r.body) { [self] title, detail in await approve(title, detail: detail) } }
         switch r.path {
         case "/v1/start_session":
             guard let folder = r.body["folder"] as? String, FileManager.default.fileExists(atPath: folder) else { return (400, ["error": "folder is required and must exist."]) }
@@ -119,14 +120,16 @@ final class ControlServer {
     }
 
     /// A native dialog that denies if nobody answers within 90 seconds.
-    private func approve(_ title: String, detail: String) async -> Bool {
+    func approve(_ title: String, detail: String) async -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = title; alert.informativeText = detail
         alert.addButton(withTitle: "Allow once"); alert.addButton(withTitle: "Deny")
-        let timeout = Task { try? await Task.sleep(for: .seconds(90)); if !Task.isCancelled { NSApp.abortModal() } }
+        // A run-loop timer in the common modes: while the dialog is up the main actor is busy inside runModal, so a Task would never run, and a plain dispatch block is not serviced in the modal mode.
+        let timeout = Timer(timeInterval: 90, repeats: false) { _ in MainActor.assumeIsolated { NSApp.abortModal() } }
+        RunLoop.main.add(timeout, forMode: .common)
         let result = alert.runModal()
-        timeout.cancel()
+        timeout.invalidate()
         return result == .alertFirstButtonReturn
     }
 }
