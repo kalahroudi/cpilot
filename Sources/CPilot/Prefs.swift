@@ -33,6 +33,8 @@ final class Prefs {
     /// "files" (CPilot notes only) or "engine" (also connect a long-term memory engine over MCP).
     var memoryEngine: String { didSet { d.set(memoryEngine, forKey: "memoryEngine") } }
     var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
+    /// When a chief pilot run ends, keep the lessons from its reviewers' reports and failures as a note every later session in the repository starts with.
+    var learnLessons: Bool { didSet { d.set(learnLessons, forKey: "learnLessons") } }
     /// Index finished messages and recall the best matches at the start of a new session.
     var recall: Bool { didSet { d.set(recall, forKey: "recall") } }
     /// Show a recap when you open a session you have been away from.
@@ -77,7 +79,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -94,6 +96,7 @@ final class Prefs {
         autoCollapse = d.bool(forKey: "autoCollapse")
         conflictWaitMinutes = d.integer(forKey: "conflictWaitMinutes")
         recapAuto = d.bool(forKey: "recapAuto")
+        learnLessons = d.bool(forKey: "learnLessons")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
         suggestPrompts = d.bool(forKey: "suggestPrompts")
         recall = d.bool(forKey: "recall")

@@ -77,6 +77,11 @@ final class ChiefWaker {
         return SpecHub.shared.center(for: PRCenter.Repo(dir: repo, environment: nil)).jobs.values.contains { $0.running }
     }
 
+    /// True for a chief pilot that has nothing in flight and is not waiting to be woken: its run is over.
+    static func isDone(_ c: SessionController) -> Bool {
+        c.meta.chief == true && !(shared.entries[c.meta.cwd]?.expecting ?? false) && !workInFlight(repo: c.meta.cwd, chiefId: c.id)
+    }
+
     private func wake(_ chief: SessionController, repo: String, _ text: String) {
         chief.loadIfNeeded()
         chief.draft = text

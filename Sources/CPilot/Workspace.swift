@@ -938,6 +938,7 @@ final class Workspace {
 
     func turnFinished(_ c: SessionController) {
         AppModel.shared.updateStatusIcon()
+        LessonLearner.shared.chiefTurnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
         AppModel.shared.notify("\(c.meta.title) finished")
     }
