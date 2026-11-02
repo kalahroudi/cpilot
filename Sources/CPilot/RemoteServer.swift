@@ -11,12 +11,15 @@ import CPilotKit
 @MainActor @Observable
 final class RemoteServer {
     static let shared = RemoteServer()
-    static let port = 47821
+    /// The loopback port. A development build can use another (`CPILOT_REMOTE_PORT`) so it does not clash with the installed app.
+    static let port = ProcessInfo.processInfo.environment["CPILOT_REMOTE_PORT"].flatMap { Int($0) } ?? 47821
 
     enum Status: Equatable { case off, starting, on(URL), failed(String) }
     private(set) var status: Status = .off
 
     let devices = RemoteDeviceStore()
+    /// This Mac's identity toward push services; made once.
+    let vapid = VAPIDKeys.loadOrCreate()
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var transport: RemoteTransport = ProcessInfo.processInfo.environment["CPILOT_REMOTE_LOCAL"] != nil ? LocalTransport() : TailscaleTransport()
     @ObservationIgnored private var streams: [ObjectIdentifier: NWConnection] = [:]

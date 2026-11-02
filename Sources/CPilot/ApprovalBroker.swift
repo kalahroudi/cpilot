@@ -28,6 +28,7 @@ final class ApprovalBroker {
         let r = Request(id: UUID().uuidString, title: title, detail: detail, high: high, created: .now)
         pending.append(r)
         ApprovalPanel.shared.refresh()
+        AlertCenter.shared.alert(.needs, title: "Approval needed", body: title, tag: "approval-\(r.id)")
         return await withCheckedContinuation { c in
             waiters[r.id] = c
             Task { [weak self] in

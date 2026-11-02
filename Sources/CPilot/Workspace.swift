@@ -389,6 +389,7 @@ final class SessionController: Identifiable {
             pending.append(Pending(id: e.request.id, source: e.source, request: e.request))
             state = .waiting
             ws.notifyApproval(session: meta.title, repo: URL(fileURLWithPath: meta.cwd).lastPathComponent)
+            AlertCenter.shared.alert(.needs, title: "Approval needed", body: "\(e.request.tool) in \(meta.title)", tag: "perm-\(e.request.id)", session: id)
         }
     }
 
@@ -451,6 +452,7 @@ final class SessionController: Identifiable {
     private func fail(_ message: String) {
         state = .failed(message)
         addNotice(message, error: true)
+        AlertCenter.shared.alert(.failed, title: "A session failed", body: "\(meta.title): \(message)", tag: "fail-\(id)", session: id)
     }
 
     func addNotice(_ text: String, error: Bool = false) {
@@ -938,6 +940,7 @@ final class Workspace {
 
     func turnFinished(_ c: SessionController) {
         AppModel.shared.updateStatusIcon()
+        AlertCenter.shared.turnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
         AppModel.shared.notify("\(c.meta.title) finished")
     }

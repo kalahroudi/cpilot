@@ -7,6 +7,26 @@ import Foundation
 enum RemotePage {
     static let manifest = ##"{"name":"CPilot","short_name":"CPilot","start_url":"/","display":"standalone","background_color":"#111114","theme_color":"#111114"}"##
 
+    /// The service worker: shows a notification when a push arrives and opens the right session when it is tapped. Nothing else; it does not cache or intercept requests.
+    static let serviceWorker = #"""
+    self.addEventListener("install", () => self.skipWaiting());
+    self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
+    self.addEventListener("push", e => {
+      let d = {};
+      try { d = e.data.json(); } catch (_) { d = { title: "CPilot", body: e.data ? e.data.text() : "" }; }
+      e.waitUntil(self.registration.showNotification(d.title || "CPilot", { body: d.body || "", tag: d.tag || undefined, data: { url: d.url || "/" } }));
+    });
+    self.addEventListener("notificationclick", e => {
+      e.notification.close();
+      const url = (e.notification.data && e.notification.data.url) || "/";
+      e.waitUntil((async () => {
+        const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        for (const c of all) { if ("focus" in c) { await c.focus(); c.postMessage({ open: url }); return; } }
+        if (self.clients.openWindow) await self.clients.openWindow(url);
+      })());
+    });
+    """#
+
     static let html = #"""
     <!doctype html>
     <html lang="en"><head>
@@ -96,6 +116,10 @@ enum RemotePage {
     .md a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 40%,transparent)}.md hr{border:0;border-top:1px solid var(--line);margin:1em 0}
     .md .tw{overflow-x:auto;margin:.6em 0}.md table{border-collapse:collapse;font-size:.92em}.md th,.md td{border:1px solid var(--line);padding:5px 10px;text-align:left}.md th{background:var(--soft)}
     .toast{position:fixed;left:16px;right:16px;top:calc(10px + env(safe-area-inset-top));z-index:20;max-width:560px;margin:0 auto;background:var(--ink);color:var(--bg);border-radius:14px;padding:12px 16px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+    .swrow{display:flex;align-items:center;gap:12px;padding:12px 0;margin:0;border-top:1px solid var(--line);font-size:16px;font-weight:400;color:var(--ink)}.swrow .grow b{display:block;font-weight:600}.swrow .grow span{font-size:13px;color:var(--dim)}
+    input.sw{appearance:none;-webkit-appearance:none;width:51px;height:31px;border-radius:99px;background:var(--soft);border:1px solid var(--line);position:relative;flex:none;margin:0;padding:0;transition:background .15s}
+    input.sw::after{content:"";position:absolute;top:2px;left:2px;width:25px;height:25px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+    input.sw:checked{background:var(--ok);border-color:var(--ok)}input.sw:checked::after{transform:translateX(20px)}
     .hero{text-align:center;padding:48px 0 20px}.hero .logo{width:64px;height:64px;border-radius:18px;background:var(--accent);color:#fff;display:grid;place-items:center;margin:0 auto 14px}.hero .logo .ic{width:34px;height:34px}.hero h1{margin:0 0 6px;font-size:26px}
     </style></head><body>
     <div id="app"></div><nav id="nav"></nav>
@@ -118,6 +142,7 @@ enum RemotePage {
      spinner:'<path d="M21 12a9 9 0 1 1-6.2-8.55"/>',
      out:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
      lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+     bell:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
      inbox:'<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>'};
     const ic=(n,cls)=>{const s=document.createElement("span");s.className="ic "+(cls||"");s.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+P[n]+'</svg>';return s};
     const h=(tag,props,...kids)=>{const e=document.createElement(tag);for(const k in props||{}){const v=props[k];if(k==="class")e.className=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);else if(v!==false&&v!=null)e[k]=v}for(const c of kids.flat(9))if(c!=null&&c!==false)e.append(c.nodeType?c:document.createTextNode(String(c)));return e};
@@ -258,7 +283,7 @@ enum RemotePage {
     }
 
     function meView(){
-      return h("div",{},pageHeader("This device"),h("div",{class:"card"},h("div",{class:"row"},h("div",{class:"badge"},ic("phone")),h("div",{class:"grow"},h("div",{class:"t"},me.name||"Phone"),h("div",{class:"s"},live?"Connected to your Mac":"Not connected")))),
+      return h("div",{},pageHeader("This device"),alertsCard(),h("div",{class:"card"},h("div",{class:"row"},h("div",{class:"badge"},ic("phone")),h("div",{class:"grow"},h("div",{class:"t"},me.name||"Phone"),h("div",{class:"s"},live?"Connected to your Mac":"Not connected")))),
         h("div",{class:"card"},h("div",{class:"row"},h("div",{class:"badge"},ic(me.canApprove?"shield":"lock")),h("div",{class:"grow"},h("div",{class:"t"},me.canApprove?"Can approve push and merge":"Cannot approve push and merge"),
           h("div",{class:"s",style:"white-space:normal"},"Change this on the Mac: CPilot, Settings, Remote.")))),
         h("button",{class:"btn danger block",onclick:()=>act(async()=>{await api("POST","/v1/logout");paired=false;draw()})},ic("out"),"Sign out this device"),
@@ -325,6 +350,58 @@ enum RemotePage {
     }
     async function openSession(id){open=id;msgs=[];lastRev=null;draw();paintNav();await loadMsgs();window.scrollTo(0,document.body.scrollHeight)}
 
+    /* ---------- alerts ---------- */
+    const b64uToBytes=s=>{s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";const r=atob(s),a=new Uint8Array(r.length);for(let i=0;i<r.length;i++)a[i]=r.charCodeAt(i);return a};
+    const pushSupported=()=>"serviceWorker" in navigator&&"PushManager" in window&&"Notification" in window;
+    const isStandalone=()=>(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true;
+    const isIOS=()=>/iPhone|iPad|iPod/.test(navigator.userAgent);
+    async function turnOnAlerts(){
+      const perm=await Notification.requestPermission();
+      if(perm!=="granted")throw new Error("Notifications were not allowed. Allow them for CPilot in your phone's settings, then try again.");
+      const reg=await navigator.serviceWorker.ready;
+      const {key}=await api("GET","/v1/push/key");
+      const old=await reg.pushManager.getSubscription();if(old)await old.unsubscribe();
+      const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToBytes(key)});
+      const j=sub.toJSON();await api("POST","/v1/push/subscribe",{endpoint:j.endpoint,keys:j.keys});
+      me=await api("GET","/v1/me");draw();
+    }
+    async function turnOffAlerts(){
+      try{const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();if(sub)await sub.unsubscribe()}catch(e){}
+      await api("POST","/v1/push/unsubscribe");me=await api("GET","/v1/me");draw();
+    }
+    function alertsCard(){
+      const head=h("div",{class:"row"},h("div",{class:"badge"},ic("bell")),h("div",{class:"grow"},h("div",{class:"t"},"Alerts when you are away"),h("div",{class:"s",style:"white-space:normal"},"A short notice when something needs you. It never contains code.")));
+      const card=h("div",{class:"card"},head);
+      const note=t=>card.append(h("div",{class:"hint"},t));
+      if(!pushSupported()||(isIOS()&&!isStandalone())){
+        note(isIOS()?"On an iPhone, alerts work from the Home Screen. Tap Share, then Add to Home Screen, open CPilot from its icon, pair again if it asks, and come back here.":"This browser cannot receive alerts.");
+      }else if(Notification.permission==="denied"){
+        note("Notifications are blocked for CPilot. Allow them in your phone's settings, then come back here.");
+      }else if(!me.push){
+        card.append(h("div",{class:"gap"}),h("button",{class:"btn primary block",onclick:()=>act(turnOnAlerts)},ic("bell"),"Turn on alerts"));
+      }else{
+        const row=(k,title,sub)=>h("label",{class:"swrow"},h("div",{class:"grow"},h("b",{},title),h("span",{},sub)),
+          h("input",{type:"checkbox",class:"sw",checked:!!(me.alerts||{})[k],onchange:e=>act(async()=>{me.alerts={...me.alerts,[k]:e.target.checked};await api("POST","/v1/push/prefs",{[k]:e.target.checked})})}));
+        card.append(h("div",{class:"gap"}),row("needs","Needs you","An approval or an answer is waiting"),row("failed","Failed","A session or a trigger could not continue"),row("finished","Finished","A run you started is done"),
+          h("div",{class:"acts"},h("button",{class:"btn",onclick:()=>act(async()=>{await api("POST","/v1/push/test");toast("Test alert in 5 seconds. Lock your phone or switch to another app.")})},"Send a test"),h("button",{class:"btn danger",onclick:()=>act(turnOffAlerts)},"Turn off")));
+        if(me.lastAlert)note("Last alert: "+me.lastAlert);
+      }
+      return card;
+    }
+    function openFromHash(){
+      const m=/^#s=(.+)$/.exec(location.hash);if(!m||!paired)return;
+      const id=decodeURIComponent(m[1]);history.replaceState(null,"",location.pathname);
+      if(st.sessions.some(x=>x.id===id))openSession(id);
+    }
+    /* Tells the Mac this page is being looked at, so it does not also push the same thing to the phone. */
+    const presence=v=>{if(paired)fetch("/v1/presence",{method:"POST",headers:{"X-CPilot":"1","Content-Type":"application/json"},body:JSON.stringify({visible:v}),credentials:"same-origin",keepalive:true}).catch(()=>{})};
+    document.addEventListener("visibilitychange",()=>presence(document.visibilityState==="visible"));
+    setInterval(()=>{if(document.visibilityState==="visible")presence(true)},20000);
+    if("serviceWorker" in navigator){
+      navigator.serviceWorker.register("/sw.js").catch(()=>{});
+      navigator.serviceWorker.addEventListener("message",e=>{if(e.data&&e.data.open){const m=/#s=(.+)$/.exec(e.data.open);if(m){location.hash="#s="+m[1];openFromHash()}}});
+    }
+
     /* ---------- chrome ---------- */
     function paintNav(){
       const nav=$("#nav");
@@ -342,7 +419,7 @@ enum RemotePage {
       const a=document.activeElement;if(a&&a.matches&&a.matches("textarea,input,select")&&$("#app").contains(a))return;   // never rebuild a form someone is typing in
       $("#app").replaceChildren(tab==="new"?newView():tab==="chief"?chiefView():tab==="me"?meView():boardView());
     }
-    async function boot(){try{me=await api("GET","/v1/me");st=await api("GET","/v1/state");paired=true;connect();draw();paintNav()}catch(e){draw()}}
+    async function boot(){try{me=await api("GET","/v1/me");st=await api("GET","/v1/state");paired=true;connect();draw();paintNav();presence(document.visibilityState==="visible");openFromHash()}catch(e){draw()}}
     // Keep the composer above the on-screen keyboard (the layout viewport does not shrink on iOS, the visual one does).
     if(window.visualViewport){const kb=()=>{const v=window.visualViewport;document.documentElement.style.setProperty("--kb",Math.max(0,window.innerHeight-v.height-v.offsetTop)+"px")};visualViewport.addEventListener("resize",kb);visualViewport.addEventListener("scroll",kb)}
     boot();

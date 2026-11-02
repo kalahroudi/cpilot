@@ -20,6 +20,9 @@ enum RemoteAPI {
         let parts = r.path.split(separator: "/").map(String.init)
 
         if r.method == "GET", r.path == "/" { return .response(.html(RemotePage.html)) }
+        if r.method == "GET", r.path == "/sw.js" {
+            return .response(HTTPResponse(status: 200, contentType: "text/javascript; charset=utf-8", body: Data(RemotePage.serviceWorker.utf8)))
+        }
         if r.method == "GET", r.path == "/manifest.json" { return .response(HTTPResponse(status: 200, contentType: "application/manifest+json", body: Data(RemotePage.manifest.utf8))) }
         if r.method == "POST", r.path == "/v1/pair" {
             guard r.headers["x-cpilot"] != nil else { return fail(403, "Missing header.") }
@@ -49,7 +52,44 @@ enum RemoteAPI {
 
         switch shape {
         case "GET /v1/me":
-            return ok(["name": device.name, "canApprove": device.canApprove])
+            let fresh = server.devices.device(id: device.id) ?? device
+            var me: [String: Any] = ["name": fresh.name, "canApprove": fresh.canApprove, "push": fresh.push != nil,
+                                     "alerts": ["needs": fresh.alertPrefs.needs, "failed": fresh.alertPrefs.failed, "finished": fresh.alertPrefs.finished]]
+            if let l = AlertCenter.shared.last[device.id] { me["lastAlert"] = "\(l.result) at \(l.at.formatted(date: .omitted, time: .shortened))" }
+            return ok(me)
+
+        case "GET /v1/push/key":
+            return ok(["key": server.vapid.publicKey])
+
+        case "POST /v1/push/subscribe":
+            let body = r.json, keys = body["keys"] as? [String: Any]
+            let sub = PushSubscription(endpoint: (body["endpoint"] as? String) ?? "", p256dh: (keys?["p256dh"] as? String) ?? "", auth: (keys?["auth"] as? String) ?? "")
+            guard sub.isAcceptable(allowLoopback: ProcessInfo.processInfo.environment["CPILOT_REMOTE_LOCAL"] != nil) else { return fail(400, "That is not a push subscription CPilot can use.") }
+            server.devices.setPush(device.id, sub)
+            audit("push", "turned on alerts")
+            return ok()
+
+        case "POST /v1/push/unsubscribe":
+            server.devices.setPush(device.id, nil)
+            audit("push", "turned off alerts")
+            return ok()
+
+        case "POST /v1/push/prefs":
+            let b = r.json
+            let old = (server.devices.device(id: device.id) ?? device).alertPrefs
+            server.devices.setAlerts(device.id, AlertPrefs(needs: (b["needs"] as? Bool) ?? old.needs, failed: (b["failed"] as? Bool) ?? old.failed, finished: (b["finished"] as? Bool) ?? old.finished))
+            return ok()
+
+        case "POST /v1/presence":
+            server.devices.setPresent(device.id, (r.json["visible"] as? Bool) == true)
+            return ok()
+
+        case "POST /v1/push/test":
+            guard let base = server.url, let d = server.devices.device(id: device.id), d.push != nil else { return fail(400, "Alerts are not turned on for this device.") }
+            // After a few seconds, so there is time to lock the phone or switch to another app: a page that is open may not show a banner.
+            let message = AlertCenter.payload(title: "CPilot test", body: "Alerts work on this device.", tag: "test-\(UUID().uuidString.prefix(6))", url: "/")
+            Task { try? await Task.sleep(for: .seconds(5)); await AlertCenter.shared.send(message, to: d, subject: base.absoluteString) }
+            return ok(["inSeconds": 5])
         case "GET /v1/state":
             return .response(HTTPResponse(status: 200, contentType: "application/json", body: Data(stateJSON().utf8)))
         case "GET /v1/events":

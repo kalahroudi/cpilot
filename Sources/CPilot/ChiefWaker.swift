@@ -60,6 +60,7 @@ final class ChiefWaker {
             } else if now.timeIntervalSince(e.lastWake) >= Self.lookEvery {
                 if e.looks >= Self.maxLooks {
                     e.expecting = false
+                    AlertCenter.shared.alert(.needs, title: "The chief pilot is still waiting", body: URL(fileURLWithPath: repo).lastPathComponent + ": nothing has changed for a long while.", tag: "stall-\(repo)", session: meta.id)
                     AppModel.shared.notify("The chief pilot is still waiting", body: "\(URL(fileURLWithPath: repo).lastPathComponent): nothing has changed for a long while. Open the chief pilot to see what it waits for.")
                 } else {
                     e.looks += 1; e.lastWake = now
