@@ -142,6 +142,7 @@ final class TriggerEngine {
             store.record(TriggerRun(triggerId: t.id, name: t.name, what: what, outcome: .failed, detail: error.localizedDescription))
             store.ran(t.id)
             if let key { store.markHandled(t.id, key: key) }
+            AlertCenter.shared.alert(.failed, title: "A trigger could not start", body: "\(t.name): \(error.localizedDescription)", tag: "trigger-\(t.id)")
             return .failed("Could not start: \(error.localizedDescription)")
         }
         store.record(TriggerRun(triggerId: t.id, name: t.name, what: what, outcome: .started))

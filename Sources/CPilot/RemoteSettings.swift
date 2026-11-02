@@ -58,6 +58,7 @@ struct RemoteSettings: View {
             }
             SettingsGroup("What a phone can do") {
                 SettingRow("Limits", "A phone can start sessions (at most Edit files, in their own worktree, only in repositories CPilot knows), message and stop sessions, talk to the chief pilot, and allow a tool request once. It cannot turn on Full access or allow \"always\". Pushing and merging can be approved from a phone only if you switch that on for it here. Every action is written to the audit log with the device's name.") { EmptyView() }
+                SettingRow("Alerts", "A phone can ask for a short notice when an approval is waiting, a session or trigger fails, or a run it started finishes. CPilot sends it straight from this Mac to the phone's push service (Apple, Google or Mozilla), encrypted so only that phone can read it, and never includes code. Nothing is sent to a phone that is looking at the page. Each phone turns it on from its Device tab; on an iPhone the page must be on the Home Screen first.") { EmptyView() }
                 SettingRow("Keeps this Mac awake", "While phone access is on and an agent is working, the Mac does not go to sleep on its own. Closing the lid still sleeps it.") { EmptyView() }
             }
         }

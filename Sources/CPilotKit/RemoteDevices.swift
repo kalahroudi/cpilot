@@ -3,6 +3,16 @@
 import Foundation
 import CryptoKit
 
+/// What a phone is told about when it is away from the page.
+public enum AlertKind: String, Codable, CaseIterable, Sendable { case needs, failed, finished }
+
+public struct AlertPrefs: Codable, Equatable, Sendable {
+    /// An approval or an answer is waiting. Failures too. A finished run is opt in: it is the noisiest.
+    public var needs = true, failed = true, finished = false
+    public init(needs: Bool = true, failed: Bool = true, finished: Bool = false) { self.needs = needs; self.failed = failed; self.finished = finished }
+    public func allows(_ k: AlertKind) -> Bool { switch k { case .needs: needs; case .failed: failed; case .finished: finished } }
+}
+
 /// A phone (or any browser) that was paired with this Mac. Only a hash of its token is kept, so the file cannot be used to sign in.
 public struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
     public var id: String
@@ -12,6 +22,10 @@ public struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
     public var lastSeen: Date?
     /// May answer the approvals that push or merge. Off until you turn it on at the Mac.
     public var canApprove: Bool
+    /// Where to send alerts, once the phone has turned them on.
+    public var push: PushSubscription?
+    public var alerts: AlertPrefs?
+    public var alertPrefs: AlertPrefs { alerts ?? AlertPrefs() }
 }
 
 /// The paired devices, the one-time pairing codes, and the limits on what a device may do. Thread safe.
@@ -23,6 +37,7 @@ public final class RemoteDeviceStore: @unchecked Sendable {
     private var codes: [String: Date] = [:]
     private var failures: [Date] = []
     private var starts: [String: [Date]] = [:]
+    private var seen: [String: Date] = [:]
 
     /// `url` nil keeps everything in memory (tests).
     public init(url: URL? = AppPaths().root.appendingPathComponent("remote-devices.json")) {
@@ -81,11 +96,47 @@ public final class RemoteDeviceStore: @unchecked Sendable {
         return devices[i]
     }
 
-    public func revoke(_ id: String) { lock.lock(); devices.removeAll { $0.id == id }; starts[id] = nil; save(); lock.unlock() }
+    public func revoke(_ id: String) { lock.lock(); devices.removeAll { $0.id == id }; starts[id] = nil; seen[id] = nil; save(); lock.unlock() }
 
     public func setCanApprove(_ id: String, _ on: Bool) {
         lock.lock(); defer { lock.unlock() }
         if let i = devices.firstIndex(where: { $0.id == id }) { devices[i].canApprove = on; save() }
+    }
+
+    // MARK: Alerts
+
+    /// How long after its last sign of life a page counts as being looked at.
+    public static let presenceWindow: TimeInterval = 45
+
+    public func device(id: String) -> RemoteDevice? { lock.lock(); defer { lock.unlock() }; return devices.first { $0.id == id } }
+
+    public func setPush(_ id: String, _ sub: PushSubscription?) {
+        lock.lock(); defer { lock.unlock() }
+        if let i = devices.firstIndex(where: { $0.id == id }) { devices[i].push = sub; save() }
+    }
+
+    public func setAlerts(_ id: String, _ prefs: AlertPrefs) {
+        lock.lock(); defer { lock.unlock() }
+        if let i = devices.firstIndex(where: { $0.id == id }) { devices[i].alerts = prefs; save() }
+    }
+
+    /// The page says it is open and visible (or no longer is). While it is, nothing is pushed to that phone: it already shows the same thing.
+    public func setPresent(_ id: String, _ visible: Bool, now: Date = .now) {
+        lock.lock(); defer { lock.unlock() }
+        seen[id] = visible ? now : nil
+    }
+
+    public func isPresent(_ id: String, now: Date = .now) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return seen[id].map { now.timeIntervalSince($0) < Self.presenceWindow } ?? false
+    }
+
+    /// The phones to push to for this kind of alert: subscribed, wanting it, and not looking at the page.
+    public func recipients(for kind: AlertKind, now: Date = .now) -> [RemoteDevice] {
+        lock.lock(); defer { lock.unlock() }
+        return devices.filter { d in
+            d.push != nil && d.alertPrefs.allows(kind) && !(seen[d.id].map { now.timeIntervalSince($0) < Self.presenceWindow } ?? false)
+        }
     }
 
     /// Session starts per device per hour. Returns false once the device is over its limit.

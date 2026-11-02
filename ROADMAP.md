@@ -30,7 +30,6 @@ Today you start sessions one at a time and watch them. These ideas make a whole 
 - **Phone control, what is left.** Phone control itself is built (Settings, Remote). Still to come:
   - A second way in: a Cloudflare tunnel with Cloudflare Access in front, for a phone that cannot run Tailscale. The server already listens on loopback only, so this is one more transport.
   - A passkey (Face ID) for approving pushes and merges, instead of only the per-device switch.
-  - An optional notification (web push through a small Cloudflare Worker, or ntfy) that says only that a session needs you and links to the page, so no code leaves the Mac.
   - A last-known view of the board when the Mac is asleep or offline.
 - **A cost and time ledger** per session, task, spec and agent, so you can see which agents and prompts earn their cost. It uses the usage figures agents already report; an agent that reports none shows time only.
 

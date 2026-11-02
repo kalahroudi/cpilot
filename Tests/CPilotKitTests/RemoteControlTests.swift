@@ -84,6 +84,45 @@ final class RemoteControlTests: XCTestCase {
     }
 }
 
+extension RemoteControlTests {
+    private func sub(_ n: Int = 1) -> PushSubscription { PushSubscription(endpoint: "https://web.push.apple.com/\(n)", p256dh: "x", auth: "y") }
+
+    func testAlertsGoOnlyToSubscribedPhonesThatWantThemAndAreAway() throws {
+        let s = RemoteDeviceStore(url: nil)
+        let a = try XCTUnwrap(s.pair(code: s.makeCode(), name: "a").successValue).device
+        let b = try XCTUnwrap(s.pair(code: s.makeCode(), name: "b").successValue).device
+        let c = try XCTUnwrap(s.pair(code: s.makeCode(), name: "c").successValue).device
+        let now = Date()
+        XCTAssertTrue(s.recipients(for: .needs, now: now).isEmpty, "nobody has subscribed")
+        s.setPush(a.id, sub(1)); s.setPush(b.id, sub(2))
+        XCTAssertEqual(Set(s.recipients(for: .needs, now: now).map(\.id)), [a.id, b.id]); XCTAssertNil(s.device(id: c.id)?.push)
+        XCTAssertEqual(Set(s.recipients(for: .failed, now: now).map(\.id)), [a.id, b.id])
+        XCTAssertTrue(s.recipients(for: .finished, now: now).isEmpty, "finished is opt in")
+        s.setAlerts(b.id, AlertPrefs(needs: false, failed: true, finished: true))
+        XCTAssertEqual(s.recipients(for: .needs, now: now).map(\.id), [a.id]); XCTAssertEqual(s.recipients(for: .finished, now: now).map(\.id), [b.id])
+        s.setPresent(a.id, true, now: now)
+        XCTAssertTrue(s.isPresent(a.id, now: now + 10)); XCTAssertTrue(s.recipients(for: .needs, now: now + 10).isEmpty, "a phone showing the page is not pushed to")
+        XCTAssertEqual(s.recipients(for: .needs, now: now + RemoteDeviceStore.presenceWindow + 1).map(\.id), [a.id], "a page that stopped saying so is away")
+        s.setPresent(a.id, false, now: now)
+        XCTAssertEqual(s.recipients(for: .needs, now: now + 1).map(\.id), [a.id])
+        s.setPush(a.id, nil)
+        XCTAssertTrue(s.recipients(for: .needs, now: now).isEmpty)
+    }
+
+    func testSubscriptionsAndPreferencesSurviveARestartAndOlderFilesStillLoad() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("devices-\(UUID().uuidString).json")
+        let s = RemoteDeviceStore(url: url)
+        let d = try XCTUnwrap(s.pair(code: s.makeCode(), name: "p").successValue).device
+        s.setPush(d.id, sub(7)); s.setAlerts(d.id, AlertPrefs(needs: true, failed: false, finished: true))
+        let again = RemoteDeviceStore(url: url).device(id: d.id)
+        XCTAssertEqual(again?.push, sub(7)); XCTAssertEqual(again?.alertPrefs, AlertPrefs(needs: true, failed: false, finished: true))
+        let old = #"[{"id":"o","name":"old","tokenHash":"h","createdAt":794138400,"canApprove":false}]"#
+        try old.write(to: url, atomically: true, encoding: .utf8)
+        let loaded = RemoteDeviceStore(url: url).device(id: "o")
+        XCTAssertNotNil(loaded); XCTAssertNil(loaded?.push); XCTAssertEqual(loaded?.alertPrefs, AlertPrefs())
+    }
+}
+
 private extension Result {
     var failureValue: Failure? { if case .failure(let e) = self { return e } else { return nil } }
     var successValue: Success? { if case .success(let v) = self { return v } else { return nil } }
