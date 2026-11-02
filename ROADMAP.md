@@ -27,11 +27,11 @@ Today you start sessions one at a time and watch them. These ideas make a whole 
 
 - **Start from events.** A labelled GitHub issue, a failing check on your pull request, a review comment, a schedule or a command from the CLI starts a session with the right context, subject to the same approvals. GitHub events are found by polling through your own login while the app runs, so there is no webhook server or public address.
 - **A `cpilot` command line** to start, list, send to and wait on sessions from scripts and CI, mirroring the MCP tools.
-- **Control sessions from your phone.** A small page served by the Mac, off by default, reachable only over Tailscale (no cloud service, no account, nothing to install on the phone beyond adding the page to the Home Screen). Pair a device once with a QR code; each device gets its own revocable token.
-  - Start new work any time: pick a known repository, an agent and model, and a prompt, or start from a GitHub issue or a spec task. Every phone-started session gets its own worktree and branch, so your working folder is never touched.
-  - Watch sessions by state, read recent messages, send a message, stop one, and allow once or deny an approval card.
-  - Guardrails: access is capped at Edit files and Full access still needs Touch ID at the Mac; there is no "always allow" from the phone; only repositories CPilot already knows can be used; new sessions from remote devices are rate limited; every remote action is logged with the device name and the Mac notifies you when one starts.
-  - An optional notification (ntfy, which can be self-hosted) says only that a session needs you and links to the page, so no code leaves the Mac.
+- **Phone control, what is left.** Phone control itself is built (Settings, Remote). Still to come:
+  - A second way in: a Cloudflare tunnel with Cloudflare Access in front, for a phone that cannot run Tailscale. The server already listens on loopback only, so this is one more transport.
+  - A passkey (Face ID) for approving pushes and merges, instead of only the per-device switch.
+  - An optional notification (web push through a small Cloudflare Worker, or ntfy) that says only that a session needs you and links to the page, so no code leaves the Mac.
+  - A last-known view of the board when the Mac is asleep or offline.
 - **A cost and time ledger** per session, task, spec and agent, so you can see which agents and prompts earn their cost. It uses the usage figures agents already report; an agent that reports none shows time only.
 
 ## Local CI

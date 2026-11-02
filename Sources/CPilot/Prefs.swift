@@ -51,6 +51,8 @@ final class Prefs {
     var autoCollapse: Bool { didSet { d.set(autoCollapse, forKey: "autoCollapse") } }
     var specAutonomy: String { didSet { d.set(specAutonomy, forKey: "specAutonomy") } }
     /// How much the chief pilot does without asking ("leads" or "asks"; see `ChiefPilot.Autonomy`).
+    /// Phone access: a loopback web server published on your tailnet. Off until you turn it on.
+    var remoteEnabled: Bool { didSet { d.set(remoteEnabled, forKey: "remoteEnabled") } }
     var chiefAutonomy: String { didSet { d.set(chiefAutonomy, forKey: "chiefAutonomy") } }
     var chiefMode: ChiefPilot.Autonomy { ChiefPilot.Autonomy(rawValue: chiefAutonomy) ?? .leads }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
@@ -86,6 +88,7 @@ final class Prefs {
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         chiefAutonomy = d.string(forKey: "chiefAutonomy") ?? "leads"
+        remoteEnabled = d.bool(forKey: "remoteEnabled")
         adminMergeAll = d.bool(forKey: "adminMergeAll")
         autoResolveConflicts = d.bool(forKey: "autoResolveConflicts")
         autoCollapse = d.bool(forKey: "autoCollapse")

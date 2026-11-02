@@ -12,7 +12,7 @@ struct SettingsPane: View {
     @State private var tab: Tab
     @State private var query = ""
     @State private var found = 1
-    enum Tab: Hashable { case general, sessions, access, github, agents, updates, about }
+    enum Tab: Hashable { case general, sessions, access, remote, github, agents, updates, about }
     init(initialTab: Tab = .general) { _tab = State(initialValue: initialTab) }
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -23,19 +23,20 @@ struct SettingsPane: View {
                 SearchBox(prompt: "Search settings", text: $query).frame(width: 240)
             } tabs: {
                 if !searching {
-                    TabBar(tabs: [(Tab.general, "General"), (Tab.sessions, "Sessions"), (Tab.access, "Access"), (Tab.github, "GitHub"), (Tab.agents, "Agents"), (Tab.updates, "Updates"), (Tab.about, "About")], selection: $tab)
+                    TabBar(tabs: [(Tab.general, "General"), (Tab.sessions, "Sessions"), (Tab.access, "Access"), (Tab.remote, "Remote"), (Tab.github, "GitHub"), (Tab.agents, "Agents"), (Tab.updates, "Updates"), (Tab.about, "About")], selection: $tab)
                 }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if searching {
-                        general; sessions; AccessSettings(); GitHubSettings(); AgentSettings()
+                        general; sessions; AccessSettings(); RemoteSettings(); GitHubSettings(); AgentSettings()
                         if found == 0 { Text("No setting matches \"\(query)\".").foregroundStyle(.secondary).font(.system(size: 13)).padding(.top, 8) }
                     } else {
                         switch tab {
                         case .general: general
                         case .sessions: sessions
                         case .access: AccessSettings()
+                        case .remote: RemoteSettings()
                         case .github: GitHubSettings()
                         case .agents: AgentSettings()
                         case .updates: UpdatesView()

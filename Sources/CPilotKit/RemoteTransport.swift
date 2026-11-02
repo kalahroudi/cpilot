@@ -61,3 +61,11 @@ public struct TailscaleTransport: RemoteTransport {
         _ = try? await Shell.run(tool, Self.resetArguments(), timeout: 15)
     }
 }
+
+/// For development and tests: no tunnel, the loopback address itself. Chosen only by the `CPILOT_REMOTE_LOCAL` environment variable.
+public struct LocalTransport: RemoteTransport {
+    public let name = "Local"
+    public init() {}
+    public func start(port: Int) async throws -> URL { URL(string: "http://127.0.0.1:\(port)")! }
+    public func stop() async {}
+}
