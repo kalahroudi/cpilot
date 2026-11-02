@@ -181,7 +181,7 @@ let allTools: [Tool] = {
     chief(.prReviews, "Each open pull request's reviewer: none, working, done or failed, with its last report.", ["wait_seconds": waitSeconds])
     chief(.stackRestack, "Rebase the branches of a stack onto their parents and the trunk.", ["branch": stackBranch])
     chief(.stackSubmit, "Push a stack's branches and open or update its pull requests, each on top of its parent. The user is asked to approve it in CPilot.", ["branch": stackBranch])
-    chief(.prMerge, "Merge the lowest open pull request of a stack, only once its reviewer has finished and only if its checks and the merge rules pass, then restack the rest. Never an admin merge. The user is asked to approve it in CPilot.", ["branch": stackBranch])
+    chief(.prMerge, "Merge a pull request, only once its reviewer has finished and only if its checks and the merge rules pass. With `pr`, merge that pull request (a stack's branch goes through the stack; any other pull request is merged directly, and one built on another open pull request is refused until that one is merged). Without `pr`, merge the lowest open pull request of a stack and restack the rest. Never an admin merge. The user is asked to approve it in CPilot.", ["branch": stackBranch, "pr": prop("integer", "Pull request number. Optional when the repository has one stack.")])
 
     return t
 }()

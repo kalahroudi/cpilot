@@ -98,6 +98,9 @@ enum ChiefDriver {
                 return r
             }])
 
+        case .prMerge where body["pr"] is Int:
+            return await mergePullRequest(body["pr"] as! Int, body, repo: repo, approve: approve)
+
         case .stackRestack, .stackSubmit, .prMerge:
             return await stackAction(action, body, repo: repo, approve: approve)
         }
@@ -156,6 +159,35 @@ enum ChiefDriver {
         if let e = j?.error { out["error"] = e }
         if let draft = j?.draft { out["draft"] = ["stage": draft.stage.rawValue, "text": String(draft.text.prefix(12000))] }
         return out
+    }
+
+    /// Merges one pull request by number. A branch of an open stack goes through the stack, which restacks what is above it; any other pull request
+    /// (opened by hand, or by another tool) is merged directly. Either way its reviewer must have finished, its checks and the merge rules must pass, and the user approves.
+    private static func mergePullRequest(_ n: Int, _ body: [String: Any], repo: PRCenter.Repo, approve: Approve) async -> Reply {
+        guard let pr = try? await GitHub.view(n, in: repo.dir), pr.isOpen else { return fail("#\(n) is not an open pull request of this repository.") }
+        let sc = StackCenter.shared
+        guard sc.busy == nil else { return fail("Another stack operation is running (\(sc.busy ?? "")). Try again in a moment.") }
+        await sc.open(repo, force: true)
+        if sc.stacks.contains(where: { $0.branches.contains { !$0.isMerged && $0.name == pr.headRefName } }) {
+            var b = body; b["branch"] = pr.headRefName
+            return await stackAction(.prMerge, b, repo: repo, approve: approve)
+        }
+        let open = (try? await GitHub.list(in: repo.dir)) ?? []
+        if let below = open.first(where: { $0.headRefName == pr.baseRefName }) { return fail("#\(n) is built on #\(below.number) (\(below.headRefName)). Merge #\(below.number) first.") }
+        if let problem = reviewProblem(n, in: repo) { return fail(problem) }
+        let gate = await PRCenter.shared.gateFor(n, dir: repo.dir)
+        guard gate.ready else { return fail("#\(n) is not ready: " + gate.reasons.joined(separator: " ")) }
+        let name = URL(fileURLWithPath: repo.dir).lastPathComponent
+        guard await approve("The chief pilot wants to merge a pull request", "Repository: \(name)\n#\(n) \(pr.title) into \(pr.baseRefName)\nIt is merged only if its checks pass and the merge rules allow it.") else { return fail("The user declined.", 403) }
+        do {
+            // The head the reviewer and the gate saw: if the branch moves before GitHub merges, the merge is refused.
+            try await GitHub.merge(n, method: sc.method, auto: false, expectedHead: pr.headRefOid, in: repo.dir)
+            return (200, ["ok": true, "note": "Merged #\(n) into \(pr.baseRefName)."])
+        } catch where GitHub.isHeadMoved(error) {
+            return fail("#\(n) got new commits after it was checked. Nothing was merged. Check it again with pr_reviews, then merge.")
+        } catch where GitHub.isPolicyBlock(error) {
+            return fail("GitHub's rules for this repository refuse to merge #\(n), although its checks pass. Look at the rules on GitHub (Settings, Rules). An admin merge is never done from here.")
+        } catch { return fail("Could not merge #\(n): \(error.localizedDescription)") }
     }
 
     private static func stackAction(_ action: ChiefPilot.Action, _ body: [String: Any], repo: PRCenter.Repo, approve: Approve) async -> Reply {

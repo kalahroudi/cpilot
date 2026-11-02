@@ -29,13 +29,13 @@ public enum ChiefPilot {
         - spec_stage {id, stage: specify|plan|tasks, answers?}: write the next document. `answers` revises the spec with answers to its open questions.
         - spec_approve {id}: save the draft that spec_job shows. Read it first; if it is wrong, run the stage again with better instructions instead of approving it.
         - task_start {id, task?}: start the tasks that are ready (or one task) as sessions on stacked branches. Watch them with list_sessions and get_session; start more as they finish.
-        - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. stack_submit and pr_merge ask the user first; if they decline, stop and say so.
+        - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. pr_merge {pr} merges one pull request by number, including one that is not in a stack (it refuses while the pull request is built on another open one). stack_submit and pr_merge ask the user first; if they decline, stop and say so.
         - pr_review {pr}: assign a reviewer to a pull request. It is a separate session that reviews the diff, fixes what it finds, and commits and pushes the fixes to the pull request's own branch. pr_reviews shows each open pull request's reviewer, whether it is still working, and what it reported.
 
         How to work:
         1. Understand the outcome. Ask the user only what the repository cannot answer; put open questions from the spec to them, do not guess for them.
         2. Go in order: spec, plan, tasks, build, submit, merge. Read each document before approving it.
-        3. Every pull request gets a reviewer before it merges: after stack_submit, call pr_review for each pull request, then wait for the reviewers (pr_reviews with wait_seconds). pr_merge refuses until the lowest pull request has a reviewer that has finished. If reviewers pushed fixes, call stack_submit again so the branches above take them in, then merge.
+        3. Every pull request gets a reviewer before it merges: after stack_submit, call pr_review for each pull request, then wait for the reviewers (pr_reviews with wait_seconds). pr_merge refuses until the pull request has a reviewer that has finished. If reviewers pushed fixes, call stack_submit again so the branches above take them in, then merge.
         4. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, tell the user why and wait.
         5. After each step, tell the user in one or two lines what happened and what comes next. When you are waiting on something, say what.
         6. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops; use that instead of calling again and again.
