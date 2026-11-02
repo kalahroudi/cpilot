@@ -125,11 +125,11 @@ final class ControlServer {
         let alert = NSAlert()
         alert.messageText = title; alert.informativeText = detail
         alert.addButton(withTitle: "Allow once"); alert.addButton(withTitle: "Deny")
-        // A dispatch timer, not a Task: while the dialog is up the main actor is busy inside runModal, so a main-actor Task would never get to run.
-        let timeout = DispatchWorkItem { MainActor.assumeIsolated { NSApp.abortModal() } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
+        // A run-loop timer in the common modes: while the dialog is up the main actor is busy inside runModal, so a Task would never run, and a plain dispatch block is not serviced in the modal mode.
+        let timeout = Timer(timeInterval: 90, repeats: false) { _ in MainActor.assumeIsolated { NSApp.abortModal() } }
+        RunLoop.main.add(timeout, forMode: .common)
         let result = alert.runModal()
-        timeout.cancel()
+        timeout.invalidate()
         return result == .alertFirstButtonReturn
     }
 }
