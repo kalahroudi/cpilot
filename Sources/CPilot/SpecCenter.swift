@@ -416,7 +416,9 @@ final class SpecCenter {
         guard let d = doc(id) else { return }
         let running = taskSessions.filter { $0.key.hasPrefix(id + "/") }.compactMap { Workspace.shared.controller($0.value) }.filter { $0.isBusy }.count
         let ready = Specs.ready(d.tasks, merged: merged, coded: coded)
-        for t in ready.prefix(max(0, limit - running)) { await implement(id, t, focus: false) }
+        // Held back while too many agents are working or the day's budget is spent; the next turn that ends, or the watchdog, looks again.
+        let room = Workspace.shared.unattendedHold() == nil ? Guardrails.slots(running: Workspace.shared.runningAgents, limit: Prefs.shared.maxAgents) : 0
+        for t in ready.prefix(max(0, min(limit - running, room))) { await implement(id, t, focus: false) }
     }
 
     static let implementStage = "implement "

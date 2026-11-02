@@ -117,6 +117,7 @@ final class TriggerEngine {
     private func start(_ t: Trigger, prompt: String, what: String, key: String?, manual: Bool, pr: (pr: CIPullRequest, failed: [String], key: String)? = nil) async -> Outcome {
         guard store.mayStart(t, manual: manual) else { return .deferred("Held back by the limit of \(TriggerStore.hourlyLimit) runs an hour (and ten minutes between runs of one trigger).") }
         let ws = Workspace.shared
+        if !manual, let why = ws.unattendedHold() { return .deferred(why) }
         var sessionId = ""
         do {
             switch t.action {

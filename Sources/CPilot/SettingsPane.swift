@@ -95,6 +95,15 @@ struct SettingsPane: View {
             SettingsGroup("Sessions") {
                 SettingRow("Suggest your next message", "After each turn Claude drafts a reply to what the agent just said, shown faintly in the message box. Press Tab to use it. A small, cheap call.") { toggle($p.suggestPrompts) }
             }
+            SettingsGroup("Limits for unattended work") {
+                SettingRow("Agents working at once", "Triggers, and the tasks and reviewers the chief pilot starts, wait while this many agents are working. Sessions you start yourself are never held.") {
+                    Segmented(options: [(2, "2"), (4, "4"), (8, "8"), (0, "No limit")], selection: $p.maxAgents)
+                }
+                SettingRow("Daily budget", "Once agents have spent this much today (all sessions count), work that starts by itself waits until tomorrow. A turn already under way finishes.") {
+                    Segmented(options: [(0, "Off"), (10, "$10"), (25, "$25"), (50, "$50"), (100, "$100")], selection: $p.dailyBudget)
+                }
+                SpendRow()
+            }
             SettingsGroup("Specs and stacks") {
                 SettingRow("Default autonomy", Autonomy(rawValue: prefs.specAutonomy)?.detail ?? "") {
                     Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
@@ -154,6 +163,22 @@ struct SettingsPane: View {
             Text("Licensed under the Apache License 2.0.").font(.system(size: 12)).foregroundStyle(.secondary)
         }
     }
+}
+
+/// What the agents cost, by who started the work.
+struct SpendRow: View {
+    @State private var range = 1
+    var body: some View {
+        let since = range == 1 ? Guardrails.startOfDay() : Date().addingTimeInterval(-Double(range) * 86_400)
+        let totals = Workspace.shared.ledger.totals(since: since)
+        let sum = totals.reduce(0) { $0 + $1.cost }
+        SettingRow(String(format: "Spent %@: $%.2f", range == 1 ? "today" : "in \(range) days", sum),
+                   totals.isEmpty ? "Nothing yet. Each finished turn is counted, by who started the session." : totals.map { String(format: "%@ $%.2f (%@, %d turn%@)", $0.source, $0.cost, Self.duration($0.seconds), $0.turns, $0.turns == 1 ? "" : "s") }.joined(separator: " · ")) {
+            Segmented(options: [(1, "Today"), (7, "7 days"), (30, "30 days")], selection: $range)
+        }
+    }
+
+    static func duration(_ s: Double) -> String { s < 90 ? "\(Int(s)) s" : s < 5400 ? "\(Int(s / 60)) min" : String(format: "%.1f h", s / 3600) }
 }
 
 struct RecallStatsRow: View {
