@@ -310,10 +310,10 @@ enum RemotePage {
     function updateSession(){
       if(!shell)return;
       const s=st.sessions.find(x=>x.id===open),near=window.innerHeight+window.scrollY>=document.body.scrollHeight-160;
-      shell.bar.replaceChildren(h("button",{class:"iconbtn","aria-label":"Back",onclick:()=>{open=null;lastRev=null;draw();paintNav()}},ic("back")),
+      shell.bar.replaceChildren(...[h("button",{class:"iconbtn","aria-label":"Back",onclick:()=>{open=null;lastRev=null;draw();paintNav()}},ic("back")),
         h("div",{class:"grow"},h("div",{class:"t"},s?s.title:"Session"),h("div",{class:"s"},s?s.repo+(s.branch?" · "+s.branch:""):"")),
         s?h("span",{class:"stat "+s.group},STAT[s.group]):null,
-        s&&s.group==="working"?h("button",{class:"iconbtn danger","aria-label":"Stop",onclick:()=>act(()=>api("POST","/v1/sessions/"+open+"/stop"))},ic("stop")):null);
+        s&&s.group==="working"?h("button",{class:"iconbtn danger","aria-label":"Stop",onclick:()=>act(()=>api("POST","/v1/sessions/"+open+"/stop"))},ic("stop")):null].filter(Boolean));
       shell.perms.replaceChildren(...approvalCards(),...((s&&s.permissions)||[]).map(p=>h("div",{class:"card amber"},h("div",{class:"row"},h("div",{class:"badge approval"},ic("shield")),h("div",{class:"grow"},h("div",{class:"t"},"Allow "+p.tool+"?"))),
         h("div",{class:"s wrap",style:"white-space:pre-wrap;word-break:break-all;margin-top:8px"},p.summary),
         h("div",{class:"acts"},h("button",{class:"btn primary",onclick:()=>act(()=>api("POST","/v1/sessions/"+open+"/permissions/"+p.id,{allow:true}))},ic("check"),"Allow once"),h("button",{class:"btn danger",onclick:()=>act(()=>api("POST","/v1/sessions/"+open+"/permissions/"+p.id,{allow:false}))},ic("x"),"Deny")))));
