@@ -109,6 +109,8 @@ final class TriggerTests: XCTestCase {
         let got = TriggerPolicy.failingCandidates([pr(1, "a", [fail, pass]), pr(2, "b", [pass]), pr(3, "c", [wait]), pr(4, "d", [fail], mergeable: "CONFLICTING"), pr(5, "e", [fail])], handled: ["5@e"])
         XCTAssertEqual(got.map(\.pr.number), [1]); XCTAssertEqual(got.first?.failed, ["build"]); XCTAssertEqual(got.first?.key, "1@a")
         XCTAssertEqual(TriggerPolicy.failingCandidates([pr(5, "f", [fail])], handled: ["5@e"]).count, 1, "a new commit is a new chance")
+        XCTAssertTrue(TriggerPolicy.failingCandidates([pr(5, "g", [fail])], handled: ["5@e", "5@f"]).isEmpty, "two attempts are enough; after that it is left to you")
+        XCTAssertEqual(TriggerPolicy.failingCandidates([pr(6, "g", [fail])], handled: ["5@e", "5@f"]).count, 1, "the cap is per pull request")
     }
 
     func testPromptsFenceIssueTextAndNameTheChecks() {

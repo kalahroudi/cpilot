@@ -212,9 +212,10 @@ public enum GitHub {
         }
     }
 
-    public static func issues(in dir: String, state: String = "open", search: String = "") async throws -> [Issue] {
+    public static func issues(in dir: String, state: String = "open", search: String = "", label: String = "") async throws -> [Issue] {
         var a = ["issue", "list", "--state", state, "--limit", "50", "--json", Issue.listFields]
         if !search.isEmpty { a += ["--search", search] }
+        if !label.isEmpty { a += ["--label", label] }
         let out = try await Shell.check("gh", a, cwd: url(dir), timeout: 60)
         return try JSONDecoder().decode([Issue].self, from: Data(out.utf8))
     }

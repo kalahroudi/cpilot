@@ -206,12 +206,17 @@ public enum TriggerPolicy {
         }.sorted { $0.number < $1.number }
     }
 
-    /// Pull requests whose checks have failed on a commit not yet handled. The key is the pull request and its head commit, so a new push is a new chance.
+    /// Fix attempts for one pull request before CPilot stops trying and leaves it to you.
+    public static let maxAttempts = 2
+
+    /// Pull requests whose checks have failed on a commit not yet handled. The key is the pull request and its head commit, so a new push is a new chance,
+    /// up to `maxAttempts` for the same pull request, so a fix that does not work cannot loop.
     public static func failingCandidates(_ prs: [CIPullRequest], handled: Set<String>) -> [(pr: CIPullRequest, failed: [String], key: String)] {
         prs.compactMap { pr in
             guard case .failed(let names) = CIVerdict.of(pr.statusCheckRollup), pr.mergeable?.uppercased() != "CONFLICTING" else { return nil }
             let key = "\(pr.number)@\(pr.headRefOid)"
-            return handled.contains(key) ? nil : (pr, names, key)
+            guard !handled.contains(key), handled.filter({ $0.hasPrefix("\(pr.number)@") }).count < maxAttempts else { return nil }
+            return (pr, names, key)
         }
     }
 
