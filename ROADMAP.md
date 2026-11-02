@@ -15,7 +15,7 @@ Today you start sessions one at a time and watch them. These ideas make a whole 
 
 - **Race.** Send one prompt to several agents or models, each in its own worktree, then compare their results in the existing diff view and keep one. The others are discarded with their worktrees.
 - **Roles and pipelines.** A task can run as implement, then review, then fix, then verify, with a different agent or model for each step. A review that finds problems sends them back to the implementer automatically, up to a limit you set, then stops and asks you.
-- **Parallel spec runs with limits.** Specs already start each task on its own branch. Add a concurrency cap, a dependency-aware scheduler that starts whatever is unblocked, retry with a different agent when a task fails, and a pause-and-redirect control on any running task.
+- **Parallel spec runs, the rest.** Specs start each task on its own branch, and work that starts by itself respects a cap on agents and a daily budget. Still to add: retry with a different agent when a task fails, and a pause-and-redirect control on any running task.
 - **Orchestrator sessions, for any session.** The chief pilot already runs a repository's specs, stacks and pull requests end to end. What is left is letting any session start, watch, message and stop others through the built-in MCP server, with a depth limit and a cap on children.
 
 **Keeping parallel work from colliding**

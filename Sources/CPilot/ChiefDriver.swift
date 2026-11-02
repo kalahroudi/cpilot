@@ -81,6 +81,7 @@ enum ChiefDriver {
             guard let id = text("id"), specs.doc(id)?.tasksText != nil else { return fail("No such spec, or it has no tasks yet.") }
             await specs.refresh()
             guard let d = specs.doc(id) else { return fail("No such spec.") }
+            if let why = Workspace.shared.unattendedHold() { return (200, ["started": [String](), "held": why, "note": "Nothing was started. You are woken when an agent finishes; ask again then."]) }
             let before = Specs.ready(d.tasks, merged: specs.merged, coded: specs.coded)
             if let want = text("task") {
                 guard let t = before.first(where: { $0.id == want }) else { return fail("\(want) is not ready: it is finished, already started, or waits for a task that has no code yet.") }
@@ -97,6 +98,7 @@ enum ChiefDriver {
             guard let n = body["pr"] as? Int else { return fail("pr (the pull request number) is required.") }
             guard let pr = try? await GitHub.view(n, in: repo.dir), pr.isOpen else { return fail("#\(n) is not an open pull request of this repository.") }
             if let m = reviewer(of: n, in: repo), Workspace.shared.controller(m.id)?.isBusy == true { return fail("#\(n) already has a reviewer working on it.") }
+            if let why = Workspace.shared.unattendedHold() { return (200, ["held": why, "note": "No reviewer was started. You are woken when an agent finishes; ask again then."]) }
             do {
                 let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus")),
                                                                title: "Review #\(n)", readOnly: false, show: false, reviewOf: n)

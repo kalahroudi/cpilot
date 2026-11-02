@@ -29,6 +29,8 @@ final class SessionController: Identifiable {
     var state: RunState = .asleep
     var pending: [Pending] = []
     var cost: Double = 0
+    @ObservationIgnored private var turnStartedAt: Date?
+    @ObservationIgnored private var turnCost: Double = 0
     var loaded = false
     /// Called after each finished turn; spec tasks use it to know when their agent is done.
     var onTurnEnd: ((SessionController) -> Void)?
@@ -180,6 +182,7 @@ final class SessionController: Identifiable {
         if meta.title == "New session" { meta.title = String(text.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines) }
         meta.updatedAt = .now; ws.save(meta)
         state = .running
+        turnStartedAt = .now
         sleepTask?.cancel()
         Task { @MainActor in
             var body = composed.text
@@ -256,7 +259,7 @@ final class SessionController: Identifiable {
             case .permission(let req):
                 handlePermission(PermissionRequestEnvelope(source: .claude(req), request: req))
             case .turnEnded(let isError, let text, let cost):
-                if let c = cost { self.cost += c }
+                if let c = cost { self.cost += c; turnCost += c }
                 if let n = runner?.linesReceived { meta.remoteLines = n }
                 if isError, let t = text, !t.isEmpty { addNotice(t, error: true) }
                 finishTurn()
@@ -427,6 +430,10 @@ final class SessionController: Identifiable {
     // MARK: Life cycle
 
     private func finishTurn() {
+        if let t0 = turnStartedAt {
+            ws.ledger.add(LedgerEntry(session: id, title: meta.title, repo: meta.cwd, source: Guardrails.source(of: meta), cost: turnCost, seconds: Date().timeIntervalSince(t0)))
+        }
+        turnStartedAt = nil; turnCost = 0
         if case .failed = state {} else { state = pending.isEmpty ? .idle : .waiting }
         meta.updatedAt = .now; ws.save(meta)
         ws.turnFinished(self)
@@ -529,6 +536,14 @@ final class Workspace {
     /// Bodies of the saved notes, so a message that is already remembered shows a green brain instead of offering Remember again.
     private(set) var rememberedTexts: Set<String> = []
     private var controllers: [String: SessionController] = [:]
+    let ledger = Ledger()
+
+    /// Agents working right now, on any repository.
+    var runningAgents: Int { controllers.values.filter(\.isBusy).count }
+    /// Why work that starts by itself should wait, or nil. Your own sessions are never held by this.
+    func unattendedHold() -> String? {
+        Guardrails.hold(running: runningAgents, limit: Prefs.shared.maxAgents, spentToday: ledger.spent(since: Guardrails.startOfDay()), budget: Double(Prefs.shared.dailyBudget))
+    }
 
     private init() {
         memory = MemoryStore(index: index)
