@@ -57,7 +57,7 @@ final class AlertCenter {
         guard c.pending.isEmpty else { return }
         let branch = c.meta.branch ?? ""
         let own = branch.hasPrefix("phone/") || branch.hasPrefix("trigger/")
-        let chiefDone = c.meta.chief == true && !(ChiefWaker.shared.entries[c.meta.cwd]?.expecting ?? false) && !ChiefWaker.workInFlight(repo: c.meta.cwd, chiefId: c.id)
+        let chiefDone = ChiefWaker.isDone(c)
         guard own || chiefDone else { return }
         let last = c.items.last(where: { $0.kind == .assistant && !$0.text.isEmpty })?.text ?? ""
         let line = last.split(separator: "\n").first.map { String($0.prefix(140)) } ?? "Done."
