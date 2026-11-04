@@ -198,6 +198,7 @@ enum ChiefDriver {
                 var r: [String: Any] = ["id": t.id, "title": t.title, "done": t.done, "ready": ready.contains(t.id), "needs": t.needs]
                 if let b = t.branch { r["branch"] = b }
                 if let p = t.pr { r["pr"] = p }
+                if let sm = c.summary(d.id, t.id) { r["risk"] = sm.risk.rawValue; r["changes"] = sm.headline; if !sm.reasons.isEmpty { r["risk_reasons"] = sm.reasons } }
                 return r
             },
         ]

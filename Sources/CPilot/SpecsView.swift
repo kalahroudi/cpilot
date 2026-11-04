@@ -339,9 +339,18 @@ struct TaskRow: View {
     let doc: SpecDoc
     let task: SpecTask
     let ready: Bool
+    @State private var showSummary = false
     var center: SpecCenter { SpecCenter.shared }
 
     var body: some View {
+        let summary = center.summary(doc.id, task.id)
+        VStack(alignment: .leading, spacing: 0) {
+            row(summary)
+            if showSummary, let summary { TaskSummaryCard(summary: summary).padding(.horizontal, 12).padding(.bottom, 10) }
+        }
+    }
+
+    @ViewBuilder private func row(_ summary: TaskSummary?) -> some View {
         let isMerged = task.branch.map(center.merged.contains) ?? false
         let done = task.done || isMerged
         let session = center.repo.flatMap { r in task.branch.flatMap { Workspace.shared.session(forBranch: $0, repo: r.dir, environment: r.environment) } }
@@ -354,6 +363,14 @@ struct TaskRow: View {
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
             Spacer()
+            if let summary, !done, state != .running, state != .waiting {
+                Button { showSummary.toggle() } label: {
+                    HStack(spacing: 4) {
+                        Badge(text: "\(summary.risk.label) risk", kind: summary.risk == .high ? .danger : summary.risk == .medium ? .warn : .ok)
+                        Image(systemName: showSummary ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                }.buttonStyle(.plain).help("What this task changed, what was run against it, and what is risky about it")
+            }
             if done { Badge(text: "Done", kind: .ok) }
             else if state == .running || state == .waiting { Badge(text: state == .waiting ? "Needs approval" : "Running", kind: state == .waiting ? .warn : .accent) }
             else if task.pr != nil { Badge(text: "In review", kind: .accent) }
@@ -362,6 +379,46 @@ struct TaskRow: View {
             else if task.branch == nil { Badge(text: "Waiting") }
             if let s = session, !done { Button("Session") { Workspace.shared.select(s.id); Nav.shared.pane = .sessions }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
         }.padding(.horizontal, 12).padding(.vertical, 8)
+    }
+}
+
+/// What a finished task comes to, so review starts from the risks and not from the whole diff.
+struct TaskSummaryCard: View {
+    let summary: TaskSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(summary.headline).font(.system(size: 12, weight: .semibold))
+            if summary.reasons.isEmpty {
+                Label("Nothing here stands out.", systemImage: "checkmark.circle").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Look at").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(summary.reasons, id: \.self) { r in
+                        Label { Text(.init(r)).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(summary.risk == .high ? Theme.danger : Theme.warn) }
+                            .font(.system(size: 12))
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Run against it").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                if summary.verified.isEmpty { Text("Nothing.").font(.system(size: 12)).foregroundStyle(.secondary) }
+                ForEach(summary.verified, id: \.self) { c in Label { Text(c).font(.system(size: 11.5, design: .monospaced)) } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.ok) }.font(.system(size: 12)) }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Biggest changes").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                ForEach(summary.biggest, id: \.path) { f in
+                    HStack(spacing: 6) {
+                        Text(f.path).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text("+\(f.added)").foregroundStyle(Theme.ok); Text("−\(f.removed)").foregroundStyle(Theme.danger)
+                    }.font(.system(size: 11.5))
+                }
+            }
+            if summary.attempts > 1 { Text("Passed on try \(summary.attempts).").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

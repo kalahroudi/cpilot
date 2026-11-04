@@ -110,6 +110,7 @@ final class SpecCenter {
     private func forgetFinishedGates() {
         for d in docs { for t in d.tasks where t.done || (t.branch.map(merged.contains) ?? false) { Workspace.shared.gates.set(nil, for: gateKey(d.id, t.id)) } }
     }
+    func summary(_ id: String, _ taskId: String) -> TaskSummary? { gateRecord(id, taskId)?.summary }
     func isHeld(_ id: String, _ taskId: String) -> Bool { gateRecord(id, taskId)?.held != nil }
     private var resuming: Set<String> = []
 
@@ -488,7 +489,9 @@ final class SpecCenter {
             switch outcome {
             case .clear:
                 if nudge(session, task: task, rec: &rec) { Workspace.shared.gates.set(rec, for: skey); await continueBuilding(id); return }
-            case .passed(let head): rec.passedHead = head.isEmpty ? nil : head; rec.nudges = nil
+            case .passed(let head, let summary):
+                rec.passedHead = head.isEmpty ? nil : head; rec.nudges = nil
+                if let summary { rec.summary = summary }
             case .sentBack: rec.answering = true; rec.passedHead = nil; Workspace.shared.gates.set(rec, for: skey); return
             case .held(let why):
                 rec.held = why; rec.passedHead = nil

@@ -166,6 +166,8 @@ public struct GateRecord: Codable, Equatable, Sendable {
     public var passedHead: String?
     /// Times the session was told to carry on after a turn that wrote nothing; cleared by a turn that did. Optional so older files still load.
     public var nudges: Int?
+    /// What the task came to when it last passed. Optional so older files still load.
+    public var summary: TaskSummary?
     public var updated = Date()
     public init() {}
 }

@@ -11,7 +11,7 @@ enum TaskGateRunner {
         /// Nothing to verify yet: the session has not changed anything.
         case clear
         /// Everything passed on this commit.
-        case passed(head: String)
+        case passed(head: String, summary: TaskSummary?)
         /// Failures were sent back; the session's next turn answers them.
         case sentBack
         /// The gate gave up. The reason is for the user.
@@ -42,7 +42,7 @@ enum TaskGateRunner {
         // A session that has written nothing is thinking or asking, not done.
         if inputs.diff.isEmpty, !inputs.dirty { return .clear }
         // Passed on this very commit before (the app was restarted since): nothing has changed, so nothing to run again.
-        if !inputs.head.isEmpty, inputs.head == passedHead, !inputs.dirty { return .passed(head: inputs.head) }
+        if !inputs.head.isEmpty, inputs.head == passedHead, !inputs.dirty { return .passed(head: inputs.head, summary: nil) }
 
         let protected = await protectedPaths(repo: repo)
         var problems = DiffCheck.problems(diff: inputs.diff, touches: task.touches, protected: protected)
@@ -67,7 +67,9 @@ enum TaskGateRunner {
                 state.flaggedHead = inputs.head
                 c.addNotice("\(task.id) changes protected files its spec names: \(flagged.prefix(5).map { "`\($0)`" }.joined(separator: ", ")). Look at them yourself before this merges.", error: true)
             }
-            return .passed(head: inputs.head)
+            let summary = TaskSummarizer.summarize(diff: inputs.diff, head: inputs.head, touches: task.touches, protected: protected,
+                                                   verified: checks.filter(\.ok).map(\.command), attempts: state.runs)
+            return .passed(head: inputs.head, summary: summary)
         case .retry(let message):
             let what = checks.first { !$0.ok }.map { "`\($0.command)` failed" } ?? "the change needs attention"
             c.addNotice("CPilot checked \(task.id): \(what). Sent back to the agent (try \(state.runs) of \(TaskGate.runLimit)).")
