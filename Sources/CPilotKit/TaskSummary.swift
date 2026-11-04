@@ -35,6 +35,20 @@ public struct TaskSummary: Codable, Equatable, Sendable {
         "\(files.count) file\(files.count == 1 ? "" : "s"), +\(additions) −\(deletions)"
     }
 
+    /// The summary as a block for a pull request description. `currentHead` is the branch tip now: when it is not the commit the gate checked, commits were
+    /// added since (a reviewer's fixes, say) and the block says so rather than describing work it did not see.
+    public func markdown(currentHead: String? = nil) -> String {
+        var out = "<!-- cpilot-summary -->\n**CPilot summary** · \(risk.label) risk · \(headline)\n"
+        if let currentHead, !head.isEmpty, !currentHead.isEmpty, currentHead != head {
+            out += "\n_Checked at `\(head.prefix(7))`. Commits were added after that (for example a reviewer's fixes), so what follows may be out of date._\n"
+        }
+        if !reasons.isEmpty { out += "\n**Look at**\n" + reasons.map { "- \($0)" }.joined(separator: "\n") + "\n" }
+        out += "\n**Run against it**\n" + (verified.isEmpty ? "- nothing\n" : verified.map { "- `\($0)` passed" }.joined(separator: "\n") + "\n")
+        out += "\n**Biggest changes**\n" + biggest.map { "- `\($0.path)` (+\($0.added) −\($0.removed))" }.joined(separator: "\n") + "\n"
+        if attempts > 1 { out += "\nPassed the gate on try \(attempts).\n" }
+        return out + "<!-- /cpilot-summary -->"
+    }
+
     /// The biggest changes first, for a short list.
     public var biggest: [File] { files.sorted { $0.added + $0.removed > $1.added + $1.removed }.prefix(5).map { $0 } }
 }

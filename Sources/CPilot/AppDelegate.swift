@@ -45,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         TriggerEngine.shared.start()
         CleanupCenter.shared.start()
         ChiefWaker.shared.resume()
+        LiveStackHost.describer = { dir, branch in
+            let tip = try? await Shell.check("git", ["rev-parse", branch], cwd: URL(fileURLWithPath: dir), timeout: 15)
+            return await MainActor.run { SpecHub.shared.summaryMarkdown(dir: dir, branch: branch, currentHead: tip?.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
         Task { await SpecHub.shared.resumeAll() }
         Updater.shared.confirmLaunch()                                   // tells a pending swap script "the new version started"
         Task { Updater.shared.autoCheckIfDue(enabled: Prefs.shared.autoCheckUpdates) }

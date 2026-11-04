@@ -16,6 +16,9 @@ final class FakeHost: StackHost, @unchecked Sendable {
     }
     func setBase(_ number: Int, base: String) async throws { calls.append("base #\(number)->\(base)") }
     func setBody(_ number: Int, body: String) async throws { bodies[number] = body }
+    /// What to write below the stack list, by branch.
+    var descriptions: [String: String] = [:]
+    func description(of branch: String) async -> String? { descriptions[branch] }
     func close(_ number: Int, comment: String) async throws {
         calls.append("close #\(number)")
         if let i = prs.firstIndex(where: { $0.number == number }) { prs[i].state = "CLOSED" }
@@ -280,6 +283,24 @@ final class StackTests: XCTestCase {
         let stale = await Worktrees.list(in: dir); XCTAssertTrue(stale.contains { $0.missing })
         await Worktrees.prune(in: dir)
         let clean = await Worktrees.list(in: dir); XCTAssertFalse(clean.contains { $0.missing })
+    }
+
+    func testSubmitWritesTheTaskSummaryBelowTheStackListAndKeepsItOnResubmit() async throws {
+        try await buildStack()
+        let host = FakeHost()
+        host.descriptions = ["b": "<!-- cpilot-summary -->\n**CPilot summary** · Low risk\n<!-- /cpilot-summary -->"]
+        var stack = await Stacks.load(in: dir, host: host)[0]
+        let numbers = try await Stacks.submit(stack, in: dir, host: host)
+        let b = host.bodies[numbers["b"]!]!
+        XCTAssertTrue(b.contains("**CPilot summary**"))
+        XCTAssertLessThan(b.range(of: "cpilot-stack")!.lowerBound, b.range(of: "cpilot-summary")!.lowerBound, "the stack list comes first")
+        XCTAssertFalse(host.bodies[numbers["a"]!]!.contains("CPilot summary"), "a branch that is not a task gets none")
+        XCTAssertEqual(Stacks.withoutFooter(b), "", "the summary is not part of the description a person wrote")
+        host.descriptions["b"] = "<!-- cpilot-summary -->\nnewer\n<!-- /cpilot-summary -->"
+        stack = await Stacks.load(in: dir, host: host)[0]
+        _ = try await Stacks.submit(stack, in: dir, host: host)
+        XCTAssertTrue(host.bodies[numbers["b"]!]!.contains("newer"))
+        XCTAssertEqual(host.bodies[numbers["b"]!]!.components(separatedBy: "cpilot-summary -->").count, 3, "written once, not appended again")
     }
 
     func testSubmitCreatesChainedPullRequestsThenUpdates() async throws {
