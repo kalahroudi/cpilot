@@ -493,7 +493,7 @@ public enum Stacks {
     /// Takes origin's commits into each local branch before anything is pushed, so the force push can never delete them.
     /// The branch is rebased in a folder of its own (your own commits go on top), then the branches above it follow.
     /// Returns the stack as it is afterwards. A conflict stops here like a restack conflict does, and nothing is pushed.
-    static func takeInRemoteWork(_ stack: Stack, in dir: String, host: StackHost) async throws -> Stack {
+    static func takeInRemoteWork(_ stack: Stack, in dir: String, host: StackHost?) async throws -> Stack {
         var current = stack
         for name in stack.branches.filter({ !$0.isMerged }).map(\.name) {
             guard await remoteOnlyCommits(name, in: dir) > 0, let b = current.branches.first(where: { $0.name == name }) else { continue }
@@ -632,6 +632,9 @@ public enum Stacks {
         let stack = Stack(trunk: first.trunk, branches: stacks.flatMap(\.branches))
         let open = stack.branches.filter { !$0.isMerged && $0.prState != "CLOSED" }
         guard open.count >= 2 else { throw StackError.message("There is nothing to combine: fewer than two open branches.") }
+        // Reviewers push their fixes to the pull requests' branches on origin, which these local branches do not have. Take them in first, as a submit does,
+        // or the combined branch is built from the older commits and the fixes are lost.
+        for st in stacks { _ = try await takeInRemoteWork(st, in: dir, host: nil) }
         await fetch(in: dir)
         let remote = "origin/\(stack.trunk)"
         let base = await gitOK(["rev-parse", "--verify", "--quiet", remote], in: dir) ? remote : stack.trunk
