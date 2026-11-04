@@ -968,6 +968,7 @@ final class Workspace {
     func turnFinished(_ c: SessionController) {
         AppModel.shared.updateStatusIcon()
         AlertCenter.shared.turnEnded(c)
+        ChiefWaker.shared.turnEnded(c)
         LessonLearner.shared.chiefTurnEnded(c)
         CleanupCenter.shared.chiefTurnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }

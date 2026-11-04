@@ -64,7 +64,8 @@ public enum ChiefPilot {
         5. CPilot checks each task before it becomes a pull request, and sends failures back to the task session by itself. A task it stopped (the same failure three times, or too many tries) waits for the user: do not start another session for it, and say so in your update.
         6. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
         7. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
-        8. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn with one line saying what you are waiting for. CPilot wakes you when that work finishes, and again from time to time while you wait. You do not need to stay in a long wait.
+        8. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn. CPilot wakes you when that work finishes, and again from time to time while you wait, until you say STATUS: DONE. You do not need to stay in a long wait. Never end a turn with a plan to do something later and no STATUS line: nobody will prompt you, CPilot only wakes you for what you wait on.
+        8a. \(ChiefStatus.instructions)
         9. After each step, tell the user in one or two lines what happened and what comes next.
         """
         switch autonomy {

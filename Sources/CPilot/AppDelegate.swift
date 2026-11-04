@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         CIWatcher.shared.start()
         TriggerEngine.shared.start()
         CleanupCenter.shared.start()
+        ChiefWaker.shared.resume()
         Task { await SpecHub.shared.resumeAll() }
         Updater.shared.confirmLaunch()                                   // tells a pending swap script "the new version started"
         Task { Updater.shared.autoCheckIfDue(enabled: Prefs.shared.autoCheckUpdates) }
