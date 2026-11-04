@@ -148,6 +148,17 @@ final class GateStoreTests: XCTestCase {
         XCTAssertNotEqual(GateStore.key(repo: "/a", environment: nil, spec: "s", task: "T1"), GateStore.key(repo: "/a", environment: "pi", spec: "s", task: "T1"))
     }
 
+    func testASpecIsForgottenWithoutTouchingOthers() {
+        let store = GateStore(url: nil)
+        let a1 = GateStore.key(repo: "/r", environment: nil, spec: "001-a", task: "T001"), a2 = GateStore.key(repo: "/r", environment: nil, spec: "001-a", task: "T002")
+        let b = GateStore.key(repo: "/r", environment: nil, spec: "001-ab", task: "T001"), other = GateStore.key(repo: "/s", environment: nil, spec: "001-a", task: "T001")
+        for k in [a1, a2, b, other] { store.set(GateRecord(), for: k) }
+        store.removeAll(prefix: GateStore.specPrefix(repo: "/r", environment: nil, spec: "001-a"))
+        XCTAssertNil(store.record(a1)); XCTAssertNil(store.record(a2))
+        XCTAssertNotNil(store.record(b), "a spec whose name starts the same is a different spec")
+        XCTAssertNotNil(store.record(other))
+    }
+
     func testClearingAndPruning() {
         let store = GateStore(url: nil)
         store.set(GateRecord(), for: "k")

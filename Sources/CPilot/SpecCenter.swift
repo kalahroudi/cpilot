@@ -103,6 +103,13 @@ final class SpecCenter {
     private(set) var gating: Set<String> = []
     private func gateKey(_ id: String, _ taskId: String) -> String { GateStore.key(repo: repo?.dir ?? "", environment: repo?.environment, spec: id, task: taskId) }
     private func gateRecord(_ id: String, _ taskId: String) -> GateRecord? { Workspace.shared.gates.record(gateKey(id, taskId)) }
+    /// Nothing more to remember about a spec that is gone, or about a task that is finished.
+    private func forgetGates(spec id: String) {
+        Workspace.shared.gates.removeAll(prefix: GateStore.specPrefix(repo: repo?.dir ?? "", environment: repo?.environment, spec: id))
+    }
+    private func forgetFinishedGates() {
+        for d in docs { for t in d.tasks where t.done || (t.branch.map(merged.contains) ?? false) { Workspace.shared.gates.set(nil, for: gateKey(d.id, t.id)) } }
+    }
     func isHeld(_ id: String, _ taskId: String) -> Bool { gateRecord(id, taskId)?.held != nil }
     private var resuming: Set<String> = []
 
@@ -239,6 +246,7 @@ final class SpecCenter {
         let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
         for d in docs { await adoptBranches(d) }
         for d in docs { await tickMerged(d, landed: landed) }
+        forgetFinishedGates()
         await archiveFinished(before: before)
         if selected == nil { selected = docs.last?.id }
     }
@@ -249,7 +257,7 @@ final class SpecCenter {
         guard Prefs.shared.autoArchiveSpecs, let r = repo else { return }
         for d in docs where status(d) == .done && before[d.id].map({ $0 != .done }) == true && jobs[d.id]?.running != true {
             guard (try? await Exec.with(env) { try await Specs.archive(d.id, in: r.dir) }) != nil else { continue }
-            jobs[d.id] = nil; dropRun(d.id)
+            jobs[d.id] = nil; dropRun(d.id); forgetGates(spec: d.id)
             docs.removeAll { $0.id == d.id }; archived = (archived + [d.id]).sorted()
             if selected == d.id { selected = nil }
             AppModel.shared.show("\(d.title) is done and was archived.", error: false)
@@ -542,7 +550,7 @@ final class SpecCenter {
     func delete(_ id: String) async {
         guard let r = repo, jobs[id]?.running != true else { return }
         do { try await Exec.with(env) { try await Specs.remove(id, in: r.dir) } } catch { jobs[id, default: Job()].error = "\(error)"; return }
-        jobs[id] = nil; dropRun(id)
+        jobs[id] = nil; dropRun(id); forgetGates(spec: id)
         if selected == id { selected = nil }
         await refresh()
     }

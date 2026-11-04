@@ -181,6 +181,17 @@ public final class GateStore: @unchecked Sendable {
     /// The key for one task of one spec in one repository.
     public static func key(repo: String, environment: String?, spec: String, task: String) -> String { "\(environment ?? "")|\(repo)|\(spec)/\(task)" }
 
+    /// The start of every key of one spec's tasks.
+    public static func specPrefix(repo: String, environment: String?, spec: String) -> String { "\(environment ?? "")|\(repo)|\(spec)/" }
+
+    /// Forgets every record whose key starts with `prefix` (a spec that was deleted or archived).
+    public func removeAll(prefix: String) {
+        lock.lock(); defer { lock.unlock() }
+        let before = rows.count
+        rows = rows.filter { !$0.key.hasPrefix(prefix) }
+        if rows.count != before { save() }
+    }
+
     public func record(_ key: String) -> GateRecord? { lock.lock(); defer { lock.unlock() }; return rows[key] }
 
     public func set(_ r: GateRecord?, for key: String) {
