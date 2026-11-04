@@ -177,3 +177,50 @@ final class GateStoreTests: XCTestCase {
         XCTAssertNil(loaded.record("old"), "a record untouched for two months is dropped on the next write")
     }
 }
+
+final class SecretsAndNudgeTests: XCTestCase {
+    private func diff(_ path: String, _ added: [String]) -> String {
+        "diff --git a/\(path) b/\(path)\n--- a/\(path)\n+++ b/\(path)\n@@ -0,0 +1 @@\n" + added.map { "+" + $0 }.joined(separator: "\n") + "\n"
+    }
+
+    func testKnownKeyShapesAreFoundWithoutEchoingThem() {
+        let key = "AKIA" + "ABCDEFGHIJKLMNOP"
+        let p = DiffCheck.problems(diff: diff("Sources/Cloud.swift", ["let k = \"\(key)\""]), touches: [])
+        XCTAssertEqual(p.count, 1)
+        XCTAssertTrue(p[0].contains("AWS access key"))
+        XCTAssertFalse(p[0].contains(key))
+    }
+
+    func testPrivateKeysTokensAndSecretFilesAreFound() {
+        let gh = "ghp_" + String(repeating: "a1B2", count: 9)
+        XCTAssertFalse(DiffCheck.problems(diff: diff("a.txt", ["-----BEGIN OPENSSH PRIVATE KEY-----"]), touches: []).isEmpty)
+        XCTAssertFalse(DiffCheck.problems(diff: diff("a.sh", ["export T=\(gh)"]), touches: []).isEmpty)
+        XCTAssertFalse(DiffCheck.problems(diff: diff("config/.env", ["A=1"]), touches: []).isEmpty)
+        XCTAssertFalse(DiffCheck.problems(diff: diff("deploy/server.pem", ["x"]), touches: []).isEmpty)
+    }
+
+    func testHardCodedSecretsAreFoundButPlaceholdersAndTestsAreNot() {
+        XCTAssertFalse(DiffCheck.problems(diff: diff("App.swift", ["let apiKey = \"q8Zr2LmN7vTx4PbW9cKd\""]), touches: []).isEmpty)
+        XCTAssertTrue(DiffCheck.problems(diff: diff("App.swift", ["let apiKey = \"your-api-key-goes-here\""]), touches: []).isEmpty)
+        XCTAssertTrue(DiffCheck.problems(diff: diff("App.swift", ["let apiKey = ProcessInfo.processInfo.environment[\"API_KEY\"]"]), touches: []).isEmpty)
+        XCTAssertTrue(DiffCheck.problems(diff: diff("Tests/AppTests.swift", ["let password = \"q8Zr2LmN7vTx4PbW9cKd\""]), touches: []).isEmpty)
+        XCTAssertTrue(DiffCheck.problems(diff: diff(".env.example", ["A=1"]), touches: []).isEmpty)
+    }
+
+    func testNudgeCarriesOnTwiceThenGivesUp() {
+        guard case .nudge = TaskNudge.decide(lastText: "I will implement it next.", nudges: 0) else { return XCTFail() }
+        guard case .nudge = TaskNudge.decide(lastText: "Working on it.", nudges: 1) else { return XCTFail() }
+        XCTAssertEqual(TaskNudge.decide(lastText: "Working on it.", nudges: 2), .giveUp)
+    }
+
+    func testAQuestionIsLeftForTheUser() {
+        XCTAssertEqual(TaskNudge.decide(lastText: "Done reading.\n\nShould I use the v1 or v2 API?", nudges: 0), .asked)
+        XCTAssertEqual(TaskNudge.decide(lastText: "**Which database?**", nudges: 5), .asked)
+    }
+
+    func testOldGateRecordsStillLoad() throws {
+        let old = #"{"state":{"runs":1,"failures":[]},"answering":false,"updated":"2026-01-01T00:00:00Z"}"#
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        XCTAssertNil(try dec.decode(GateRecord.self, from: Data(old.utf8)).nudges)
+    }
+}

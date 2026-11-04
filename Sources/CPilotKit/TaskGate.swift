@@ -111,6 +111,7 @@ public enum DiffCheck {
             if removed > added { out.append("`\(f.path)` lost \(removed - added) assertion\(removed - added == 1 ? "" : "s") (\(removed) removed, \(added) added). A test is changed to check the new behavior, not to check less.") }
             if f.added.contains(where: isSkip) { out.append("`\(f.path)` has a test turned off or skipped. Fix the test or the code instead.") }
         }
+        out += Secrets.problems(files)
         let changed = files.map(\.path)
         let named = touches.filter { !$0.isEmpty }
         if !named.isEmpty, !changed.isEmpty, !changed.contains(where: { path in named.contains { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } }) {
@@ -160,6 +161,8 @@ public struct GateRecord: Codable, Equatable, Sendable {
     public var held: String?
     public var answering = false
     public var passedHead: String?
+    /// Times the session was told to carry on after a turn that wrote nothing; cleared by a turn that did. Optional so older files still load.
+    public var nudges: Int?
     public var updated = Date()
     public init() {}
 }
@@ -208,5 +211,78 @@ public final class GateStore: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard let data = try? enc.encode(rows) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+}
+
+
+/// Keys and private files that must never reach a commit. The gate sends the finding back before a task goes to review. A finding names the file and
+/// the kind of secret, never the secret itself, so it does not spread into logs or the agent's next message.
+enum Secrets {
+    struct Rule { var kind: String; var pattern: String }
+
+    /// High confidence: each of these shapes is a credential wherever it appears.
+    static let rules = [
+        Rule(kind: "a private key", pattern: #"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----"#),
+        Rule(kind: "an AWS access key", pattern: #"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"#),
+        Rule(kind: "a GitHub token", pattern: #"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})\b"#),
+        Rule(kind: "an Anthropic API key", pattern: #"\bsk-ant-[A-Za-z0-9_-]{20,}"#),
+        Rule(kind: "an OpenAI API key", pattern: #"\bsk-(?:proj-)?[A-Za-z0-9_-]{40,}"#),
+        Rule(kind: "a Slack token", pattern: #"\bxox[abprs]-[A-Za-z0-9-]{10,}"#),
+        Rule(kind: "a live Stripe key", pattern: #"\b[rs]k_live_[A-Za-z0-9]{16,}"#),
+        Rule(kind: "a Google API key", pattern: #"\bAIza[0-9A-Za-z_-]{35}\b"#),
+    ]
+    /// Lower confidence: a name that says secret, set to a long literal. Skipped in tests, and when the value looks like a placeholder.
+    static let assignment = #"(?i)\b[\w.-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b["']?\s*[:=]\s*["']([^"'\s]{16,})["']"#
+    static let placeholder = ["example", "placeholder", "changeme", "change-me", "your", "xxxx", "dummy", "fake", "sample", "redacted", "<", "${", "{{", "$(", "process.env", "getenv", "environ"]
+
+    static func problems(_ files: [DiffCheck.FileDiff]) -> [String] {
+        var out: [String] = []
+        let assign = try? NSRegularExpression(pattern: assignment)
+        for f in files where !f.deleted {
+            var found: [String] = []
+            let name = (f.path as NSString).lastPathComponent.lowercased()
+            if (name == ".env" || name.hasPrefix(".env.") && !["example", "sample", "template", "dist"].contains { name.hasSuffix($0) })
+                || [".pem", ".p12", ".pfx", ".keystore"].contains(where: name.hasSuffix) || ["id_rsa", "id_ed25519", "id_ecdsa"].contains(name) {
+                found.append("a file that holds secrets")
+            }
+            for line in f.added {
+                let l = line.lowercased()
+                for r in rules where !found.contains(r.kind) && line.range(of: r.pattern, options: .regularExpression) != nil && !l.contains("example") { found.append(r.kind) }
+                if !DiffCheck.isTest(f.path), !found.contains("a hard-coded secret"), let assign,
+                   let m = assign.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)), let r = Range(m.range(at: 1), in: line),
+                   !placeholder.contains(where: { line[r].lowercased().contains($0) }) { found.append("a hard-coded secret") }
+            }
+            for kind in found {
+                out.append("`\(f.path)` contains \(kind). Never commit one: take it out, read it from the environment or the keychain, and rewrite the commit so it is not in the history (`git commit --amend`, or `git rebase -i`). If it is real, tell the user to revoke it, because it has been written to disk and may have been sent to a model.")
+            }
+        }
+        return out
+    }
+}
+
+/// What to do when a task session ends a turn having written nothing. Nobody wakes it, so it sits until the user prompts it.
+public enum TaskNudge {
+    /// How many times a session is told to carry on before the user is asked to look.
+    public static let limit = 2
+
+    public enum Action: Equatable, Sendable {
+        /// Send this to the session.
+        case nudge(String)
+        /// The session asked the user something; leave it for them.
+        case asked
+        /// It was told to carry on `limit` times and still wrote nothing.
+        case giveUp
+    }
+
+    public static func decide(lastText: String, nudges: Int) -> Action {
+        if asksQuestion(lastText) { return .asked }
+        if nudges >= limit { return .giveUp }
+        return .nudge("CPilot: you ended your turn without writing any changes for this task. Nobody will prompt you. Carry on and finish it now: make the change, run the tests, and commit it. If you are blocked on something only the user can answer, ask it in one line and stop.")
+    }
+
+    /// True when the last paragraph of a message ends in a question mark: the agent waits for an answer, not for a push.
+    public static func asksQuestion(_ text: String) -> Bool {
+        let last = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n\n").last ?? ""
+        return last.trimmingCharacters(in: CharacterSet(charactersIn: "*_` \n")).hasSuffix("?")
     }
 }
