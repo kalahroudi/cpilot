@@ -11,7 +11,7 @@ public struct GateCheck: Equatable, Sendable {
 }
 
 /// What the gate has seen of one task so far. Kept per task while its session works.
-public struct GateState: Equatable, Sendable {
+public struct GateState: Codable, Equatable, Sendable {
     /// How many times the gate has run on this task.
     public var runs = 0
     /// The fingerprints of the last failures, newest last. A pass clears them.
@@ -150,5 +150,52 @@ public enum DiffCheck {
 
     static func isSkip(_ line: String) -> Bool {
         ["XCTSkip", ".disabled", "@Test(.disabled", ".skip(", "it.skip", "xit(", "xdescribe(", "@pytest.mark.skip", "@unittest.skip", "t.Skip"].contains { line.contains($0) }
+    }
+}
+
+/// What the gate knows about one task, kept across restarts: its counters, whether it gave up, whether it is waiting for the answer to a message it
+/// sent back, and the commit it last passed on (so a task that has not changed since is not checked again).
+public struct GateRecord: Codable, Equatable, Sendable {
+    public var state = GateState()
+    public var held: String?
+    public var answering = false
+    public var passedHead: String?
+    public var updated = Date()
+    public init() {}
+}
+
+/// The gate's records, one per task, in a file next to the other app data. Thread safe. Records not touched for two months are dropped.
+public final class GateStore: @unchecked Sendable {
+    public static let keepDays = 60
+    private let url: URL?
+    private let lock = NSLock()
+    private var rows: [String: GateRecord]
+
+    /// `url` nil keeps everything in memory (tests).
+    public init(url: URL? = AppPaths().root.appendingPathComponent("gates.json")) {
+        self.url = url
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        rows = url.flatMap { try? Data(contentsOf: $0) }.flatMap { try? dec.decode([String: GateRecord].self, from: $0) } ?? [:]
+    }
+
+    /// The key for one task of one spec in one repository.
+    public static func key(repo: String, environment: String?, spec: String, task: String) -> String { "\(environment ?? "")|\(repo)|\(spec)/\(task)" }
+
+    public func record(_ key: String) -> GateRecord? { lock.lock(); defer { lock.unlock() }; return rows[key] }
+
+    public func set(_ r: GateRecord?, for key: String) {
+        lock.lock(); defer { lock.unlock() }
+        if var r { r.updated = .now; rows[key] = r } else { rows[key] = nil }
+        let cutoff = Date().addingTimeInterval(-Double(Self.keepDays) * 86_400)
+        rows = rows.filter { $0.value.updated >= cutoff }
+        save()
+    }
+
+    private func save() {
+        guard let url else { return }
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = try? enc.encode(rows) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 }

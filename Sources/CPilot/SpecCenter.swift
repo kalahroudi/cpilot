@@ -98,11 +98,12 @@ final class SpecCenter {
     static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
     private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
-    /// What the task gate has seen of each task, and the tasks it is checking now or has given up on ("specId/T003"). A held task is not submitted.
-    private var gates: [String: GateState] = [:]
-    private var gateAnswers: Set<String> = []            // the gate sent this task back, so its next turn is the answer
+    /// The tasks the gate is checking right now ("specId/T003"). What it has seen of each task, and the tasks it gave up on, is kept in `GateStore`
+    /// so a restart does not forget it. A held task is not submitted.
     private(set) var gating: Set<String> = []
-    private(set) var held: [String: String] = [:]
+    private func gateKey(_ id: String, _ taskId: String) -> String { GateStore.key(repo: repo?.dir ?? "", environment: repo?.environment, spec: id, task: taskId) }
+    private func gateRecord(_ id: String, _ taskId: String) -> GateRecord? { Workspace.shared.gates.record(gateKey(id, taskId)) }
+    func isHeld(_ id: String, _ taskId: String) -> Bool { gateRecord(id, taskId)?.held != nil }
     private var resuming: Set<String> = []
 
     func doc(_ id: String?) -> SpecDoc? { docs.first { $0.id == id } }
@@ -188,7 +189,7 @@ final class SpecCenter {
                   let c = Workspace.shared.controller(meta.id) else { continue }
             taskSessions["\(id)/\(t.id)"] = c.id
             c.onTurnEnd = turnHandler(id, t.id)
-            if coded.contains(branch), unsubmitted.contains(branch), !c.isBusy, gates["\(id)/\(t.id)"] == nil {
+            if coded.contains(branch), unsubmitted.contains(branch), !c.isBusy, !isHeld(id, t.id) {
                 // Finished before the restart and not yet checked by the gate (what it knew is gone).
                 Task { @MainActor in await self.taskTurnEnded(id, t.id, c) }
             }
@@ -465,25 +466,28 @@ final class SpecCenter {
 
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
-        let key = "\(id)/\(taskId)"
+        let key = "\(id)/\(taskId)", skey = gateKey(id, taskId)
         if let r = repo, let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), !task.done, gating.insert(key).inserted {
             defer { gating.remove(key) }
-            let answering = gateAnswers.remove(key) != nil
+            var rec = gateRecord(id, taskId) ?? GateRecord()
+            let answering = rec.answering
+            rec.answering = false
             // A turn nobody asked for on a task the gate gave up on means the user stepped in: start counting again.
-            if held[key] != nil, !answering { held[key] = nil; gates[key] = nil }
-            if held[key] != nil { return }
+            if rec.held != nil, !answering { rec.held = nil; rec.state = GateState() }
+            if rec.held != nil { return }
             let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
-            var state = gates[key] ?? GateState()
-            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, state: &state)
-            gates[key] = state
+            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state)
             switch outcome {
             case .clear: break
-            case .sentBack: gateAnswers.insert(key); return
+            case .passed(let head): rec.passedHead = head.isEmpty ? nil : head
+            case .sentBack: rec.answering = true; rec.passedHead = nil; Workspace.shared.gates.set(rec, for: skey); return
             case .held(let why):
-                held[key] = why
+                rec.held = why; rec.passedHead = nil
+                Workspace.shared.gates.set(rec, for: skey)
                 AlertCenter.shared.alert(.failed, title: "A task needs you", body: "\(task.id) \(task.title): \(why)", tag: "gate-\(key)", session: session.id)
                 return
             }
+            Workspace.shared.gates.set(rec, for: skey)
         }
         await continueBuilding(id)
     }
@@ -498,7 +502,7 @@ final class SpecCenter {
         if outstanding.isEmpty, !all.isEmpty { change(id) { $0.handedOn = true }; dropRun(id); return }   // everything merged: nothing left to carry on
         let allCoded = outstanding.allSatisfy { $0.branch.map(coded.contains) ?? false }
         // A task the gate gave up on, or is checking, is not ready to go in a pull request.
-        let blocked = outstanding.contains { held["\(id)/\($0.id)"] != nil || gating.contains("\(id)/\($0.id)") }
+        let blocked = outstanding.contains { isHeld(id, $0.id) || gating.contains("\(id)/\($0.id)") }
         if allCoded, !blocked, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
     }
 

@@ -537,6 +537,8 @@ final class Workspace {
     private(set) var rememberedTexts: Set<String> = []
     private var controllers: [String: SessionController] = [:]
     let ledger = Ledger()
+    /// What the task gate has seen of each spec task, kept across restarts.
+    let gates = GateStore()
 
     /// Agents working right now, on any repository.
     var runningAgents: Int { controllers.values.filter(\.isBusy).count }

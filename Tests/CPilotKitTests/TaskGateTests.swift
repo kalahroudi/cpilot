@@ -123,3 +123,46 @@ final class VerifyKeyTests: XCTestCase {
         XCTAssertNil(Specs.parseTasks("- [ ] T001 Do it (R1)")[0].verify)
     }
 }
+
+final class GateStoreTests: XCTestCase {
+    private func tempURL() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("gates-\(UUID().uuidString).json") }
+
+    func testARecordSurvivesAReload() {
+        let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
+        let key = GateStore.key(repo: "/r", environment: nil, spec: "001-x", task: "T001")
+        var rec = GateRecord()
+        _ = TaskGate.decide(&rec.state, checks: [GateCheck(command: "swift build", ok: false, output: "error: boom")], problems: [])
+        rec.held = "stuck"; rec.answering = true; rec.passedHead = "abc123"
+        GateStore(url: url).set(rec, for: key)
+
+        let back = GateStore(url: url).record(key)
+        XCTAssertEqual(back?.held, "stuck")
+        XCTAssertEqual(back?.state.runs, 1)
+        XCTAssertEqual(back?.state.failures.count, 1)
+        XCTAssertEqual(back?.passedHead, "abc123")
+        XCTAssertEqual(back?.answering, true)
+    }
+
+    func testRepositoriesAndEnvironmentsDoNotShareRecords() {
+        XCTAssertNotEqual(GateStore.key(repo: "/a", environment: nil, spec: "s", task: "T1"), GateStore.key(repo: "/b", environment: nil, spec: "s", task: "T1"))
+        XCTAssertNotEqual(GateStore.key(repo: "/a", environment: nil, spec: "s", task: "T1"), GateStore.key(repo: "/a", environment: "pi", spec: "s", task: "T1"))
+    }
+
+    func testClearingAndPruning() {
+        let store = GateStore(url: nil)
+        store.set(GateRecord(), for: "k")
+        XCTAssertNotNil(store.record("k"))
+        store.set(nil, for: "k")
+        XCTAssertNil(store.record("k"))
+        var old = GateRecord(); old.updated = Date().addingTimeInterval(-Double(GateStore.keepDays + 1) * 86_400)
+        store.set(GateRecord(), for: "fresh")
+        // `set` stamps the time, so an old row can only come from a file; write one.
+        let url = tempURL(); defer { try? FileManager.default.removeItem(at: url) }
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        try? enc.encode(["old": old]).write(to: url)
+        let loaded = GateStore(url: url)
+        XCTAssertNotNil(loaded.record("old"))
+        loaded.set(GateRecord(), for: "new")
+        XCTAssertNil(loaded.record("old"), "a record untouched for two months is dropped on the next write")
+    }
+}

@@ -8,8 +8,10 @@ import CPilotKit
 @MainActor
 enum TaskGateRunner {
     enum Outcome: Equatable {
-        /// Nothing to verify yet (the session has not changed anything), or everything passed.
+        /// Nothing to verify yet: the session has not changed anything.
         case clear
+        /// Everything passed on this commit.
+        case passed(head: String)
         /// Failures were sent back; the session's next turn answers them.
         case sentBack
         /// The gate gave up. The reason is for the user.
@@ -22,16 +24,19 @@ enum TaskGateRunner {
         return text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
     }
 
-    static func run(task: SpecTask, session c: SessionController, parent: String, repo: String, state: inout GateState) async -> Outcome {
+    static func run(task: SpecTask, session c: SessionController, parent: String, repo: String, passedHead: String?, state: inout GateState) async -> Outcome {
         let url = URL(fileURLWithPath: c.meta.workingDirectory)
-        let inputs = await Exec.with(c.env) { () -> (diff: String, dirty: Bool, commands: [String]) in
+        let inputs = await Exec.with(c.env) { () -> (diff: String, dirty: Bool, head: String, commands: [String]) in
+            let head = (try? await Shell.check("git", ["rev-parse", "HEAD"], cwd: url, timeout: 15)) ?? ""
             let diff = (try? await Shell.check("git", ["diff", "\(parent)...HEAD"], cwd: url, timeout: 60)) ?? ""
             let status = (try? await Shell.check("git", ["status", "--porcelain"], cwd: url, timeout: 30)) ?? ""
             let own = task.verify.map { [$0] } ?? []
-            return (String(diff.prefix(400_000)), !status.isEmpty, own.isEmpty ? await defaultCommands(repo: repo) : own)
+            return (String(diff.prefix(400_000)), !status.isEmpty, head, own.isEmpty ? await defaultCommands(repo: repo) : own)
         }
         // A session that has written nothing is thinking or asking, not done.
         if inputs.diff.isEmpty, !inputs.dirty { return .clear }
+        // Passed on this very commit before (the app was restarted since): nothing has changed, so nothing to run again.
+        if !inputs.head.isEmpty, inputs.head == passedHead, !inputs.dirty { return .passed(head: inputs.head) }
 
         var problems = DiffCheck.problems(diff: inputs.diff, touches: task.touches)
         if inputs.dirty { problems.append("Some of your changes are not committed. Commit them with the message \"\(task.id): \(task.title)\".") }
@@ -50,7 +55,7 @@ enum TaskGateRunner {
 
         switch TaskGate.decide(&state, checks: checks, problems: problems) {
         case .pass:
-            return .clear
+            return .passed(head: inputs.head)
         case .retry(let message):
             let what = checks.first { !$0.ok }.map { "`\($0.command)` failed" } ?? "the change needs attention"
             c.addNotice("CPilot checked \(task.id): \(what). Sent back to the agent (try \(state.runs) of \(TaskGate.runLimit)).")
