@@ -224,3 +224,46 @@ final class SecretsAndNudgeTests: XCTestCase {
         XCTAssertNil(try dec.decode(GateRecord.self, from: Data(old.utf8)).nudges)
     }
 }
+
+final class ScopeGuardTests: XCTestCase {
+    private func diff(_ files: [(String, Int)]) -> String {
+        files.map { path, n in
+            "diff --git a/\(path) b/\(path)\n--- a/\(path)\n+++ b/\(path)\n@@ -0,0 +1 @@\n" + (0..<n).map { "+line \($0)" }.joined(separator: "\n") + "\n"
+        }.joined()
+    }
+
+    func testAnUnnamedProtectedFileGoesBack() {
+        let p = DiffCheck.problems(diff: diff([("Sources/A.swift", 3), (".github/workflows/ci.yml", 2)]), touches: [])
+        XCTAssertEqual(p.count, 1)
+        XCTAssertTrue(p[0].contains(".github/workflows/ci.yml"))
+    }
+
+    func testANamedProtectedFileIsAllowedButFlagged() {
+        let d = diff([(".github/workflows/ci.yml", 2)])
+        XCTAssertTrue(DiffCheck.problems(diff: d, touches: [".github/workflows/ci.yml"]).isEmpty)
+        XCTAssertEqual(ScopeGuard.flagged(diff: d, touches: [".github/"], protected: ScopeGuard.defaultProtected), [".github/workflows/ci.yml"])
+        XCTAssertTrue(ScopeGuard.flagged(diff: d, touches: [], protected: ScopeGuard.defaultProtected).isEmpty)
+    }
+
+    func testPatternsFoldersAndNames() {
+        let prot = ["deploy/", "Dockerfile", "*.tf", ".env*"]
+        for path in ["deploy/a.yml", "svc/deploy/a.yml", "Dockerfile", "svc/Dockerfile", "infra/main.tf", ".env.local"] { XCTAssertTrue(ScopeGuard.isProtected(path, prot), path) }
+        for path in ["Sources/deployer.swift", "docs/Dockerfile.md", "main.tfx", "env.swift"] { XCTAssertFalse(ScopeGuard.isProtected(path, prot), path) }
+    }
+
+    func testVerifyCommandsAreProtectedByDefault() {
+        XCTAssertFalse(DiffCheck.problems(diff: diff([(".cpilot/verify", 1)]), touches: []).isEmpty)
+    }
+
+    func testABigChangeGoesBackButLockFilesDoNotCount() {
+        XCTAssertFalse(DiffCheck.problems(diff: diff([("Sources/Big.swift", ScopeGuard.maxLines + 1)]), touches: []).isEmpty)
+        XCTAssertFalse(DiffCheck.problems(diff: diff((0...ScopeGuard.maxFiles).map { ("Sources/F\($0).swift", 1) }), touches: []).isEmpty)
+        XCTAssertTrue(DiffCheck.problems(diff: diff([("Sources/A.swift", 5), ("Package.resolved", 5000), ("web/yarn.lock", 5000)]), touches: []).isEmpty)
+    }
+
+    func testTheSameBigChangeGivesTheSameFingerprint() {
+        let a = TaskGate.fingerprint(DiffCheck.problems(diff: diff([("S/Big.swift", 1600)]), touches: []).joined(separator: "\n"))
+        let b = TaskGate.fingerprint(DiffCheck.problems(diff: diff([("S/Big.swift", 1700)]), touches: []).joined(separator: "\n"))
+        XCTAssertEqual(a, b)
+    }
+}
