@@ -540,6 +540,9 @@ final class Workspace {
     /// What the task gate has seen of each spec task, kept across restarts.
     let gates = GateStore()
 
+    /// The session is working or waiting for an answer. Does not start a controller for one that has none.
+    func isActive(_ id: String) -> Bool { controllers[id].map { $0.isBusy || !$0.pending.isEmpty } ?? false }
+
     /// Agents working right now, on any repository.
     var runningAgents: Int { controllers.values.filter(\.isBusy).count }
     /// Why work that starts by itself should wait, or nil. Your own sessions are never held by this.
@@ -652,7 +655,7 @@ final class Workspace {
     /// Puts a session away without deleting it: it leaves the tabs and the list, and Restore brings it back.
     func archive(_ id: String) {
         guard var m = sessions.first(where: { $0.id == id }) ?? store.load(id) else { return }
-        m.archived = true; save(m); closeTab(id)
+        m.archived = true; m.archivedAt = .now; save(m); closeTab(id)
         sessions.removeAll { $0.id == id }
     }
 
@@ -691,6 +694,13 @@ final class Workspace {
                 if safe, let b = m.branch { await Git.deleteBranch(repo: m.cwd, branch: b) }
             } }
         }
+        store.delete(id); index.remove(ref: id)
+        sessions.removeAll { $0.id == id }
+    }
+
+    /// Removes a session's record and what was indexed from it, and nothing else: no checkout, no branch. For cleanup, which has dealt with those already.
+    func forget(_ id: String) {
+        closeTab(id)
         store.delete(id); index.remove(ref: id)
         sessions.removeAll { $0.id == id }
     }
@@ -959,6 +969,7 @@ final class Workspace {
         AppModel.shared.updateStatusIcon()
         AlertCenter.shared.turnEnded(c)
         LessonLearner.shared.chiefTurnEnded(c)
+        CleanupCenter.shared.chiefTurnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
         AppModel.shared.notify("\(c.meta.title) finished")
     }

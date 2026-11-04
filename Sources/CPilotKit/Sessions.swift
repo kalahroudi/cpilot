@@ -46,6 +46,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var remoteId: String?
     public var planMode = false
     public var archived = false
+    /// When the session was put away, so deleting old ones counts from then and not from its last message.
+    public var archivedAt: Date?
     /// Unsent text in the composer, kept so a crash or restart does not lose it.
     public var draft: String?
     /// A summary of earlier work, placed before this session's first message (a fork or a switch of agent).
