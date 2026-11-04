@@ -69,11 +69,20 @@ public protocol StackHost: Sendable {
     func merge(_ number: Int, method: MergeMethod, expectedHead: String?, admin: Bool) async throws
     /// Closes a pull request with a comment saying why. Used when a stack is collapsed into one pull request.
     func close(_ number: Int, comment: String) async throws
+    /// Text for the pull request of `branch`, written below the stack list each time the stack is submitted (see `TaskSummary.markdown`). Nil for none.
+    func description(of branch: String) async -> String?
+}
+
+extension StackHost {
+    public func description(of branch: String) async -> String? { nil }
 }
 
 public struct LiveStackHost: StackHost {
     let dir: String
     public init(dir: String) { self.dir = dir }
+    /// Set once by the app: what to write into the pull request of a branch (directory, branch). It is not part of the stack list, so a re-submit rewrites it from the latest.
+    nonisolated(unsafe) public static var describer: (@Sendable (String, String) async -> String?)?
+    public func description(of branch: String) async -> String? { await Self.describer?(dir, branch) }
     private var cwd: URL { URL(fileURLWithPath: dir) }
     public func pullRequests() async -> [PullRequest] {
         guard let out = try? await Shell.check("gh", ["pr", "list", "--state", "all", "--limit", "100", "--json", PullRequest.listFields], cwd: cwd),
@@ -528,7 +537,11 @@ public enum Stacks {
             }
         }
         for b in stack.branches where !b.isMerged {
-            if let n = numbers[b.name], n > 0 { try? await host.setBody(n, body: footer(stack, numbers: numbers, current: b.name)) }
+            if let n = numbers[b.name], n > 0 {
+                // The stack list comes first, so `withoutFooter` still gives the description without CPilot's additions.
+                let extra = await host.description(of: b.name).map { "\n\n" + $0 } ?? ""
+                try? await host.setBody(n, body: footer(stack, numbers: numbers, current: b.name) + extra)
+            }
         }
         return numbers
     }

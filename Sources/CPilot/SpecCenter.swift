@@ -649,6 +649,14 @@ final class SpecHub {
 
     func save() { runs.save(to: Self.url) }
 
+    /// The summary of the spec task whose branch is `branch` in the repository at `dir`, written for its pull request. Nil for a branch that is not a spec task.
+    func summaryMarkdown(dir: String, branch: String, currentHead: String?) -> String? {
+        for c in centers.values where c.repo?.dir == dir && c.repo?.environment == nil {
+            for d in c.docs { if let t = d.tasks.first(where: { $0.branch == branch }), let s = c.summary(d.id, t.id) { return s.markdown(currentHead: currentHead) } }
+        }
+        return nil
+    }
+
     func center(for r: PRCenter.Repo) -> SpecCenter {
         let key = RepoRef(dir: r.dir, environment: r.environment).key
         if let c = centers[key] { return c }

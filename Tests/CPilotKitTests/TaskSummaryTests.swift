@@ -72,3 +72,28 @@ final class TaskSummaryTests: XCTestCase {
         XCTAssertNil(try dec.decode(GateRecord.self, from: Data(old.utf8)).summary)
     }
 }
+
+final class SummaryMarkdownTests: XCTestCase {
+    private func summary(head: String = "abcdef1234567") -> TaskSummary {
+        let diff = "diff --git a/Sources/A.swift b/Sources/A.swift\n--- a/Sources/A.swift\n+++ b/Sources/A.swift\n@@ -1 +1 @@\n+one\n+two\n-old\n"
+        return TaskSummarizer.summarize(diff: diff, head: head, touches: [], protected: ScopeGuard.defaultProtected, verified: ["swift test"], attempts: 2)
+    }
+
+    func testItNamesTheRiskTheReasonsAndWhatWasRun() {
+        let m = summary().markdown()
+        XCTAssertTrue(m.hasPrefix("<!-- cpilot-summary -->") && m.hasSuffix("<!-- /cpilot-summary -->"))
+        XCTAssertTrue(m.contains("Medium risk"))
+        XCTAssertTrue(m.contains("1 file, +2 −1"))
+        XCTAssertTrue(m.contains("Changes code but no test"))
+        XCTAssertTrue(m.contains("- `swift test` passed"))
+        XCTAssertTrue(m.contains("`Sources/A.swift` (+2 −1)"))
+        XCTAssertTrue(m.contains("try 2"))
+    }
+
+    func testItSaysSoWhenCommitsWereAddedAfterTheCheck() {
+        XCTAssertFalse(summary().markdown(currentHead: "abcdef1234567").contains("out of date"))
+        XCTAssertFalse(summary().markdown(currentHead: nil).contains("out of date"))
+        let m = summary().markdown(currentHead: "999999999")
+        XCTAssertTrue(m.contains("Checked at `abcdef1`") && m.contains("out of date"))
+    }
+}
