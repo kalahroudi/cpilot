@@ -100,7 +100,7 @@ enum ChiefDriver {
             if let m = reviewer(of: n, in: repo), Workspace.shared.controller(m.id)?.isBusy == true { return fail("#\(n) already has a reviewer working on it.") }
             if let why = Workspace.shared.unattendedHold() { return (200, ["held": why, "note": "No reviewer was started. You are woken when an agent finishes; ask again then."]) }
             do {
-                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus")),
+                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus"), criteria: criteria(of: n, in: repo)),
                                                                title: "Review #\(n)", readOnly: false, show: false, reviewOf: n)
                 return (200, ["session_id": c.id, "status": "A reviewer is working on #\(n). Call pr_reviews with wait_seconds to follow it."])
             } catch { return fail("Could not start the reviewer: \(error.localizedDescription)") }
@@ -148,6 +148,13 @@ enum ChiefDriver {
         while waited < limit, !done() { try? await Task.sleep(for: .seconds(2)); waited += 2 }
     }
 
+    /// The requirements of the spec that the task behind pull request `n` covers; empty for a pull request that is not a spec task.
+    private static func criteria(of n: Int, in repo: PRCenter.Repo) -> [Specs.Criterion] {
+        let center = SpecHub.shared.center(for: repo)
+        for d in center.docs { if let t = d.tasks.first(where: { $0.pr == n }), let spec = d.spec { return Specs.criteria(spec: spec, covers: t.covers) } }
+        return []
+    }
+
     /// The newest reviewer session assigned to a pull request.
     private static func reviewer(of n: Int, in repo: PRCenter.Repo) -> SessionMeta? {
         Workspace.shared.sessions.filter { $0.reviewOf == n && $0.cwd == repo.dir }.max { $0.updatedAt < $1.updatedAt }
@@ -171,6 +178,10 @@ enum ChiefDriver {
         switch reviewState(m) {
         case "working": return "#\(n)'s reviewer is still working. Wait with pr_reviews and wait_seconds."
         case "done":
+            let missing = ReviewVerdict.unaddressed(report: report(of: m) ?? "", ids: criteria(of: n, in: repo).map(\.id))
+            if !missing.isEmpty, verdict(of: m) != nil {
+                return "#\(n)'s reviewer gave a verdict without answering for \(missing.joined(separator: ", ")) of the spec. Send it back with session_message and ask for one line per requirement (met or NOT met), or assign a fresh one with pr_review."
+            }
             if case .open(let issues)? = verdict(of: m) {
                 return "#\(n)'s reviewer left it open" + (issues.isEmpty ? "." : ": " + issues.prefix(5).joined(separator: "; ") + ".") + " Send the reviewer back with session_message, or assign a fresh one with pr_review, until it reports VERDICT: CLEAN."
             }

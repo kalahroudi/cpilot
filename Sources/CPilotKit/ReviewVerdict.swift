@@ -26,6 +26,11 @@ public enum ReviewVerdict: Equatable, Sendable {
         return .open(issues)
     }
 
+    /// The requirement ids the report never mentions. A reviewer that gave a verdict without answering for a requirement did not check it.
+    public static func unaddressed(report: String, ids: [String]) -> [String] {
+        ids.filter { report.range(of: "\\b\($0)\\b", options: .regularExpression) == nil }
+    }
+
     /// The format a reviewer is asked to end its report with.
     public static let instructions = "End the report with a last line that is exactly `VERDICT: CLEAN` when a full pass found nothing left to fix, or `VERDICT: OPEN` followed by one line starting with \"- \" for each issue you did not fix (and why). Nothing comes after it."
 }

@@ -156,6 +156,28 @@ public enum Specs {
         return out
     }
 
+    /// One requirement of a spec a task covers, with the acceptance checks written for it.
+    public struct Criterion: Equatable, Sendable {
+        public var id: String
+        public var text: String
+        public var checks: [String]
+    }
+
+    /// The requirements (R1, R2, ...) a task covers, each with its acceptance checks (`A1 (R1) ...`), read from the spec. Empty when the spec does not number them.
+    public static func criteria(spec: String, covers: [String]) -> [Criterion] {
+        var reqs: [String: String] = [:], checks: [String: [String]] = [:]
+        for raw in spec.components(separatedBy: "\n") {
+            let l = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"^[-*]\s*(\[[ xX]\]\s*)?"#, with: "", options: .regularExpression)
+            if let m = l.range(of: #"^\**(R\d+)\b\**[:.)]?\s*"#, options: .regularExpression) {
+                let id = String(l[m]).trimmingCharacters(in: CharacterSet(charactersIn: "*:.) "))
+                reqs[id] = String(l[m.upperBound...]).trimmingCharacters(in: .whitespaces)
+            } else if l.range(of: #"^\**A\d+\b"#, options: .regularExpression) != nil {
+                for id in l.matches(#"\bR\d+\b"#) { checks[id, default: []].append(l) }
+            }
+        }
+        return covers.compactMap { id in reqs[id].map { Criterion(id: id, text: $0, checks: checks[id] ?? []) } }
+    }
+
     /// The questions listed under "Open questions" in a spec.
     public static func openQuestions(_ spec: String) -> [String] {
         var inSection = false, out: [String] = []
@@ -325,5 +347,13 @@ public enum SpecPrompts {
         if t.hasPrefix("```") { t = t.components(separatedBy: "\n").dropFirst().joined(separator: "\n"); if let r = t.range(of: "```", options: .backwards) { t = String(t[..<r.lowerBound]) } }
         if let h = t.range(of: #"(?m)^# "#, options: .regularExpression) { t = String(t[h.lowerBound...]) }
         return t.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+    }
+}
+
+
+extension String {
+    fileprivate func matches(_ pattern: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return re.matches(in: self, range: NSRange(startIndex..., in: self)).compactMap { Range($0.range, in: self).map { String(self[$0]) } }
     }
 }

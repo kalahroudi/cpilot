@@ -102,6 +102,15 @@ struct SettingsPane: View {
                 SettingRow("Daily budget", "Once agents have spent this much today (all sessions count), work that starts by itself waits until tomorrow. A turn already under way finishes.") {
                     Segmented(options: [(0, "Off"), (10, "$10"), (25, "$25"), (50, "$50"), (100, "$100")], selection: $p.dailyBudget)
                 }
+                SettingRow("Most one task may spend", "A spec task that has spent this much stops and asks you, instead of being sent back and nudged for ever. Say anything to its session and it gets the same amount again. Only what the agent reports counts, so an agent that reports no cost is held by the two limits below.") {
+                    Segmented(options: [(0, "Off"), (5, "$5"), (10, "$10"), (25, "$25"), (50, "$50")], selection: $p.taskDollars)
+                }
+                SettingRow("Most turns for one task", "How many times the agent answers before the task stops and asks you.") {
+                    Segmented(options: [(0, "Off"), (20, "20"), (40, "40"), (80, "80")], selection: $p.taskTurns)
+                }
+                SettingRow("Most working time for one task", "How long the agent may work on one task, counting only the time it is answering.") {
+                    Segmented(options: [(0, "Off"), (30, "30 min"), (60, "1 h"), (120, "2 h"), (240, "4 h")], selection: $p.taskMinutes)
+                }
                 SpendRow()
             }
             SettingsGroup("Cleanup") {
