@@ -79,7 +79,8 @@ final class LessonLearner {
             ws.store.items(id, limit: 80).last { $0.kind == kind && $0.ts > after && !$0.text.isEmpty && ($0.kind != .assistant || $0.status != .running) }?.text
         }
         var out: [Lessons.Evidence] = []
-        let mine = ws.sessions.filter { $0.cwd == repo && $0.environment == nil && $0.updatedAt > since }
+        // Put-away sessions count too: cleanup archives a delivered reviewer before the lessons from its report may have been read.
+        let mine = ws.store.list(includeArchived: true).filter { $0.cwd == repo && $0.environment == nil && $0.updatedAt > since }
         for s in mine where s.reviewOf != nil {
             if let t = lastText(s.id, .assistant, after: since), t.count >= 60 { out.append(.init(label: "A reviewer's report on a pull request", text: t)) }
         }

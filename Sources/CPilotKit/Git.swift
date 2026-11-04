@@ -197,6 +197,17 @@ public enum Git {
         return (await uncommittedCount(dir), Int(unpushed.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
     }
 
+    /// The branch a checkout is on, or nil when it is detached.
+    public static func currentBranch(_ dir: String) async -> String? {
+        let b = ((try? await Shell.check("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd: url(dir))) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return b.isEmpty || b == "HEAD" ? nil : b
+    }
+
+    /// Whether the checkout's HEAD is `oid` or an ancestor of it (a pull request's head, say), so nothing on it would be lost.
+    public static func isReachable(_ dir: String, from oid: String) async -> Bool {
+        (try? await Shell.run("git", ["merge-base", "--is-ancestor", "HEAD", oid], cwd: url(dir)))?.ok == true
+    }
+
     /// Deletes a local branch once nothing needs it. `-D` because a squash merge leaves it looking unmerged.
     public static func deleteBranch(repo: String, branch: String) async {
         _ = try? await Shell.run("git", ["branch", "-D", branch], cwd: url(repo))

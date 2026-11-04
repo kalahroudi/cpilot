@@ -104,6 +104,13 @@ struct SettingsPane: View {
                 }
                 SpendRow()
             }
+            SettingsGroup("Cleanup") {
+                SettingRow("Clean up delivered work", "When the pull request of a task or reviewer the chief pilot started is merged or closed, its checkout is removed and the session is put away. Work that is not committed, or is on no remote, is never removed. Sessions you started yourself are never touched.") { toggle($p.cleanUp) }
+                SettingRow("Keep put-away sessions for", "Put-away sessions of that kind still hold their transcript, which the lessons from a run are read from. After this long they are deleted.") {
+                    Segmented(options: [(7, "7 days"), (30, "30 days"), (90, "90 days"), (0, "For ever")], selection: $p.keepArchivedDays)
+                }
+                CleanupRow()
+            }
             SettingsGroup("Specs and stacks") {
                 SettingRow("Default autonomy", Autonomy(rawValue: prefs.specAutonomy)?.detail ?? "") {
                     Segmented(options: Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.specAutonomy)
@@ -285,6 +292,18 @@ struct SettingRow<Control: View>: View {
             }
             .padding(.vertical, 10).overlay(alignment: .top) { if separator { Divider().opacity(0.6) } }
             .preference(key: SettingsMatchCount.self, value: 1)
+        }
+    }
+}
+
+
+/// What the last cleanup did, and a button to run one now.
+struct CleanupRow: View {
+    let center = CleanupCenter.shared
+    var body: some View {
+        SettingRow(center.last.map { "Last cleanup: " + $0.headline } ?? "No cleanup yet", center.last?.detail ?? "It runs a minute after CPilot opens, every few hours, and when a chief pilot run ends.") {
+            AsyncButton { _ = await center.sweep(manual: true) } label: { Text(center.running ? "Cleaning up…" : "Clean up now") }
+                .buttonStyle(Pill(kind: .plain)).disabled(center.running)
         }
     }
 }
