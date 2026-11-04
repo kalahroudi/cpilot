@@ -12,8 +12,10 @@ public struct SpecTask: Identifiable, Equatable, Sendable {
     public var touches: [String] = []     // Sources/Hush/ComposeField.swift, or a folder
     public var branch: String?
     public var pr: Int?
-    public init(id: String, title: String, done: Bool, covers: [String] = [], needs: [String] = [], touches: [String] = [], branch: String? = nil, pr: Int? = nil) {
-        self.id = id; self.title = title; self.done = done; self.covers = covers; self.needs = needs; self.touches = touches; self.branch = branch; self.pr = pr
+    /// The command that shows this task works (`swift test --filter HushTests`). CPilot runs it when the task's session says it is done.
+    public var verify: String?
+    public init(id: String, title: String, done: Bool, covers: [String] = [], needs: [String] = [], touches: [String] = [], branch: String? = nil, pr: Int? = nil, verify: String? = nil) {
+        self.id = id; self.title = title; self.done = done; self.covers = covers; self.needs = needs; self.touches = touches; self.branch = branch; self.pr = pr; self.verify = verify
     }
 }
 
@@ -64,16 +66,17 @@ public enum Specs {
             let id = String(line[idRange])
             var rest = String(line[idRange.upperBound...]).trimmingCharacters(in: .whitespaces)
             var task = SpecTask(id: id, title: "", done: done)
-            // Metadata keys (needs:, touches:, branch:, pr:) run to the next key or the end of the line.
-            if let k = rest.range(of: #"\s(needs|touches|branch|pr):"#, options: .regularExpression) {
+            // Metadata keys (needs:, touches:, verify:, branch:, pr:) run to the next key or the end of the line.
+            if let k = rest.range(of: #"\s(needs|touches|verify|branch|pr):"#, options: .regularExpression) {
                 let meta = String(rest[k.lowerBound...]); rest = String(rest[..<k.lowerBound])
-                let pattern = try? NSRegularExpression(pattern: #"(needs|touches|branch|pr):\s*(.*?)(?=\s(?:needs|touches|branch|pr):|$)"#)
+                let pattern = try? NSRegularExpression(pattern: #"(needs|touches|verify|branch|pr):\s*(.*?)(?=\s(?:needs|touches|verify|branch|pr):|$)"#)
                 let ns = meta as NSString
                 for mm in pattern?.matches(in: meta, range: NSRange(location: 0, length: ns.length)) ?? [] {
                     let key = ns.substring(with: mm.range(at: 1)), val = ns.substring(with: mm.range(at: 2)).trimmingCharacters(in: .whitespaces)
                     switch key {
                     case "needs": task.needs = val.split(whereSeparator: { ", ".contains($0) }).map(String.init).filter { $0.hasPrefix("T") }
                     case "touches": task.touches = val.split(whereSeparator: { ", ".contains($0) }).map(String.init)
+                    case "verify": task.verify = val.isEmpty ? nil : val.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
                     case "branch": task.branch = val.isEmpty ? nil : val
                     default: task.pr = Int(val.replacingOccurrences(of: "#", with: ""))
                     }
@@ -94,6 +97,7 @@ public enum Specs {
         if !t.covers.isEmpty { s += " (\(t.covers.joined(separator: ", ")))" }
         if !t.needs.isEmpty { s += " needs: \(t.needs.joined(separator: ", "))" }
         if !t.touches.isEmpty { s += " touches: \(t.touches.joined(separator: ", "))" }
+        if let v = t.verify { s += " verify: `\(v)`" }
         if let b = t.branch { s += " branch: \(b)" }
         if let p = t.pr { s += " pr: #\(p)" }
         return s
@@ -308,7 +312,7 @@ public enum SpecPrompts {
     }
 
     public static func tasks(spec: String, plan: String, constitution: String?) -> String {
-        context(constitution: constitution) + "Break this plan into as few tasks as make sense, usually 3 to 8, never one per function or per test. Each task is a vertical slice that delivers working behavior with its tests, small enough for one pull request (roughly 400 changed lines or fewer) and reviewable on its own. Work that edits the same file belongs in one task, so do not split a file across tasks to make them smaller. Order them so each builds on the ones it needs. Name the files or folders each task will change, as paths from the repository root, so tasks that would edit the same file can be built one after the other instead of conflicting. Reply with ONLY the contents of tasks.md.\n\nUse exactly this format, one task per line, no other list items:\n# Tasks: <title>\n- [ ] T001 <imperative title> (R1, R2)\n- [ ] T002 <imperative title> (R2) needs: T001 touches: Sources/App/Feature.swift, Tests/FeatureTests.swift\n\nRules: ids are T001, T002, ...; the parentheses list the requirement ids from the spec the task covers; \"needs:\" lists task ids that must be finished first, only when truly required; tasks that do not depend on each other should not list needs. Include the tests inside the task they test. \"touches:\" is a comma separated list of existing or new paths (a folder ends with a slash), written last on the line; two tasks that touch the same file must be ordered with \"needs:\".\n\nThe spec:\n\(spec)\n\nThe plan:\n\(plan)"
+        context(constitution: constitution) + "Break this plan into as few tasks as make sense, usually 3 to 8, never one per function or per test. Each task is a vertical slice that delivers working behavior with its tests, small enough for one pull request (roughly 400 changed lines or fewer) and reviewable on its own. Work that edits the same file belongs in one task, so do not split a file across tasks to make them smaller. Order them so each builds on the ones it needs. Name the files or folders each task will change, as paths from the repository root, so tasks that would edit the same file can be built one after the other instead of conflicting. Reply with ONLY the contents of tasks.md.\n\nUse exactly this format, one task per line, no other list items:\n# Tasks: <title>\n- [ ] T001 <imperative title> (R1, R2)\n- [ ] T002 <imperative title> (R2) needs: T001 touches: Sources/App/Feature.swift, Tests/FeatureTests.swift verify: `swift test --filter FeatureTests`\n\nRules: ids are T001, T002, ...; the parentheses list the requirement ids from the spec the task covers; \"needs:\" lists task ids that must be finished first, only when truly required; tasks that do not depend on each other should not list needs. Include the tests inside the task they test. \"touches:\" is a comma separated list of existing or new paths (a folder ends with a slash), written last on the line; two tasks that touch the same file must be ordered with \"needs:\". \"verify:\" is optional, written after \"touches:\": one shell command in backticks that fails until the task works and passes after it, taken from the project's own build and test commands in its README or CLAUDE.md (never invent one). CPilot runs it when the task's session says it is done and sends the failure back; leave it out when you are not sure of the command.\n\nThe spec:\n\(spec)\n\nThe plan:\n\(plan)"
     }
 
     public static func implement(task: SpecTask, spec: SpecDoc, constitution: String?) -> String {

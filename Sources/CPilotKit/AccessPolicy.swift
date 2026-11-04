@@ -30,6 +30,8 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
     public var requireTouchIDForFullAccess = true
     /// Repositories where the user turned off Full access for the sessions their specs start (it is on everywhere else). Optional so older policy files still load.
     public var specAskRepos: [String]?
+    /// Files and folders (a name or a path from the project root) that unattended sessions may change although they are protected, for example `Package.resolved` for a dependency bump.
+    public var guardExceptions: [String]?
     public init() {}
 
     public func specSessionsHaveFullAccess(_ repo: String) -> Bool { !(specAskRepos?.contains(repo) ?? false) }
@@ -63,6 +65,8 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
             if req.tool.hasPrefix(ChiefPilot.toolPrefix) { return .allow(reason: "Chief pilot") }
             if !Self.readTools.contains(req.tool) { return .deny(reason: "The chief pilot directs other sessions; it does not edit files or run commands itself.") }
         }
+        if ToolGuards.appliesTo(session),
+           let why = ToolGuards.violation(tool: req.tool, summary: req.summary, path: req.path, root: session.workingDirectory, exceptions: guardExceptions ?? []) { return .deny(reason: why) }
         let level = level(for: session)
         if level == .fullAccess { return .allow(reason: "Full access") }
         if level == .readOnly, !Self.readTools.contains(req.tool) { return .deny(reason: "This session is read only.") }
@@ -143,14 +147,37 @@ public struct AuditEntry: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// Every approval, kept as one line of JSON so it is easy to read, grep and revoke.
+/// Every approval, kept as one line of JSON so it is easy to read, grep and revoke. Lines older than `keepDays` are removed: once when the log is
+/// opened and then at most once a day while the app runs.
 public final class AuditLog: @unchecked Sendable {
+    public static let keepDays = 90
     private let url: URL
     private let lock = NSLock()
-    public init(url: URL = AppPaths().auditFile) { self.url = url }
+    private var lastPruned = Date.distantPast
+    public init(url: URL = AppPaths().auditFile) { self.url = url; prune() }
+
+    /// Drops the lines older than `keepDays` days before `now`, and any line that cannot be read (it has no date to go by). Does nothing, and does not
+    /// rewrite the file, when the oldest line is still inside the window.
+    public func prune(now: Date = .now) {
+        lock.lock(); defer { lock.unlock() }
+        pruneLocked(now: now)
+    }
+
+    private func pruneLocked(now: Date) {
+        lastPruned = now
+        guard let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else { return }
+        let cutoff = now.addingTimeInterval(-Double(Self.keepDays) * 86_400)
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        let kept = lines.filter { line in line.data(using: .utf8).flatMap { try? dec.decode(AuditEntry.self, from: $0) }.map { $0.ts >= cutoff } ?? false }
+        guard kept.count != lines.count else { return }
+        let out = kept.isEmpty ? "" : kept.joined(separator: "\n") + "\n"
+        try? out.write(to: url, atomically: true, encoding: .utf8)
+    }
 
     public func record(_ e: AuditEntry) {
         lock.lock(); defer { lock.unlock() }
+        if e.ts.timeIntervalSince(lastPruned) > 86_400 { pruneLocked(now: e.ts) }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
         guard var d = try? enc.encode(e) else { return }

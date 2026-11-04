@@ -69,8 +69,8 @@ public enum GitHub {
 
     // MARK: Pull requests
 
-    public static func list(in dir: String, state: String = "open") async throws -> [PullRequest] {
-        let out = try await Shell.check("gh", ["pr", "list", "--state", state, "--limit", "30", "--json", PullRequest.listFields], cwd: url(dir))
+    public static func list(in dir: String, state: String = "open", limit: Int = 30) async throws -> [PullRequest] {
+        let out = try await Shell.check("gh", ["pr", "list", "--state", state, "--limit", String(limit), "--json", PullRequest.listFields], cwd: url(dir))
         return try JSONDecoder().decode([PullRequest].self, from: Data(out.utf8))
     }
 

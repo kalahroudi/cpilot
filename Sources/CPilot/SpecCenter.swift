@@ -98,6 +98,19 @@ final class SpecCenter {
     static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
     private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
+    /// The tasks the gate is checking right now ("specId/T003"). What it has seen of each task, and the tasks it gave up on, is kept in `GateStore`
+    /// so a restart does not forget it. A held task is not submitted.
+    private(set) var gating: Set<String> = []
+    private func gateKey(_ id: String, _ taskId: String) -> String { GateStore.key(repo: repo?.dir ?? "", environment: repo?.environment, spec: id, task: taskId) }
+    private func gateRecord(_ id: String, _ taskId: String) -> GateRecord? { Workspace.shared.gates.record(gateKey(id, taskId)) }
+    /// Nothing more to remember about a spec that is gone, or about a task that is finished.
+    private func forgetGates(spec id: String) {
+        Workspace.shared.gates.removeAll(prefix: GateStore.specPrefix(repo: repo?.dir ?? "", environment: repo?.environment, spec: id))
+    }
+    private func forgetFinishedGates() {
+        for d in docs { for t in d.tasks where t.done || (t.branch.map(merged.contains) ?? false) { Workspace.shared.gates.set(nil, for: gateKey(d.id, t.id)) } }
+    }
+    func isHeld(_ id: String, _ taskId: String) -> Bool { gateRecord(id, taskId)?.held != nil }
     private var resuming: Set<String> = []
 
     func doc(_ id: String?) -> SpecDoc? { docs.first { $0.id == id } }
@@ -183,6 +196,10 @@ final class SpecCenter {
                   let c = Workspace.shared.controller(meta.id) else { continue }
             taskSessions["\(id)/\(t.id)"] = c.id
             c.onTurnEnd = turnHandler(id, t.id)
+            if coded.contains(branch), unsubmitted.contains(branch), !c.isBusy, !isHeld(id, t.id) {
+                // Finished before the restart and not yet checked by the gate (what it knew is gone).
+                Task { @MainActor in await self.taskTurnEnded(id, t.id, c) }
+            }
             if !coded.contains(branch), !c.isBusy {
                 c.loadIfNeeded()
                 c.draft = "CPilot was restarted while you worked on \(t.id) \(t.title). Carry on from where you stopped and finish the task."
@@ -229,6 +246,7 @@ final class SpecCenter {
         let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
         for d in docs { await adoptBranches(d) }
         for d in docs { await tickMerged(d, landed: landed) }
+        forgetFinishedGates()
         await archiveFinished(before: before)
         if selected == nil { selected = docs.last?.id }
     }
@@ -239,7 +257,7 @@ final class SpecCenter {
         guard Prefs.shared.autoArchiveSpecs, let r = repo else { return }
         for d in docs where status(d) == .done && before[d.id].map({ $0 != .done }) == true && jobs[d.id]?.running != true {
             guard (try? await Exec.with(env) { try await Specs.archive(d.id, in: r.dir) }) != nil else { continue }
-            jobs[d.id] = nil; dropRun(d.id)
+            jobs[d.id] = nil; dropRun(d.id); forgetGates(spec: d.id)
             docs.removeAll { $0.id == d.id }; archived = (archived + [d.id]).sorted()
             if selected == d.id { selected = nil }
             AppModel.shared.show("\(d.title) is done and was archived.", error: false)
@@ -456,6 +474,29 @@ final class SpecCenter {
 
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
+        let key = "\(id)/\(taskId)", skey = gateKey(id, taskId)
+        if let r = repo, let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), !task.done, gating.insert(key).inserted {
+            defer { gating.remove(key) }
+            var rec = gateRecord(id, taskId) ?? GateRecord()
+            let answering = rec.answering
+            rec.answering = false
+            // A turn nobody asked for on a task the gate gave up on means the user stepped in: start counting again.
+            if rec.held != nil, !answering { rec.held = nil; rec.state = GateState() }
+            if rec.held != nil { return }
+            let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
+            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state)
+            switch outcome {
+            case .clear: break
+            case .passed(let head): rec.passedHead = head.isEmpty ? nil : head
+            case .sentBack: rec.answering = true; rec.passedHead = nil; Workspace.shared.gates.set(rec, for: skey); return
+            case .held(let why):
+                rec.held = why; rec.passedHead = nil
+                Workspace.shared.gates.set(rec, for: skey)
+                AlertCenter.shared.alert(.failed, title: "A task needs you", body: "\(task.id) \(task.title): \(why)", tag: "gate-\(key)", session: session.id)
+                return
+            }
+            Workspace.shared.gates.set(rec, for: skey)
+        }
         await continueBuilding(id)
     }
 
@@ -468,7 +509,9 @@ final class SpecCenter {
         let outstanding = all.filter { !$0.done && !($0.branch.map(merged.contains) ?? false) }
         if outstanding.isEmpty, !all.isEmpty { change(id) { $0.handedOn = true }; dropRun(id); return }   // everything merged: nothing left to carry on
         let allCoded = outstanding.allSatisfy { $0.branch.map(coded.contains) ?? false }
-        if allCoded, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
+        // A task the gate gave up on, or is checking, is not ready to go in a pull request.
+        let blocked = outstanding.contains { isHeld(id, $0.id) || gating.contains("\(id)/\($0.id)") }
+        if allCoded, !blocked, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
     }
 
     /// Pushes the stack of this spec's branches, opens the pull requests, and lets the merge rules take it from there.
@@ -507,7 +550,7 @@ final class SpecCenter {
     func delete(_ id: String) async {
         guard let r = repo, jobs[id]?.running != true else { return }
         do { try await Exec.with(env) { try await Specs.remove(id, in: r.dir) } } catch { jobs[id, default: Job()].error = "\(error)"; return }
-        jobs[id] = nil; dropRun(id)
+        jobs[id] = nil; dropRun(id); forgetGates(spec: id)
         if selected == id { selected = nil }
         await refresh()
     }
