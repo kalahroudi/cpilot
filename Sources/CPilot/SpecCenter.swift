@@ -486,8 +486,9 @@ final class SpecCenter {
             let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
             let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state)
             switch outcome {
-            case .clear: break
-            case .passed(let head): rec.passedHead = head.isEmpty ? nil : head
+            case .clear:
+                if nudge(session, task: task, rec: &rec) { Workspace.shared.gates.set(rec, for: skey); await continueBuilding(id); return }
+            case .passed(let head): rec.passedHead = head.isEmpty ? nil : head; rec.nudges = nil
             case .sentBack: rec.answering = true; rec.passedHead = nil; Workspace.shared.gates.set(rec, for: skey); return
             case .held(let why):
                 rec.held = why; rec.passedHead = nil
@@ -498,6 +499,26 @@ final class SpecCenter {
             Workspace.shared.gates.set(rec, for: skey)
         }
         await continueBuilding(id)
+    }
+
+    /// A task session ended a turn having written nothing. Tells it to carry on (twice at most), leaves it alone when it asked the user something, and
+    /// alerts the user when it will not move. Returns true when it sent a message.
+    private func nudge(_ session: SessionController, task: SpecTask, rec: inout GateRecord) -> Bool {
+        if case .failed = session.state { return false }
+        let last = session.items.last(where: { $0.kind == .assistant && $0.status == .done })?.text ?? ""
+        switch TaskNudge.decide(lastText: last, nudges: rec.nudges ?? 0) {
+        case .asked:
+            return false
+        case .giveUp:
+            AlertCenter.shared.alert(.needs, title: "A task is not moving", body: "\(task.id) \(task.title): the agent stopped twice without writing anything.", tag: "stall-\(task.id)", session: session.id)
+            return false
+        case .nudge(let text):
+            rec.nudges = (rec.nudges ?? 0) + 1
+            session.addNotice("CPilot: \(task.id) ended a turn without writing anything. Told it to carry on (\(rec.nudges ?? 0) of \(TaskNudge.limit)).")
+            session.draft = text
+            session.send()
+            return true
+        }
     }
 
     private func continueBuilding(_ id: String) async {
