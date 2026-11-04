@@ -369,6 +369,29 @@ final class StackTests: XCTestCase {
         XCTAssertEqual(Set(replaced[job.branch] ?? []), ["a", "b", "c"])
     }
 
+    func testCollapseTakesInWhatAReviewerPushedToOrigin() async throws {
+        try await commit("shared.txt", "one\ntwo\nthree\n", "shared")
+        try await sh(["push", "origin", "main"])
+        try await Stacks.create("a", in: dir); try await commit("a.txt", "a\n", "add a")
+        try await sh(["checkout", "a"]); try await Stacks.create("b", in: dir); try await commit("shared.txt", "one\ntwo b\nthree\n", "b edits shared")
+        let host = FakeHost()
+        let stack = await Stacks.load(in: dir, host: host)[0]
+        _ = try await Stacks.submit(stack, in: dir, host: host)
+        // A reviewer fixes b in its own checkout and pushes the fix to the pull request's branch; this copy of b does not have it.
+        let other = (dir as NSString).deletingLastPathComponent + "/reviewer"
+        try await sh(["clone", origin, other], in: (dir as NSString).deletingLastPathComponent)
+        try await sh(["checkout", "b"], in: other)
+        try "fixed by the reviewer\n".write(toFile: other + "/review.txt", atomically: true, encoding: .utf8)
+        try await sh(["add", "-A"], in: other); try await sh(["commit", "-m", "Review #2: fix"], in: other); try await sh(["push", "origin", "b"], in: other)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir + "/review.txt"))
+
+        let fresh = await Stacks.load(in: dir, host: host)[0]
+        let job = try await Stacks.startCollapse(fresh, in: dir)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: job.path + "/review.txt"), "the combined branch dropped the reviewer's fix")
+        XCTAssertEqual(job.applied, 3)
+        await Stacks.abortCollapse(job, in: dir)
+    }
+
     func testCollapseStopsOnAConflictAndHandsOverTheRest() async throws {
         try await commit("shared.txt", "one\ntwo\nthree\n", "shared")
         try await sh(["push", "origin", "main"])
