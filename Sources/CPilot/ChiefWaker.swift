@@ -75,7 +75,8 @@ final class ChiefWaker {
     static func workInFlight(repo: String, chiefId: String) -> Bool {
         let ws = Workspace.shared
         if ws.sessions.contains(where: { $0.cwd == repo && $0.id != chiefId && ws.controller($0.id)?.isBusy == true }) { return true }
-        return SpecHub.shared.center(for: PRCenter.Repo(dir: repo, environment: nil)).jobs.values.contains { $0.running }
+        let center = SpecHub.shared.center(for: PRCenter.Repo(dir: repo, environment: nil))
+        return center.jobs.values.contains { $0.running } || !center.gating.isEmpty
     }
 
     /// True for a chief pilot that has nothing in flight and is not waiting to be woken: its run is over.

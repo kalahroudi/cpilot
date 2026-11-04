@@ -98,6 +98,11 @@ final class SpecCenter {
     static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
     private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
+    /// What the task gate has seen of each task, and the tasks it is checking now or has given up on ("specId/T003"). A held task is not submitted.
+    private var gates: [String: GateState] = [:]
+    private var gateAnswers: Set<String> = []            // the gate sent this task back, so its next turn is the answer
+    private(set) var gating: Set<String> = []
+    private(set) var held: [String: String] = [:]
     private var resuming: Set<String> = []
 
     func doc(_ id: String?) -> SpecDoc? { docs.first { $0.id == id } }
@@ -183,6 +188,10 @@ final class SpecCenter {
                   let c = Workspace.shared.controller(meta.id) else { continue }
             taskSessions["\(id)/\(t.id)"] = c.id
             c.onTurnEnd = turnHandler(id, t.id)
+            if coded.contains(branch), unsubmitted.contains(branch), !c.isBusy, gates["\(id)/\(t.id)"] == nil {
+                // Finished before the restart and not yet checked by the gate (what it knew is gone).
+                Task { @MainActor in await self.taskTurnEnded(id, t.id, c) }
+            }
             if !coded.contains(branch), !c.isBusy {
                 c.loadIfNeeded()
                 c.draft = "CPilot was restarted while you worked on \(t.id) \(t.title). Carry on from where you stopped and finish the task."
@@ -456,6 +465,26 @@ final class SpecCenter {
 
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
+        let key = "\(id)/\(taskId)"
+        if let r = repo, let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), !task.done, gating.insert(key).inserted {
+            defer { gating.remove(key) }
+            let answering = gateAnswers.remove(key) != nil
+            // A turn nobody asked for on a task the gate gave up on means the user stepped in: start counting again.
+            if held[key] != nil, !answering { held[key] = nil; gates[key] = nil }
+            if held[key] != nil { return }
+            let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
+            var state = gates[key] ?? GateState()
+            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, state: &state)
+            gates[key] = state
+            switch outcome {
+            case .clear: break
+            case .sentBack: gateAnswers.insert(key); return
+            case .held(let why):
+                held[key] = why
+                AlertCenter.shared.alert(.failed, title: "A task needs you", body: "\(task.id) \(task.title): \(why)", tag: "gate-\(key)", session: session.id)
+                return
+            }
+        }
         await continueBuilding(id)
     }
 
@@ -468,7 +497,9 @@ final class SpecCenter {
         let outstanding = all.filter { !$0.done && !($0.branch.map(merged.contains) ?? false) }
         if outstanding.isEmpty, !all.isEmpty { change(id) { $0.handedOn = true }; dropRun(id); return }   // everything merged: nothing left to carry on
         let allCoded = outstanding.allSatisfy { $0.branch.map(coded.contains) ?? false }
-        if allCoded, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
+        // A task the gate gave up on, or is checking, is not ready to go in a pull request.
+        let blocked = outstanding.contains { held["\(id)/\($0.id)"] != nil || gating.contains("\(id)/\($0.id)") }
+        if allCoded, !blocked, !outstanding.isEmpty, Specs.ready(all, merged: merged, coded: coded).isEmpty { await submitAndArm(id) }
     }
 
     /// Pushes the stack of this spec's branches, opens the pull requests, and lets the merge rules take it from there.

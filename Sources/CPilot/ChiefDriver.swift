@@ -125,7 +125,11 @@ enum ChiefDriver {
                 guard let m = reviewer(of: pr.number, in: repo) else { r["reviewer"] = "none"; return r }
                 r["session_id"] = m.id
                 r["reviewer"] = reviewState(m)
-                if let last = Workspace.shared.store.items(m.id, limit: 40).last(where: { $0.kind == .assistant && $0.status == .done }) { r["report"] = String(last.text.prefix(1500)) }
+                if let text = report(of: m) {
+                    r["report"] = String(text.prefix(1500))
+                    if let v = ReviewVerdict.parse(text) { r["verdict"] = v.label; if !v.issues.isEmpty { r["open_issues"] = v.issues } }
+                    else { r["verdict"] = "none: the report does not end with VERDICT: CLEAN or OPEN. Read it yourself." }
+                }
                 return r
             }])
 
@@ -149,6 +153,12 @@ enum ChiefDriver {
         Workspace.shared.sessions.filter { $0.reviewOf == n && $0.cwd == repo.dir }.max { $0.updatedAt < $1.updatedAt }
     }
 
+    /// The reviewer's last report and the verdict it ends with.
+    private static func report(of m: SessionMeta) -> String? {
+        Workspace.shared.store.items(m.id, limit: 40).last(where: { $0.kind == .assistant && $0.status == .done })?.text
+    }
+    private static func verdict(of m: SessionMeta) -> ReviewVerdict? { report(of: m).flatMap(ReviewVerdict.parse) }
+
     private static func reviewState(_ m: SessionMeta) -> String {
         guard let c = Workspace.shared.controller(m.id) else { return "done" }
         if case .failed(let why) = c.state { return "failed: \(why)" }
@@ -160,7 +170,11 @@ enum ChiefDriver {
         guard let m = reviewer(of: n, in: repo) else { return "#\(n) has no reviewer. Assign one with pr_review {pr: \(n)} and wait for it to finish." }
         switch reviewState(m) {
         case "working": return "#\(n)'s reviewer is still working. Wait with pr_reviews and wait_seconds."
-        case "done": return nil
+        case "done":
+            if case .open(let issues)? = verdict(of: m) {
+                return "#\(n)'s reviewer left it open" + (issues.isEmpty ? "." : ": " + issues.prefix(5).joined(separator: "; ") + ".") + " Send the reviewer back with session_message, or assign a fresh one with pr_review, until it reports VERDICT: CLEAN."
+            }
+            return nil
         default: return "#\(n)'s reviewer \(reviewState(m)). Read its session, then assign another with pr_review."
         }
     }

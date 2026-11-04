@@ -60,6 +60,8 @@ final class Prefs {
     /// Phone access: a loopback web server published on your tailnet. Off until you turn it on.
     var remoteEnabled: Bool { didSet { d.set(remoteEnabled, forKey: "remoteEnabled") } }
     var chiefAutonomy: String { didSet { d.set(chiefAutonomy, forKey: "chiefAutonomy") } }
+    /// The model reviewers the chief pilot starts use ("" is the default model, "opus", "sonnet" or "haiku").
+    var reviewerModel: String { didSet { d.set(reviewerModel, forKey: "reviewerModel") } }
     var chiefMode: ChiefPilot.Autonomy { ChiefPilot.Autonomy(rawValue: chiefAutonomy) ?? .leads }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
     var securityCagePath: String { didSet { d.set(securityCagePath, forKey: "securityCagePath") } }
@@ -94,6 +96,7 @@ final class Prefs {
         securityCagePath = d.string(forKey: "securityCagePath") ?? ""
         specAutonomy = d.string(forKey: "specAutonomy") ?? "step"
         chiefAutonomy = d.string(forKey: "chiefAutonomy") ?? "leads"
+        reviewerModel = d.string(forKey: "reviewerModel") ?? ""
         remoteEnabled = d.bool(forKey: "remoteEnabled")
         adminMergeAll = d.bool(forKey: "adminMergeAll")
         autoResolveConflicts = d.bool(forKey: "autoResolveConflicts")

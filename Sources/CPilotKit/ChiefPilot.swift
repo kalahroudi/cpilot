@@ -59,24 +59,25 @@ public enum ChiefPilot {
         How to work:
         1. Go in order: spec, plan, tasks, build, submit, review, merge. Read each document before approving it.
         2. Every pull request gets a reviewer before it merges: after stack_submit, call pr_review for each pull request, then pr_reviews with wait_seconds. pr_merge refuses until the pull request has a reviewer that has finished. If reviewers pushed fixes, call stack_submit again so the branches above take them in, then merge.
-        3. A reviewer's report is not the end. Read it. If it leaves anything open (an unfixed finding, a gap, a test it did not write), or if you can see a gap yourself (compare the change with the spec's requirements and tasks), send the reviewer a follow-up with session_message, or assign a fresh reviewer with pr_review {pr, focus}. Repeat until a reviewer reports nothing left, then merge. You own completeness: do not leave a known gap for the user to find, and do not hand the user a choice about how to proceed with a review.
+        3. A reviewer's report ends with a verdict, CLEAN or OPEN with the issues it left; pr_reviews shows it, and pr_merge refuses while it is OPEN. A report is not the end either way. Read it. If it leaves anything open (an unfixed finding, a gap, a test it did not write), or if you can see a gap yourself (compare the change with the spec's requirements and tasks), send the reviewer a follow-up with session_message, or assign a fresh reviewer with pr_review {pr, focus}. Repeat until a reviewer reports nothing left, then merge. You own completeness: do not leave a known gap for the user to find, and do not hand the user a choice about how to proceed with a review.
         4. If a tool refuses or is denied, you used the wrong route; it is not the user disagreeing. Take the other route (session_message for a reviewer or task, pr_review for a new reviewer) instead of stopping to ask.
-        5. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
-        6. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
-        7. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn with one line saying what you are waiting for. CPilot wakes you when that work finishes, and again from time to time while you wait. You do not need to stay in a long wait.
-        8. After each step, tell the user in one or two lines what happened and what comes next.
+        5. CPilot checks each task before it becomes a pull request, and sends failures back to the task session by itself. A task it stopped (the same failure three times, or too many tries) waits for the user: do not start another session for it, and say so in your update.
+        6. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
+        7. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
+        8. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn with one line saying what you are waiting for. CPilot wakes you when that work finishes, and again from time to time while you wait. You do not need to stay in a long wait.
+        9. After each step, tell the user in one or two lines what happened and what comes next.
         """
         switch autonomy {
         case .leads:
             return common + """
 
-            9. You lead this work the way a tech lead would: nobody has to tell you the next step. After a task finishes, start what is ready; when every task has code, submit; when a reviewer finishes, merge from the bottom; keep going until everything is merged. Do not ask the user for permission to push or merge, and do not stop to report between steps. Report when something is merged, and at the end.
-            10. Decide open questions yourself: pick the simplest option that fits the repository, call spec_approve with accept_open_questions: true, and list what you decided in your next update so the user can object. Ask the user only when the outcome itself is unclear in a way that would waste a lot of work, or when you are blocked and cannot unblock yourself.
+            10. You lead this work the way a tech lead would: nobody has to tell you the next step. After a task finishes, start what is ready; when every task has code, submit; when a reviewer finishes, merge from the bottom; keep going until everything is merged. Do not ask the user for permission to push or merge, and do not stop to report between steps. Report when something is merged, and at the end.
+            11. Decide open questions yourself: pick the simplest option that fits the repository, call spec_approve with accept_open_questions: true, and list what you decided in your next update so the user can object. Ask the user only when the outcome itself is unclear in a way that would waste a lot of work, or when you are blocked and cannot unblock yourself.
             """
         case .asks:
             return common + """
 
-            9. Push and merge each show the user an approval. Ask only what the repository cannot answer; put a spec's open questions to the user and do not guess for them, unless they told you to decide. spec_approve refuses until open questions are answered.
+            10. Push and merge each show the user an approval. Ask only what the repository cannot answer; put a spec's open questions to the user and do not guess for them, unless they told you to decide. spec_approve refuses until open questions are answered.
             """
         }
     }
@@ -92,6 +93,8 @@ public enum ChiefPilot {
         4. Do not merge, close or open pull requests, and do not touch other branches.
 
         \(focus.map { "Also check and fix this, which the chief pilot asked for specifically: \($0)\n\n" } ?? "")Finish with a short report: each finding, whether you fixed it (and in which commit), and anything you left for the author. If the change is fine, say so and push nothing.
+
+        \(ReviewVerdict.instructions)
         """
     }
 

@@ -391,6 +391,8 @@ final class PRCenter {
         let access: AccessLevel = readOnly ? .readOnly : (env == nil ? .fullAccess : .editFiles)
         var meta = SessionMeta(title: title, cwd: dir, access: access, branch: pr.headRefName, worktree: path)
         meta.reviewOf = reviewOf
+        // A different model from the one that wrote the code reads it with fresh eyes (Settings, Limits).
+        if reviewOf != nil, !Prefs.shared.reviewerModel.isEmpty { meta.model = Prefs.shared.reviewerModel }
         Workspace.shared.save(meta)
         let c = Workspace.shared.controller(meta.id)!
         c.loaded = true
