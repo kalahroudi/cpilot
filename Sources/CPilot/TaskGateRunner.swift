@@ -24,6 +24,12 @@ enum TaskGateRunner {
         return text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
     }
 
+    /// What a repository protects: the built-in list and `.cpilot/protected`, one entry per line. Read from the repository's own checkout, never from the task's branch.
+    static func protectedPaths(repo: String) async -> [String] {
+        let text = (try? await Shell.check("cat", [repo + "/.cpilot/protected"], timeout: 15)) ?? ""
+        return ScopeGuard.defaultProtected + text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    }
+
     static func run(task: SpecTask, session c: SessionController, parent: String, repo: String, passedHead: String?, state: inout GateState) async -> Outcome {
         let url = URL(fileURLWithPath: c.meta.workingDirectory)
         let inputs = await Exec.with(c.env) { () -> (diff: String, dirty: Bool, head: String, commands: [String]) in
@@ -38,7 +44,8 @@ enum TaskGateRunner {
         // Passed on this very commit before (the app was restarted since): nothing has changed, so nothing to run again.
         if !inputs.head.isEmpty, inputs.head == passedHead, !inputs.dirty { return .passed(head: inputs.head) }
 
-        var problems = DiffCheck.problems(diff: inputs.diff, touches: task.touches)
+        let protected = await protectedPaths(repo: repo)
+        var problems = DiffCheck.problems(diff: inputs.diff, touches: task.touches, protected: protected)
         if inputs.dirty { problems.append("Some of your changes are not committed. Commit them with the message \"\(task.id): \(task.title)\".") }
 
         var checks: [GateCheck] = []
@@ -55,6 +62,11 @@ enum TaskGateRunner {
 
         switch TaskGate.decide(&state, checks: checks, problems: problems) {
         case .pass:
+            let flagged = ScopeGuard.flagged(diff: inputs.diff, touches: task.touches, protected: protected)
+            if !flagged.isEmpty, state.flaggedHead != inputs.head {
+                state.flaggedHead = inputs.head
+                c.addNotice("\(task.id) changes protected files its spec names: \(flagged.prefix(5).map { "`\($0)`" }.joined(separator: ", ")). Look at them yourself before this merges.", error: true)
+            }
             return .passed(head: inputs.head)
         case .retry(let message):
             let what = checks.first { !$0.ok }.map { "`\($0.command)` failed" } ?? "the change needs attention"

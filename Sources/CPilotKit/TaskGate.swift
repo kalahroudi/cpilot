@@ -18,6 +18,8 @@ public struct GateState: Codable, Equatable, Sendable {
     public var failures: [String] = []
     /// Why the gate gave up, once it has.
     public var escalated: String?
+    /// The commit whose protected-file changes the user was last told about, so a re-check does not say it twice. Optional so older files still load.
+    public var flaggedHead: String?
     public init() {}
 }
 
@@ -102,7 +104,7 @@ public enum TaskGate {
 /// Checks on a task's diff that a passing build cannot see: tests that lost their assertions or were switched off, and a task that never touched the
 /// files it was written for.
 public enum DiffCheck {
-    public static func problems(diff: String, touches: [String]) -> [String] {
+    public static func problems(diff: String, touches: [String], protected: [String] = ScopeGuard.defaultProtected) -> [String] {
         let files = parse(diff)
         var out: [String] = []
         for f in files where isTest(f.path) {
@@ -112,6 +114,7 @@ public enum DiffCheck {
             if f.added.contains(where: isSkip) { out.append("`\(f.path)` has a test turned off or skipped. Fix the test or the code instead.") }
         }
         out += Secrets.problems(files)
+        out += ScopeGuard.problems(files, touches: touches, protected: protected)
         let changed = files.map(\.path)
         let named = touches.filter { !$0.isEmpty }
         if !named.isEmpty, !changed.isEmpty, !changed.contains(where: { path in named.contains { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } }) {
@@ -284,5 +287,61 @@ public enum TaskNudge {
     public static func asksQuestion(_ text: String) -> Bool {
         let last = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n\n").last ?? ""
         return last.trimmingCharacters(in: CharacterSet(charactersIn: "*_` \n")).hasSuffix("?")
+    }
+}
+
+
+/// Limits on what one task may change by itself: files that decide how the project is built, checked and shipped, and a change too big to review.
+/// A task that names a protected file in its `touches:` may change it (the spec the user approved says so), and the user is told to look.
+public enum ScopeGuard {
+    /// What a repository protects when it says nothing: CI and the gate's own commands, ownership, and secrets files. A repository adds its own, one
+    /// per line, in `.cpilot/protected`: a folder (`deploy/`), a file name (`Dockerfile`), or a pattern (`*.tf`, `.env*`).
+    public static let defaultProtected = [".github/", ".cpilot/", "CODEOWNERS", ".env*"]
+    /// More than this many files, or this many changed lines, is more than one task should do.
+    public static let maxFiles = 40
+    public static let maxLines = 1500
+
+    /// True when `path` is covered by an entry of `protected`.
+    public static func isProtected(_ path: String, _ protected: [String]) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        // A template (`.env.example`) holds no secrets and is meant to be edited.
+        if ["example", "sample", "template", "dist"].contains(where: { name.lowercased().hasSuffix("." + $0) }) { return false }
+        return protected.contains { entry in
+            if entry.hasSuffix("/") { return path.hasPrefix(entry) || path.contains("/" + entry) }
+            if entry.contains("*") {
+                let re = "^" + NSRegularExpression.escapedPattern(for: entry).replacingOccurrences(of: "\\*", with: "[^/]*") + "$"
+                return name.range(of: re, options: .regularExpression) != nil || path.range(of: re, options: .regularExpression) != nil
+            }
+            return path == entry || name == entry
+        }
+    }
+
+    static func named(_ path: String, _ touches: [String]) -> Bool {
+        touches.contains { !$0.isEmpty && (path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/")) }
+    }
+
+    /// The protected files a task changed that its spec does name: allowed, but the user should look at them.
+    public static func flagged(diff: String, touches: [String], protected: [String]) -> [String] {
+        DiffCheck.parse(diff).map(\.path).filter { isProtected($0, protected) && named($0, touches) }
+    }
+
+    static func problems(_ files: [DiffCheck.FileDiff], touches: [String], protected: [String]) -> [String] {
+        var out: [String] = []
+        for f in files where isProtected(f.path, protected) && !named(f.path, touches) {
+            out.append("`\(f.path)` is a protected file (it decides how the project is built, checked or shipped) and this task does not name it. Undo that change. If the task cannot be done without it, say so in one line and stop instead of changing it.")
+        }
+        let counted = files.filter { !isGenerated($0.path) }
+        let lines = counted.reduce(0) { $0 + $1.added.count + $1.removed.count }
+        if counted.count > maxFiles || lines > maxLines {
+            out.append("The change is very large for one task (\(counted.count) files, \(lines) changed lines; the limit is \(maxFiles) files and \(maxLines) lines). Check that nothing outside the task crept in, and leave what does not belong to it out.")
+        }
+        return out
+    }
+
+    /// Lock files, snapshots and minified output grow with the work and say little about its size.
+    static func isGenerated(_ path: String) -> Bool {
+        let n = (path as NSString).lastPathComponent.lowercased()
+        return n.hasSuffix(".lock") || ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "package.resolved", "cargo.lock", "go.sum"].contains(n)
+            || n.hasSuffix(".min.js") || n.hasSuffix(".snap") || n.hasSuffix(".svg")
     }
 }
