@@ -30,6 +30,8 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
     public var requireTouchIDForFullAccess = true
     /// Repositories where the user turned off Full access for the sessions their specs start (it is on everywhere else). Optional so older policy files still load.
     public var specAskRepos: [String]?
+    /// Files and folders (a name or a path from the project root) that unattended sessions may change although they are protected, for example `Package.resolved` for a dependency bump.
+    public var guardExceptions: [String]?
     public init() {}
 
     public func specSessionsHaveFullAccess(_ repo: String) -> Bool { !(specAskRepos?.contains(repo) ?? false) }
@@ -63,6 +65,8 @@ public struct AccessPolicy: Codable, Equatable, Sendable {
             if req.tool.hasPrefix(ChiefPilot.toolPrefix) { return .allow(reason: "Chief pilot") }
             if !Self.readTools.contains(req.tool) { return .deny(reason: "The chief pilot directs other sessions; it does not edit files or run commands itself.") }
         }
+        if ToolGuards.appliesTo(session),
+           let why = ToolGuards.violation(tool: req.tool, summary: req.summary, path: req.path, root: session.workingDirectory, exceptions: guardExceptions ?? []) { return .deny(reason: why) }
         let level = level(for: session)
         if level == .fullAccess { return .allow(reason: "Full access") }
         if level == .readOnly, !Self.readTools.contains(req.tool) { return .deny(reason: "This session is read only.") }
