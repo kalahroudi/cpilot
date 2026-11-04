@@ -168,6 +168,8 @@ public struct GateRecord: Codable, Equatable, Sendable {
     public var nudges: Int?
     /// What the task came to when it last passed. Optional so older files still load.
     public var summary: TaskSummary?
+    /// What the session had used when the user last stepped in; the task's budget counts from there. Optional so older files still load.
+    public var budgetBase: TaskUsage?
     public var updated = Date()
     public init() {}
 }

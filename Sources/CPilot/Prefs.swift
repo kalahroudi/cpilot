@@ -43,6 +43,11 @@ final class Prefs {
     var maxAgents: Int { didSet { d.set(maxAgents, forKey: "maxAgents") } }
     /// Dollars a day that work starting by itself may spend before it waits for tomorrow. 0 is no budget.
     var dailyBudget: Int { didSet { d.set(dailyBudget, forKey: "dailyBudget") } }
+    /// What one spec task may use before it stops and asks you. 0 is off for each.
+    var taskDollars: Int { didSet { d.set(taskDollars, forKey: "taskDollars") } }
+    var taskTurns: Int { didSet { d.set(taskTurns, forKey: "taskTurns") } }
+    var taskMinutes: Int { didSet { d.set(taskMinutes, forKey: "taskMinutes") } }
+    var taskBudget: TaskBudget { TaskBudget(dollars: taskDollars, turns: taskTurns, minutes: taskMinutes) }
     /// Index finished messages and recall the best matches at the start of a new session.
     var recall: Bool { didSet { d.set(recall, forKey: "recall") } }
     /// Show a recap when you open a session you have been away from.
@@ -89,7 +94,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -112,6 +117,9 @@ final class Prefs {
         keepArchivedDays = d.integer(forKey: "keepArchivedDays")
         maxAgents = d.integer(forKey: "maxAgents")
         dailyBudget = d.integer(forKey: "dailyBudget")
+        taskDollars = d.integer(forKey: "taskDollars")
+        taskTurns = d.integer(forKey: "taskTurns")
+        taskMinutes = d.integer(forKey: "taskMinutes")
         recapWithClaude = d.bool(forKey: "recapWithClaude")
         suggestPrompts = d.bool(forKey: "suggestPrompts")
         recall = d.bool(forKey: "recall")

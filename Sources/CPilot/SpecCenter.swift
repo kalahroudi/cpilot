@@ -482,8 +482,16 @@ final class SpecCenter {
             let answering = rec.answering
             rec.answering = false
             // A turn nobody asked for on a task the gate gave up on means the user stepped in: start counting again.
-            if rec.held != nil, !answering { rec.held = nil; rec.state = GateState() }
+            let used = Workspace.shared.ledger.usage(session: session.id)
+            // The user spoke to the session: the gate and the budget both start counting again from here.
+            if rec.held != nil, !answering { rec.held = nil; rec.state = GateState(); rec.budgetBase = used }
             if rec.held != nil { return }
+            if let why = Prefs.shared.taskBudget.exceeded(used: used, since: rec.budgetBase) {
+                rec.held = why + " It stopped here for you to look at. Say anything to its session to let it go on."; rec.passedHead = nil
+                Workspace.shared.gates.set(rec, for: skey)
+                AlertCenter.shared.alert(.failed, title: "A task hit its limit", body: "\(task.id) \(task.title): \(why)", tag: "budget-\(key)", session: session.id)
+                return
+            }
             let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
             let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state)
             switch outcome {

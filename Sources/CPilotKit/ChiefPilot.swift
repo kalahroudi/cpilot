@@ -85,7 +85,7 @@ public enum ChiefPilot {
     }
 
     /// What a reviewer session is told. It works on the pull request's own branch and pushes fixes straight to it.
-    public static func reviewPrompt(number: Int, title: String, head: String, base: String, focus: String? = nil) -> String {
+    public static func reviewPrompt(number: Int, title: String, head: String, base: String, focus: String? = nil, criteria: [Specs.Criterion] = []) -> String {
         """
         You are the reviewer of pull request #\(number) (\(title)). Its branch is `\(head)`; you are in a checkout of it.
 
@@ -94,10 +94,21 @@ public enum ChiefPilot {
         3. Commit the fixes with a message starting "Review #\(number):". Then push them to the pull request with `git push origin HEAD:\(head)`. If the push is rejected, `git pull --rebase origin \(head)` and push again. Never force-push.
         4. Do not merge, close or open pull requests, and do not touch other branches.
 
-        \(focus.map { "Also check and fix this, which the chief pilot asked for specifically: \($0)\n\n" } ?? "")Finish with a short report: each finding, whether you fixed it (and in which commit), and anything you left for the author. If the change is fine, say so and push nothing.
+        \(criteriaSection(criteria))\(focus.map { "Also check and fix this, which the chief pilot asked for specifically: \($0)\n\n" } ?? "")Finish with a short report: each finding, whether you fixed it (and in which commit), and anything you left for the author. If the change is fine, say so and push nothing.
 
         \(ReviewVerdict.instructions)
         """
+    }
+
+    /// What the pull request was written to do. The reviewer answers for each one, so "the code is fine" cannot stand in for "it does what was asked".
+    static func criteriaSection(_ criteria: [Specs.Criterion]) -> String {
+        guard !criteria.isEmpty else { return "" }
+        var out = "This pull request implements these requirements of its spec. Besides reviewing the diff, check each one against the code and its tests. Where one is not met (missing, only partly done, or done but not tested), fix it like any other finding. In your report, give one line per requirement that starts with its id, such as `R1: met, in Foo.swift (test: FooTests.testBar)` or `R2: NOT met, because ...`. Only `VERDICT: CLEAN` when every one is met.\n"
+        for c in criteria {
+            out += "- \(c.id): \(c.text)\n"
+            for k in c.checks { out += "    check: \(k)\n" }
+        }
+        return out + "\n"
     }
 
     /// `--mcp-config` JSON that gives a chief session the CPilot tools, merged with any servers `existing` already names.
