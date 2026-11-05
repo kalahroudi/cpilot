@@ -174,6 +174,15 @@ final class MemoryQualityTests: XCTestCase {
         XCTAssertNil(m.plan(forProject: "/code/none-xyz", limit: 6000).text?.contains("Login") == true ? "" : nil)
     }
 
+    func testALargeBriefFitsBesideOtherNotes() {
+        let m = MemoryStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = MemoryStore.scope(forProject: "/code/shop")
+        m.save(scope: scope, name: "Chief brief", body: String(repeating: "a", count: 5_600))
+        m.save(scope: scope, name: "Mechanics", body: String(repeating: "b", count: 2_700))
+        m.save(scope: scope, name: "Root cause", body: String(repeating: "c", count: 1_800))
+        XCTAssertTrue(m.plan(forProject: "/code/shop").dropped.isEmpty)
+    }
+
     func testForkArguments() {
         var c = ClaudeRunner.Config(cwd: "/tmp"); c.resumeId = "abc"; c.fork = true
         XCTAssertTrue(ClaudeRunner.arguments(c).contains("--fork-session"))
