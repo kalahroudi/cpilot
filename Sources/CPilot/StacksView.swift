@@ -73,12 +73,12 @@ final class StackCenter {
                     _ = try await Stacks.mergeBottom(stack, in: dir, host: host, method: method)
                     _ = try await Stacks.sync(in: dir, host: host)
                     if let fresh = await Stacks.load(in: dir, host: host).first(where: { st in st.branches.contains { !$0.isMerged } }) { _ = try await Stacks.submit(fresh, in: dir, host: host) }
-                    AppModel.shared.notify("Merged #\(n)", body: stack.branches.last?.title ?? "")
+                    AppModel.shared.notify("Merged #\(n)", body: stack.branches.last?.title ?? "", project: URL(fileURLWithPath: dir).lastPathComponent)
                 } catch {
                     if GitHub.isPolicyBlocked(error) {
                         policyBlocked.insert(n)
                         AppLog.info("auto-merge stack: GitHub's rules block #\(n); waiting for that to change")
-                        AppModel.shared.notify("#\(n) can't merge", body: "Its checks pass, but GitHub's rules for the repository refuse the merge.")
+                        AppModel.shared.notify("#\(n) can't merge", body: "Its checks pass, but GitHub's rules for the repository refuse the merge.", project: URL(fileURLWithPath: dir).lastPathComponent)
                     } else { AppLog.error(error, context: "auto-merge stack") }
                 }
                 return true
@@ -365,7 +365,7 @@ final class StackCenter {
         try await self.awaitCollapse(job, session, dir: dir)
         self.busy = "Publishing \(job.branch)"
         let n = try await Stacks.finishCollapse(job, in: dir, host: host)
-        AppModel.shared.notify("Combined into #\(n)", body: "\(job.prs.count) pull requests are now one.")
+        AppModel.shared.notify("Combined into #\(n)", body: "\(job.prs.count) pull requests are now one.", project: URL(fileURLWithPath: dir).lastPathComponent)
         return (n, job)
     }
 

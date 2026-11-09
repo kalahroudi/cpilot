@@ -53,6 +53,7 @@ final class SpecCenter {
     private var hub: SpecHub { SpecHub.shared }
     /// Repos whose specs are committed instead of hidden from git ("environment|folder"). Read each time: every center shares it.
     private static let trackedKey = "trackedSpecRepos"
+    private var projectName: String? { repo.map { URL(fileURLWithPath: $0.dir).lastPathComponent } }
     private func trackKey(_ r: PRCenter.Repo) -> String { "\(r.environment ?? "")|\(r.dir)" }
     var tracked: Bool { repo.map { Set(UserDefaults.standard.stringArray(forKey: Self.trackedKey) ?? []).contains(trackKey($0)) } ?? false }
     func setTracked(_ on: Bool) async {
@@ -160,7 +161,7 @@ final class SpecCenter {
         case .giveUp(let stage, let attempts):
             let message = "The \(stage) could not be written after \(attempts) tries."
             change(id) { $0.error = message }; saveRun(id, attempts: 0)
-            AppModel.shared.notify("\(d?.title ?? id): \(message)", body: "Open the spec to try again.")
+            AppModel.shared.notify("\(d?.title ?? id): \(message)", body: "Open the spec to try again.", project: projectName)
         case .review:
             if let draft = jobs[id]?.draft, shouldAutoApprove(id, draft.stage, draft.text) { await approve(id, text: draft.text) }   // otherwise it waits for you
         case .wait: break
@@ -370,7 +371,7 @@ final class SpecCenter {
                 let message = AppModel.shared.capture(error, action: "Write the \(stage.rawValue)")
                 change(id) { $0.running = false; $0.error = message }
                 saveRun(id)
-                if autonomy != .step { AppModel.shared.notify("\(d?.title ?? id): the \(stage.rawValue) could not be written", body: message) }
+                if autonomy != .step { AppModel.shared.notify("\(d?.title ?? id): the \(stage.rawValue) could not be written", body: message, project: projectName) }
                 return
             }
         }
@@ -473,6 +474,17 @@ final class SpecCenter {
         } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message; $0.stage = Self.implementStage + task.id } }   // so Try again retries this task, not the tasks stage
     }
 
+    /// Marks a task delivered (or not) by hand, for work that reached the trunk without the task's own branch. Returns false when tasks.md could not be written.
+    @discardableResult
+    func markDone(_ id: String, _ taskId: String, _ done: Bool) async -> Bool {
+        guard let r = repo, let d = doc(id), let text = d.tasksText else { return false }
+        let latest = (try? await Exec.with(env) { try await Shell.check("cat", ["\(Specs.folder)/\(id)/tasks.md"], cwd: URL(fileURLWithPath: r.dir)) }) ?? text
+        let updated = Specs.updateTask(latest, id: taskId, done: done)
+        guard (try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }) != nil else { return false }
+        await refresh()
+        return true
+    }
+
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
         let key = "\(id)/\(taskId)", skey = gateKey(id, taskId)
@@ -489,7 +501,7 @@ final class SpecCenter {
             if let why = Prefs.shared.taskBudget.exceeded(used: used, since: rec.budgetBase) {
                 rec.held = why + " It stopped here for you to look at. Say anything to its session to let it go on."; rec.passedHead = nil
                 Workspace.shared.gates.set(rec, for: skey)
-                AlertCenter.shared.alert(.failed, title: "A task hit its limit", body: "\(task.id) \(task.title): \(why)", tag: "budget-\(key)", session: session.id)
+                AlertCenter.shared.alert(.failed, title: "A task hit its limit", body: "\(task.id) \(task.title): \(why)", tag: "budget-\(key)", session: session.id, project: projectName)
                 return
             }
             let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
@@ -504,7 +516,7 @@ final class SpecCenter {
             case .held(let why):
                 rec.held = why; rec.passedHead = nil
                 Workspace.shared.gates.set(rec, for: skey)
-                AlertCenter.shared.alert(.failed, title: "A task needs you", body: "\(task.id) \(task.title): \(why)", tag: "gate-\(key)", session: session.id)
+                AlertCenter.shared.alert(.failed, title: "A task needs you", body: "\(task.id) \(task.title): \(why)", tag: "gate-\(key)", session: session.id, project: projectName)
                 return
             }
             Workspace.shared.gates.set(rec, for: skey)
@@ -521,7 +533,7 @@ final class SpecCenter {
         case .asked:
             return false
         case .giveUp:
-            AlertCenter.shared.alert(.needs, title: "A task is not moving", body: "\(task.id) \(task.title): the agent stopped twice without writing anything.", tag: "stall-\(task.id)", session: session.id)
+            AlertCenter.shared.alert(.needs, title: "A task is not moving", body: "\(task.id) \(task.title): the agent stopped twice without writing anything.", tag: "stall-\(task.id)", session: session.id, project: projectName)
             return false
         case .nudge(let text):
             rec.nudges = (rec.nudges ?? 0) + 1
@@ -562,7 +574,7 @@ final class SpecCenter {
             StackCenter.shared.arm(repo: r)
             create(id) { $0.handedOn = true; $0.submitFailed = false; $0.submitNote = count == 0 ? "Nothing to submit yet. Auto-merge is on." : "Submitted \(count) pull request\(count == 1 ? "" : "s"). Auto-merge is on: they merge from the bottom when checks pass." }
             dropRun(id)
-            AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.")
+            AppModel.shared.notify("Pull requests are open for \(doc(id)?.title ?? id)", body: "They merge from the bottom when checks pass.", project: projectName)
             await refresh()
         } catch {
             let message = AppModel.shared.capture(error, action: "Submit the stack")

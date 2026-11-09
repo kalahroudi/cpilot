@@ -337,10 +337,10 @@ final class PRCenter {
                 do {
                     try await GitHub.merge(n, method: method, auto: false, expectedHead: pr.headRefOid, in: dir)
                     armed[k] = nil; persistArmed()
-                    AppModel.shared.notify("Merged #\(n)", body: pr.title)
+                    AppModel.shared.notify("Merged #\(n)", body: pr.title, project: URL(fileURLWithPath: dir).lastPathComponent)
                 } catch { AppLog.error(error, context: "auto-merge #\(n)") }
             } else if !chk.contains(where: { !$0.passed }), cantMergeTold.insert(key).inserted {
-                AppModel.shared.notify("#\(n) can't merge yet", body: gate.reasons.first ?? pr.title)
+                AppModel.shared.notify("#\(n) can't merge yet", body: gate.reasons.first ?? pr.title, project: URL(fileURLWithPath: dir).lastPathComponent)
             }
         }
         if armed.isEmpty { watcher?.cancel(); watcher = nil }

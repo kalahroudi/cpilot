@@ -27,11 +27,11 @@ public enum ChiefPilot {
     public enum Action: String, CaseIterable, Sendable {
         case specCreate = "spec_create", specStage = "spec_stage", specJob = "spec_job", specApprove = "spec_approve"
         case taskStart = "task_start", stackRestack = "stack_restack", stackSubmit = "stack_submit", prMerge = "pr_merge"
-        case prReview = "pr_review", prReviews = "pr_reviews", sessionMessage = "session_message"
+        case prReview = "pr_review", prReviews = "pr_reviews", sessionMessage = "session_message", taskDone = "task_done"
         /// Pushes and merges are the actions that reach outside the machine or change the main branch.
         public var needsApproval: Bool { self == .stackSubmit || self == .prMerge }
         /// Actions after which the chief pilot has nothing to do until background work finishes, so it ends its turn and has to be woken.
-        public var startsWork: Bool { self != .specApprove && self != .specJob && self != .prReviews }
+        public var startsWork: Bool { self != .specApprove && self != .specJob && self != .prReviews && self != .taskDone }
         public func requiresApproval(_ autonomy: Autonomy) -> Bool { autonomy == .asks && needsApproval }
     }
 
@@ -45,6 +45,7 @@ public enum ChiefPilot {
         - spec_stage {id, stage: specify|plan|tasks, answers?}: write the next document. `answers` revises the spec with answers to its open questions.
         - spec_approve {id}: save the draft that spec_job shows. Read it first; if it is wrong, run the stage again with better instructions instead of approving it.
         - task_start {id, task?}: start the tasks that are ready (or one task) as sessions on stacked branches. Watch them with list_sessions and get_session; start more as they finish.
+        - task_done {id, task, done?}: mark a task delivered when its work is already on the trunk without going through the task's own branch (committed there directly, or by a pull request that was not made for the task). Check that the files and checks the task names are on the trunk first. `done: false` undoes it. Delivered tasks unlock the ones that need them.
         - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. pr_merge {pr} merges one pull request by number, including one that is not in a stack (it refuses while the pull request is built on another open one). \(autonomy == .asks ? "stack_submit and pr_merge ask the user first; if they decline, stop and say so." : "They run without asking, because the user chose to let you lead; the reviewer, checks and merge rules still decide whether a merge happens.")
         - pr_review {pr, focus?}: assign a reviewer to a pull request. It is a separate session that reviews the diff, fixes what it finds, and commits and pushes the fixes to the pull request's own branch. pr_reviews shows each open pull request's reviewer, whether it is still working, and what it reported. `focus` adds what this reviewer must check on top of the usual review.
         - session_message {target_session, text}: send a follow-up to a reviewer or task session you started. It never asks the user. If the session is working, the message goes out when its turn ends. Use this, not send_message or start_session, which ask the user and are not for you.

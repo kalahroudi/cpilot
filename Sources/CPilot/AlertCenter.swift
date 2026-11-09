@@ -17,7 +17,8 @@ final class AlertCenter {
     /// The same alert (same tag) is sent at most once a minute.
     static let quiet: TimeInterval = 60
 
-    func alert(_ kind: AlertKind, title: String, body: String, tag: String, session: String? = nil) {
+    /// `project` leads the title ("parley · Approval needed"), because a phone banner has no subtitle.
+    func alert(_ kind: AlertKind, title: String, body: String, tag: String, session: String? = nil, project: String? = nil) {
         let server = RemoteServer.shared
         guard let base = server.url else { return }
         let now = Date()
@@ -26,7 +27,7 @@ final class AlertCenter {
         recent = recent.filter { now.timeIntervalSince($0.value) < 600 }
         let devices = server.devices.recipients(for: kind)
         guard !devices.isEmpty else { return }
-        let message = Self.payload(title: title, body: body, tag: tag, url: session.map { "/#s=\($0)" } ?? "/")
+        let message = Self.payload(title: Self.titled(title, project: project), body: body, tag: tag, url: session.map { "/#s=\($0)" } ?? "/")
         for d in devices { Task { _ = await send(message, to: d, subject: base.absoluteString) } }
     }
 
@@ -41,6 +42,11 @@ final class AlertCenter {
         case .failed(let why): last[d.id] = (Date(), "failed: \(why)")
         }
         return result
+    }
+
+    static func titled(_ title: String, project: String?) -> String {
+        guard let project, !project.isEmpty else { return title }
+        return "\(project) · \(title)"
     }
 
     static func payload(title: String, body: String, tag: String, url: String) -> Data {
@@ -61,6 +67,6 @@ final class AlertCenter {
         guard own || chiefDone else { return }
         let last = c.items.last(where: { $0.kind == .assistant && !$0.text.isEmpty })?.text ?? ""
         let line = last.split(separator: "\n").first.map { String($0.prefix(140)) } ?? "Done."
-        alert(.finished, title: "\(c.meta.title) finished", body: line, tag: "done-\(c.id)", session: c.id)
+        alert(.finished, title: "\(c.meta.title) finished", body: line, tag: "done-\(c.id)", session: c.id, project: c.meta.project)
     }
 }
