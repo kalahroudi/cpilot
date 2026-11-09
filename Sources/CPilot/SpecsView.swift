@@ -557,7 +557,7 @@ struct NewWorkSheet: View {
             TextEditor(text: $text).font(.system(size: 13)).frame(height: 110).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
             Text("Rough is fine. The agent asks about anything unclear.").font(.system(size: 11.5)).foregroundStyle(.secondary)
         case .chat:
-            Dropdown(options: ws.sessions.prefix(20).map { (String?.some($0.id), $0.title) }, selection: $sessionId, placeholder: "Choose a session")
+            Dropdown(options: ws.sessions.filter { !$0.isWorker }.prefix(20).map { (String?.some($0.id), $0.title) }, selection: $sessionId, placeholder: "Choose a session")
         case .code:
             Dropdown(options: branches.map { ($0, $0) }, selection: $branch, placeholder: "Choose a branch")
         case .capture:

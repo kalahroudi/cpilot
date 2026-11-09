@@ -248,7 +248,7 @@ enum RemoteAPI {
 
     static func stateJSON() -> String {
         let ws = Workspace.shared
-        let sessions: [[String: Any]] = ws.sessions.filter { !$0.archived && $0.environment == nil }.sorted { $0.updatedAt > $1.updatedAt }.prefix(40).map { m in
+        let sessions: [[String: Any]] = ws.sessions.filter { !$0.archived && $0.environment == nil && (!$0.isWorker || !(ws.controller($0.id)?.pending.isEmpty ?? true)) }.sorted { $0.updatedAt > $1.updatedAt }.prefix(40).map { m in
             let c = ws.controller(m.id)
             var group = "idle"
             if let c {

@@ -211,7 +211,7 @@ struct SessionSidebar: View {
     @State private var query = ""
 
     private var groups: [(String, [SessionMeta])] {
-        let list = ws.sessions.filter { Project.shared.owns($0) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
+        let list = ws.sessions.filter { ws.listed($0) && Project.shared.owns($0) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
         return Dictionary(grouping: list, by: \.project).map { ($0.key, $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
             .sorted { ($0.1.first?.updatedAt ?? .distantPast) > ($1.1.first?.updatedAt ?? .distantPast) }
     }
@@ -357,7 +357,7 @@ struct Welcome: View {
                     }
                 }.frame(width: 380).padding(.top, 10)
             }
-            let recent = ws.sessions.filter { Project.shared.owns($0) }
+            let recent = ws.sessions.filter { ws.listed($0) && Project.shared.owns($0) }
             if !recent.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionLabel("Recent").padding(.bottom, 6)
@@ -399,7 +399,7 @@ struct SessionHistory: View {
 
     var body: some View {
         let q = query.trimmingCharacters(in: .whitespaces)
-        let match: (SessionMeta) -> Bool = { Project.shared.owns($0) && (q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.project.localizedCaseInsensitiveContains(q)) }
+        let match: (SessionMeta) -> Bool = { ws.listed($0) && Project.shared.owns($0) && (q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.project.localizedCaseInsensitiveContains(q)) }
         let open = ws.sessions.filter { ws.tabs.contains($0.id) && match($0) }
         let recent = ws.sessions.filter { !ws.tabs.contains($0.id) && match($0) }
         let archived = ws.archived.filter(match)

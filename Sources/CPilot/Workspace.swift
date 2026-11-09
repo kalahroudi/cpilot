@@ -645,6 +645,11 @@ final class Workspace {
         tabs.append(id); persistTabs()
     }
 
+    /// Whether a session belongs in the lists: yours and the chief pilots, and a worker the chief pilot started only while it is open or needs you.
+    func listed(_ m: SessionMeta) -> Bool {
+        !m.isWorker || tabs.contains(m.id) || !(controllers[m.id]?.pending.isEmpty ?? true)
+    }
+
     var archived: [SessionMeta] { store.list(includeArchived: true).filter(\.archived) }
 
     func restore(_ id: String) {
@@ -883,6 +888,7 @@ final class Workspace {
         if remote == nil, policy.specSessionsHaveFullAccess(repo) { level = .fullAccess }
         var meta = SessionMeta(title: title, cwd: repo, access: level, branch: branch)
         meta.environment = environment
+        meta.spawned = !focus
         let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
         try await Exec.with(remote) {
             _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])

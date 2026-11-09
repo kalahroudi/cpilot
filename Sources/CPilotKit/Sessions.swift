@@ -68,6 +68,9 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var chief: Bool?
     /// The pull request this session was assigned to review and fix (by the chief pilot).
     public var reviewOf: Int?
+    /// Set when CPilot started the session for the chief pilot's work (a task, a reviewer) and false when the user started it from the Specs pane.
+    /// Sessions from before this was recorded have none; see `isWorker`.
+    public var spawned: Bool?
     /// How much of a server-held agent's output CPilot has already seen.
     public var remoteLines: Int?
     public var createdAt: Date
@@ -83,6 +86,13 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     /// The folder commands run in: the worktree when there is one.
     public var workingDirectory: String { worktree ?? cwd }
     public var project: String { URL(fileURLWithPath: cwd).lastPathComponent }
+
+    /// A session the chief pilot's work spun up (a task or a reviewer), as opposed to one the user started or the chief pilot itself. Lists leave these out:
+    /// they are reached from the Specs pane or the chief pilot, and show up when they need you.
+    public var isWorker: Bool {
+        if chief == true { return false }
+        return spawned ?? (reviewOf != nil || (branch ?? "").hasPrefix("spec-"))
+    }
 }
 
 /// Something attached to a message: a screenshot, a snippet, a link, a file.
