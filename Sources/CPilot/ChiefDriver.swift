@@ -94,6 +94,14 @@ enum ChiefDriver {
             let after = Set(Specs.ready(specs.doc(id)?.tasks ?? [], merged: specs.merged, coded: specs.coded).map(\.id))
             return (200, ["started": before.map(\.id).filter { !after.contains($0) }, "sessions": "Watch them with list_sessions and get_session."])
 
+        case .taskDone:
+            guard let id = text("id"), let d = specs.doc(id) else { return fail("No such spec.") }
+            guard let taskId = text("task"), d.tasks.contains(where: { $0.id == taskId }) else { return fail("task must be one of this spec's task ids.") }
+            let done = (body["done"] as? Bool) ?? true
+            guard await specs.markDone(id, taskId, done) else { return fail("Could not update tasks.md.") }
+            let ready = Specs.ready(specs.doc(id)?.tasks ?? [], merged: specs.merged, coded: specs.coded).map(\.id)
+            return (200, ["task": taskId, "done": done, "ready": ready])
+
         case .prReview:
             guard let n = body["pr"] as? Int else { return fail("pr (the pull request number) is required.") }
             guard let pr = try? await GitHub.view(n, in: repo.dir), pr.isOpen else { return fail("#\(n) is not an open pull request of this repository.") }

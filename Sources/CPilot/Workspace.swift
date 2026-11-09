@@ -886,7 +886,15 @@ final class Workspace {
         let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
         try await Exec.with(remote) {
             _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])
-            let tip = try await Shell.check("git", ["rev-parse", parent], cwd: URL(fileURLWithPath: repo)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let dir = URL(fileURLWithPath: repo)
+            // A repository with no commit has no branch to start from: give it an empty first commit, as `git init` followed by a commit would.
+            if (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", "HEAD"], cwd: dir))?.ok != true {
+                try await Shell.check("git", ["commit", "--allow-empty", "-m", "Initial commit"], cwd: dir)
+            }
+            guard let found = try? await Shell.check("git", ["rev-parse", "--verify", "--quiet", "\(parent)^{commit}"], cwd: dir) else {
+                throw ShellError.failed(command: "start task", status: 1, stderr: "The branch \(parent) does not exist in this repository yet, so there is nothing to start the task from. Make a first commit on it, or set the main branch of the repository, then try again.")
+            }
+            let tip = found.trimmingCharacters(in: .whitespacesAndNewlines)
             // The branch name is fixed per task, so a restart finds the earlier branch: pick it up instead of failing.
             if await Git.branchExists(branch, in: repo) {
                 try await Git.addWorktreeOnExisting(repo: repo, branch: branch, to: path)

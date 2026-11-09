@@ -377,8 +377,13 @@ struct TaskRow: View {
             else if task.branch.map(center.coded.contains) == true { Badge(text: "Coded", kind: .accent) }
             else if ready { AsyncButton("Run") { await center.implement(doc.id, task) }.buttonStyle(Pill(kind: .primary)) }
             else if task.branch == nil { Badge(text: "Waiting") }
+            if !done, state != .running, state != .waiting {
+                AsyncButton("Mark done") { await center.markDone(doc.id, task.id, true) }.buttonStyle(.soft).font(.system(size: 12))
+                    .help("Its work is already on the main branch, so it needs no session")
+            }
             if let s = session, !done { Button("Session") { Workspace.shared.select(s.id); Nav.shared.pane = .sessions }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent) }
         }.padding(.horizontal, 12).padding(.vertical, 8)
+        .contextMenu { if task.done { Button("Mark as not delivered") { Task { await center.markDone(doc.id, task.id, false) } } } }
     }
 }
 

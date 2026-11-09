@@ -473,6 +473,17 @@ final class SpecCenter {
         } catch { let message = AppModel.shared.capture(error, action: "Start \(task.id)"); create(id) { $0.error = message; $0.stage = Self.implementStage + task.id } }   // so Try again retries this task, not the tasks stage
     }
 
+    /// Marks a task delivered (or not) by hand, for work that reached the trunk without the task's own branch. Returns false when tasks.md could not be written.
+    @discardableResult
+    func markDone(_ id: String, _ taskId: String, _ done: Bool) async -> Bool {
+        guard let r = repo, let d = doc(id), let text = d.tasksText else { return false }
+        let latest = (try? await Exec.with(env) { try await Shell.check("cat", ["\(Specs.folder)/\(id)/tasks.md"], cwd: URL(fileURLWithPath: r.dir)) }) ?? text
+        let updated = Specs.updateTask(latest, id: taskId, done: done)
+        guard (try? await Exec.with(env) { try await Specs.write("\(Specs.folder)/\(id)/tasks.md", updated, in: r.dir, tracked: tracked) }) != nil else { return false }
+        await refresh()
+        return true
+    }
+
     /// A task's turn ended: start what that unlocks, or submit the stack when every task has code. Runs whichever repository is on screen.
     func taskTurnEnded(_ id: String, _ taskId: String, _ session: SessionController) async {
         let key = "\(id)/\(taskId)", skey = gateKey(id, taskId)
