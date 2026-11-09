@@ -4,6 +4,8 @@ import Foundation
 import CPilotKit
 
 /// What a paired phone may ask for. Narrower than the Mac on purpose:
+/// - the chief pilot can be pointed at a repository CPilot knows, a git folder found on this Mac, or one of the account's GitHub repositories (cloned first);
+///   letting it push and merge by itself needs a device that may approve pushes and merges;
 /// - sessions it starts are capped at Edit files, run in a worktree of their own, and only in repositories CPilot already knows;
 /// - a tool permission can be allowed once, never "always" or for the session, and Full access cannot be switched on;
 /// - pushing and merging can be approved only from a device you allowed to, at the Mac;
@@ -136,9 +138,27 @@ enum RemoteAPI {
             audit("approval", "\(allow ? "allowed" : "denied"): \(req.title)")
             return ok()
 
+        case "GET /v1/repos/local":
+            return ok(["repos": localRepos().map { ["dir": $0, "name": URL(fileURLWithPath: $0).lastPathComponent] }])
+
+        case "GET /v1/repos/github":
+            let names = await GitHub.repos(limit: 200)
+            return ok(["repos": names])
+
+        case "POST /v1/chief/mode":
+            guard let mode = (r.json["mode"] as? String).flatMap(ChiefPilot.Autonomy.init(rawValue:)) else { return fail(400, "mode must be asks or leads.") }
+            // Letting the chief push and merge by itself is what a phone must not do unless it may approve pushes and merges.
+            if mode != .asks, !device.canApprove { return fail(403, "This device may not let the chief pilot push and merge by itself. Allow it in CPilot, Settings, Remote.") }
+            if Prefs.shared.chiefMode != mode {
+                Prefs.shared.chiefAutonomy = mode.rawValue
+                audit("chief", "chief pilot set to \(mode.label)")
+            }
+            return ok(["chiefMode": Prefs.shared.chiefAutonomy])
+
         case "POST /v1/chief":
             let body = r.json
-            guard let dir = body["repo"] as? String, repos().contains(where: { $0.dir == dir }) else { return fail(400, "Unknown repository.") }
+            let dir: String
+            do { dir = try await resolveRepo(body, device: device, server: server) } catch { return fail(400, error.localizedDescription) }
             let text = ((body["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             do {
                 let c = try await ws.openChief(repo: dir, environment: nil)
@@ -179,8 +199,42 @@ enum RemoteAPI {
         return joined.isEmpty ? "session" : joined
     }
 
-    /// Repositories on this Mac that CPilot already knows. A phone cannot name a folder CPilot has not seen.
+    /// Repositories on this Mac that CPilot already knows. A phone cannot name any other folder, only pick one `localRepos()` finds.
     static func repos() -> [PRCenter.Repo] { Project.shared.repos().filter { $0.environment == nil } }
+
+    /// Git folders in the usual places for code (and the folder CPilot clones into) that CPilot has not been shown yet.
+    static func localRepos() -> [String] {
+        RepoDiscovery.scan(roots: [Prefs.shared.cloneFolder] + RepoDiscovery.defaultRoots(), exclude: repos().map(\.dir))
+    }
+
+    /// The folder a phone's chief pilot request means: a repository CPilot knows, a git folder it finds on this Mac, or a GitHub repository,
+    /// cloned into the clone folder first. A GitHub name must be one of the account's own repositories unless the device may approve pushes and merges.
+    private static func resolveRepo(_ body: [String: Any], device: RemoteDevice, server: RemoteServer) async throws -> String {
+        func problem(_ m: String) -> Error { ShellError.failed(command: "chief pilot", status: 1, stderr: m) }
+        if let github = body["github"] as? String, !github.isEmpty {
+            guard let slug = RepoDiscovery.slug(from: github) else { throw problem("That is not a GitHub repository name. Use owner/name.") }
+            guard server.devices.allowStart(device: device.id) else { throw problem("This device started too many sessions this hour.") }
+            let mine = await GitHub.repos(limit: 200)
+            guard device.canApprove || mine.contains(where: { $0.caseInsensitiveCompare(slug) == .orderedSame }) else {
+                throw problem("\(slug) is not one of your repositories. Pick one from the list, or allow this device to approve pushes and merges in CPilot, Settings, Remote.")
+            }
+            let parent = Prefs.shared.cloneFolder, dest = parent + "/" + (slug.split(separator: "/").last.map(String.init) ?? slug)
+            if await Git.isRepo(dest) {
+                let origin = (try? await Shell.run("git", ["remote", "get-url", "origin"], cwd: URL(fileURLWithPath: dest)))?.stdout.lowercased() ?? ""
+                guard origin.contains(slug.lowercased()) else { throw problem("A different repository is already at \(dest). Rename or remove it on the Mac, then try again.") }
+            } else {
+                guard !FileManager.default.fileExists(atPath: dest) else { throw problem("\(dest) exists and is not a git repository.") }
+                try? FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+                _ = try await GitHub.clone(slug, into: parent)
+                Workspace.shared.audit.record(AuditEntry(session: "remote", tool: "remote", summary: "\(device.name): cloned \(slug)", outcome: "allowed"))
+            }
+            return await Project.shared.add(folder: dest)
+        }
+        guard let dir = body["repo"] as? String else { throw problem("Pick a repository.") }
+        if repos().contains(where: { $0.dir == dir }) { return dir }
+        if localRepos().contains(dir) { return await Project.shared.add(folder: dir) }
+        throw problem("Unknown repository.")
+    }
 
     // MARK: State
 
