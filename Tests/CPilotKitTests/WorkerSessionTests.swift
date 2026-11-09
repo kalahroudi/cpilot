@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import XCTest
+@testable import CPilotKit
 
 final class WorkerSessionTests: XCTestCase {
     private func meta(_ edit: (inout SessionMeta) -> Void = { _ in }) -> SessionMeta {
