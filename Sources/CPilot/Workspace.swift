@@ -645,10 +645,9 @@ final class Workspace {
         tabs.append(id); persistTabs()
     }
 
-    /// Whether a session belongs in the lists: yours and the chief pilots, and a worker the chief pilot started only while it is open or needs you.
-    func listed(_ m: SessionMeta) -> Bool {
-        !m.isWorker || tabs.contains(m.id) || !(controllers[m.id]?.pending.isEmpty ?? true)
-    }
+    /// Whether a session belongs in the lists: yours and the chief pilots, and a worker the chief pilot started only while you have it open (from the
+    /// chief pilot's list of background work).
+    func listed(_ m: SessionMeta) -> Bool { !m.isWorker || tabs.contains(m.id) }
 
     var archived: [SessionMeta] { store.list(includeArchived: true).filter(\.archived) }
 
@@ -736,6 +735,8 @@ final class Workspace {
         var environment: String?
         var title: String?
         var chief = false
+        /// Started by CPilot for the chief pilot's work, not by you: kept out of the lists (see `SessionMeta.isWorker`).
+        var spawned = false
         /// Bring the new session to the front. A session started by a trigger or a phone leaves your screen alone.
         var select = true
     }
@@ -745,6 +746,7 @@ final class Workspace {
         var meta = SessionMeta(title: n.title ?? "New session", cwd: n.folder, backend: n.backend, model: n.model, access: n.access)
         meta.parentId = n.parentId; meta.handoff = n.handoff; meta.environment = n.environment
         if n.chief { meta.chief = true }
+        if n.spawned { meta.spawned = true }
         let remote = environment(n.environment)
         let isRepo = await Exec.with(remote) { await Git.isRepo(n.folder) }
         if let wanted = n.branch, !wanted.isEmpty, isRepo {

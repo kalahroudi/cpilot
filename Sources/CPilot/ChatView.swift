@@ -24,6 +24,7 @@ struct ChatView: View {
             if session.recapVisible { RecapCard(session: session).padding(.horizontal, 16).padding(.top, 10) }
             transcript
             TasksStrip(parent: session)
+            if session.meta.chief == true { BackgroundWork(chief: session) }
             if session.meta.branch != nil { SessionPRBar(session: session) }
             Composer(session: session)
         }
@@ -632,5 +633,68 @@ struct EditPreviewView: View {
             }.frame(minWidth: 300, alignment: .leading).padding(.vertical, 4)
         }
         .frame(maxHeight: 200).background(Theme.terminal).clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// What the chief pilot has running in the background: its task and reviewer sessions, by name and state. They have no tab of their own; Open shows one when you want it.
+struct BackgroundWork: View {
+    let chief: SessionController
+    let ws = Workspace.shared
+    @State private var expanded = false
+
+    private struct Row: Identifiable { let meta: SessionMeta; let state: SessionController.RunState; var id: String { meta.id } }
+
+    private var rows: [Row] {
+        let cutoff = Date().addingTimeInterval(-3 * 3600)
+        return ws.sessions
+            .filter { $0.isWorker && $0.cwd == chief.meta.cwd && $0.environment == chief.meta.environment }
+            .map { Row(meta: $0, state: ws.controller($0.id)?.state ?? .asleep) }
+            .filter { ($0.state != .idle && $0.state != .asleep) || $0.meta.updatedAt > cutoff }
+            .sorted { $0.meta.updatedAt > $1.meta.updatedAt }
+            .prefix(12).map { $0 }
+    }
+
+    private func label(_ s: SessionController.RunState) -> (String, Badge.Kind) {
+        switch s {
+        case .running, .reconnecting: ("Working", .accent)
+        case .waiting: ("Needs approval", .warn)
+        case .failed: ("Stopped", .danger)
+        default: ("Finished", .ok)
+        }
+    }
+
+    var body: some View {
+        let list = rows
+        if !list.isEmpty {
+            let working = list.filter { $0.state == .running || $0.state == .reconnecting }.count
+            let waiting = list.filter { $0.state == .waiting }.count
+            let stopped = list.filter { if case .failed = $0.state { return true } else { return false } }.count
+            VStack(alignment: .leading, spacing: 0) {
+                Divider().opacity(0.5)
+                Button { withAnimation(.easeOut(duration: 0.12)) { expanded.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
+                        Text("In the background").font(.system(size: 12, weight: .semibold))
+                        Text([working > 0 ? "\(working) working" : nil, waiting > 0 ? "\(waiting) need approval" : nil, stopped > 0 ? "\(stopped) stopped" : nil,
+                              list.count - working - waiting - stopped > 0 ? "\(list.count - working - waiting - stopped) finished" : nil].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(size: 11.5)).foregroundStyle(waiting > 0 || stopped > 0 ? Theme.warn : .secondary)
+                        Spacer()
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 7)
+                if expanded {
+                    VStack(spacing: 0) {
+                        ForEach(list) { r in
+                            let (text, kind) = label(r.state)
+                            HStack(spacing: 8) {
+                                Text(r.meta.title).font(.system(size: 12)).lineLimit(1)
+                                Spacer()
+                                Badge(text: text, kind: kind)
+                                Button("Open") { ws.select(r.meta.id) }.buttonStyle(.soft).font(.system(size: 12)).foregroundStyle(Theme.accent)
+                            }.padding(.horizontal, 16).padding(.vertical, 4)
+                        }
+                    }.padding(.bottom, 6)
+                }
+            }.background(Theme.pane)
+        }
     }
 }

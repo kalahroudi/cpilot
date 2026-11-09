@@ -64,7 +64,7 @@ struct PopoverView: View {
         let attention = live.filter { !$0.pending.isEmpty }.map(\.meta)
         let running = live.filter { $0.isBusy && $0.pending.isEmpty }.map(\.meta)
         var out: [SessionMeta] = []
-        for m in attention + running.filter({ !$0.isWorker }) + ws.sessions.filter({ ws.listed($0) }) where !out.contains(where: { $0.id == m.id }) { out.append(m) }
+        for m in (attention + running).filter({ ws.listed($0) }) + ws.sessions.filter({ ws.listed($0) }) where !out.contains(where: { $0.id == m.id }) { out.append(m) }
         return Array(out.prefix(5))
     }
 

@@ -107,7 +107,7 @@ final class ControlServer {
                 return (403, ["error": "The user declined."])
             }
             do {
-                let c = try await ws.create(.init(folder: folder, access: access, firstMessage: message))
+                let c = try await ws.create(.init(folder: folder, access: access, firstMessage: message, select: false))
                 return (200, ["session_id": c.id, "title": c.meta.title])
             } catch { return (400, ["error": error.localizedDescription]) }
         case "/v1/send_message":
