@@ -270,15 +270,39 @@ enum RemotePage {
         h("div",{class:"hint"},"Runs on its own branch in a separate worktree, so your working folder is not touched. A phone can give at most Edit files.")));
     }
 
+    let found={local:null,github:null};
+    async function loadFound(kind){if(found[kind]!==null)return;found[kind]=[];try{const j=await api("GET","/v1/repos/"+kind);found[kind]=j.repos}catch(e){return}if(tab==="chief"&&!open)draw()}
     function chiefView(){
-      if(!st.repos.length)return h("div",{},pageHeader("Chief pilot"),h("div",{class:"empty"},ic("compass"),h("b",{},"No repositories yet"),"Open a repository in CPilot on the Mac first."));
-      const repo=h("select",{},st.repos.map(r=>h("option",{value:r.dir},r.name))),text=h("textarea",{placeholder:"The outcome you want, in a few lines"});
-      repo.value=draftNew.crepo||st.repos[0].dir;repo.onchange=()=>draftNew.crepo=repo.value;text.value=draftNew.ctext||"";text.oninput=()=>draftNew.ctext=text.value;
+      const source=draftNew.csource||"mac";
+      loadFound(source==="mac"?"local":"github");
+      const text=h("textarea",{placeholder:"The outcome you want, in a few lines"});
+      text.value=draftNew.ctext||"";text.oninput=()=>draftNew.ctext=text.value;
       text.addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();go.click()}});
-      const go=h("button",{class:"btn primary block",onclick:()=>act(async()=>{go.disabled=true;try{const j=await api("POST","/v1/chief",{repo:repo.value,text:text.value});draftNew.ctext="";openSession(j.session_id)}finally{go.disabled=false}})},ic("compass"),"Send to chief pilot");
+      let where;
+      if(source==="mac"){
+        const sel=h("select",{},st.repos.length?h("optgroup",{label:"Added to CPilot"},st.repos.map(r=>h("option",{value:r.dir},r.name))):null,
+          (found.local||[]).length?h("optgroup",{label:"Found on this Mac"},found.local.map(r=>h("option",{value:r.dir},r.name))):null);
+        if(!sel.options.length)sel.append(h("option",{value:""},"No repositories found"));
+        sel.value=draftNew.crepo||"";if(!sel.value&&sel.options.length)sel.selectedIndex=0;sel.onchange=()=>draftNew.crepo=sel.value;draftNew.crepo=sel.value;
+        where=[...field("Repository",sel),h("div",{class:"hint"},"Repositories CPilot knows, and git folders in your code folders. A found one is added when you send.")];
+      }else{
+        const gh=h("input",{placeholder:"owner/name or a GitHub link",autocapitalize:"off",autocomplete:"off",spellcheck:false});
+        gh.setAttribute("list","ghrepos");gh.value=draftNew.cgh||"";gh.oninput=()=>draftNew.cgh=gh.value;
+        where=[...field("GitHub repository",gh),h("datalist",{id:"ghrepos"},(found.github||[]).map(r=>h("option",{value:r}))),
+          h("div",{class:"hint"},"Cloned to this Mac's clone folder first, then the chief pilot drives the work there."+(me.canApprove?"":" Only your own repositories, unless this device may approve pushes and merges."))];
+      }
+      const go=h("button",{class:"btn primary block",onclick:()=>act(async()=>{go.disabled=true;go.lastChild.textContent=source==="mac"?"Sending…":"Cloning and sending…";
+        try{const body=source==="mac"?{repo:draftNew.crepo,text:text.value}:{github:draftNew.cgh||"",text:text.value};const j=await api("POST","/v1/chief",body);draftNew.ctext="";found.local=null;openSession(j.session_id)}
+        finally{go.disabled=false;go.lastChild.textContent="Send to chief pilot"}})},ic("compass"),"Send to chief pilot");
+      const modes=[["leads","Leads"],["asks","Asks first"]];
+      const mode=seg(modes,st.chiefMode,v=>act(async()=>{const was=st.chiefMode;st.chiefMode=v;try{const j=await api("POST","/v1/chief/mode",{mode:v});st.chiefMode=j.chiefMode}catch(e){st.chiefMode=was;draw();throw e}draw()}));
       const chiefs=st.sessions.filter(s=>s.chief);
-      return h("div",{},pageHeader("Chief pilot"),...approvalCards(),h("div",{class:"card"},...field("Repository",repo),...field("Outcome",text),h("div",{class:"gap"}),go,
-        h("div",{class:"hint"},st.chiefMode==="asks"?"It writes the spec, runs the tasks and reviews, and asks you before it pushes and merges.":"It leads the work on its own: spec, tasks, review and merge, and tells you what it did.")),
+      return h("div",{},pageHeader("Chief pilot"),...approvalCards(),h("div",{class:"card"},
+        ...field("Access",mode),
+        h("div",{class:"hint"},st.chiefMode==="asks"?"It writes the spec, runs the tasks and reviews, and asks you before it pushes and merges.":"It leads the work on its own: spec, tasks, review and merge, and tells you what it did."+(me.canApprove?"":" Only a device allowed to approve pushes and merges can switch this on.")),
+        h("div",{class:"gap"}),
+        ...field("From",seg([["mac","This Mac"],["github","GitHub"]],source,v=>{draftNew.csource=v;draw()})),
+        ...where,...field("Outcome",text),h("div",{class:"gap"}),go),
         ...(chiefs.length?[h("div",{class:"sec"},"Chief pilots"),...chiefs.map(sessionRow)]:[]));
     }
 

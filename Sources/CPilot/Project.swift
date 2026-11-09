@@ -80,6 +80,13 @@ final class Project {
         quiet = true; current = r; quiet = false
     }
 
+    /// Remembers a git folder (by its top folder) so it is listed with the others, without changing the repository you are looking at. Returns that top folder.
+    func add(folder: String) async -> String {
+        let root = await Git.info(folder)?.root ?? folder
+        if !known.contains(root) { known.append(root); UserDefaults.standard.set(known, forKey: "knownRepos") }
+        return root
+    }
+
     /// Pick any git folder on this Mac, even one with no session yet.
     func addFolder() async {
         let p = NSOpenPanel(); p.canChooseDirectories = true; p.canChooseFiles = false; p.prompt = "Choose"
