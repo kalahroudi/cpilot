@@ -71,12 +71,12 @@ final class ChiefWaker {
             case .wait, .finish: break
             case .wake(let finished): wake(chief, repo: repo, ChiefWake.message(finished: finished))
             case .stalled:
-                AlertCenter.shared.alert(.needs, title: "The chief pilot is still waiting", body: name + ": nothing has changed for a long while.", tag: "stall-\(repo)", session: meta.id)
-                AppModel.shared.notify("The chief pilot is still waiting", body: "\(name): nothing has changed for a long while. Open the chief pilot to see what it waits for.")
+                AlertCenter.shared.alert(.needs, title: "The chief pilot is still waiting", body: name + ": nothing has changed for a long while.", tag: "stall-\(repo)", session: meta.id, project: name)
+                AppModel.shared.notify("The chief pilot is still waiting", body: "\(name): nothing has changed for a long while. Open the chief pilot to see what it waits for.", project: name)
             case .blocked(let why):
-                AlertCenter.shared.alert(.needs, title: "The chief pilot needs you", body: name + (why.isEmpty ? "" : ": " + why), tag: "blocked-\(repo)", session: meta.id)
+                AlertCenter.shared.alert(.needs, title: "The chief pilot needs you", body: name + (why.isEmpty ? "" : ": " + why), tag: "blocked-\(repo)", session: meta.id, project: name)
             case .held(let why):
-                AlertCenter.shared.alert(.needs, title: "The chief pilot is held back", body: name + ": " + why, tag: "held-\(repo)", session: meta.id)
+                AlertCenter.shared.alert(.needs, title: "The chief pilot is held back", body: name + ": " + why, tag: "held-\(repo)", session: meta.id, project: name)
             }
         }
     }

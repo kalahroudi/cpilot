@@ -96,7 +96,7 @@ final class ControlServer {
     private func handle(_ r: Request) async -> (Int, [String: Any]) {
         guard !r.token.isEmpty, r.token == token else { return (401, ["error": "Bad token."]) }
         let ws = Workspace.shared
-        if r.path.hasPrefix("/v1/chief/") { return await ChiefDriver.handle(r.path, r.body) { [self] title, detail in await approve(title, detail: detail, high: true) } }
+        if r.path.hasPrefix("/v1/chief/") { return await ChiefDriver.handle(r.path, r.body) { [self] title, detail in await approve(title, detail: detail, high: true, project: project(of: r.body)) } }
         switch r.path {
         case "/v1/start_session":
             guard let folder = r.body["folder"] as? String, FileManager.default.fileExists(atPath: folder) else { return (400, ["error": "folder is required and must exist."]) }
@@ -119,8 +119,13 @@ final class ControlServer {
         }
     }
 
+    /// The repository a request from a session is about, for banners.
+    private func project(of body: [String: Any]) -> String? {
+        (body["session_id"] as? String).flatMap { Workspace.shared.controller($0) }?.meta.project
+    }
+
     /// Shows the approval on this Mac and on paired phones; denies if nobody answers within three minutes.
-    func approve(_ title: String, detail: String, high: Bool = false) async -> Bool {
-        await ApprovalBroker.shared.ask(title, detail: detail, high: high)
+    func approve(_ title: String, detail: String, high: Bool = false, project: String? = nil) async -> Bool {
+        await ApprovalBroker.shared.ask(title, detail: detail, high: high, project: project)
     }
 }

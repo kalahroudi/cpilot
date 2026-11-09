@@ -19,16 +19,17 @@ final class ApprovalBroker {
         /// Pushes and merges: a phone may answer only if you allowed that for it.
         let high: Bool
         let created: Date
+        var project: String? = nil
     }
 
     private(set) var pending: [Request] = []
     private var waiters: [String: CheckedContinuation<Bool, Never>] = [:]
 
-    func ask(_ title: String, detail: String, high: Bool = false) async -> Bool {
-        let r = Request(id: UUID().uuidString, title: title, detail: detail, high: high, created: .now)
+    func ask(_ title: String, detail: String, high: Bool = false, project: String? = nil) async -> Bool {
+        let r = Request(id: UUID().uuidString, title: title, detail: detail, high: high, created: .now, project: project)
         pending.append(r)
         ApprovalPanel.shared.refresh()
-        AlertCenter.shared.alert(.needs, title: "Approval needed", body: title, tag: "approval-\(r.id)")
+        AlertCenter.shared.alert(.needs, title: "Approval needed", body: title, tag: "approval-\(r.id)", project: project)
         return await withCheckedContinuation { c in
             waiters[r.id] = c
             Task { [weak self] in

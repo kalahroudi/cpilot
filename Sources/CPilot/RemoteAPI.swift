@@ -168,7 +168,7 @@ enum RemoteAPI {
         do {
             let c = try await ws.create(.init(folder: dir, backend: backend, access: access, branch: "phone/" + slug(title), useWorktree: true, firstMessage: prompt, title: title))
             ws.audit.record(AuditEntry(session: c.id, tool: "remote", summary: "\(device.name): started \(title)", outcome: "allowed"))
-            AppModel.shared.notify("\(device.name) started a session", body: title)
+            AppModel.shared.notify("\(device.name) started a session", body: title, project: URL(fileURLWithPath: dir).lastPathComponent)
             return ok(["session_id": c.id])
         } catch { return fail(400, error.localizedDescription) }
     }
