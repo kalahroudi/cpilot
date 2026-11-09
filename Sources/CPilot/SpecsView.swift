@@ -44,7 +44,7 @@ struct SpecsView: View {
                         if mode == 0 { SpecList() } else { IssueList(query: $query) }
                     }.frame(minWidth: 240, idealWidth: 270, maxWidth: 340).background(Theme.sidebar.opacity(0.4))
                     Group {
-                        if let d = center.doc(center.selected) { SpecDetail(doc: d) }
+                        if let d = center.doc(center.selected) { SpecDetail(doc: d).id(d.id) }
                         else { VStack(spacing: 8) { Text(center.docs.isEmpty ? "No specs yet" : "Select a spec").font(.system(size: 15, weight: .semibold)); if center.docs.isEmpty { Text("Start from an issue, a rough requirement, a conversation or existing code.").font(.system(size: 12.5)).foregroundStyle(.secondary) } }.frame(maxWidth: .infinity, maxHeight: .infinity) }
                     }.frame(minWidth: 460)
                 }
