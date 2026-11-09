@@ -143,14 +143,14 @@ final class TriggerEngine {
             store.record(TriggerRun(triggerId: t.id, name: t.name, what: what, outcome: .failed, detail: error.localizedDescription))
             store.ran(t.id)
             if let key { store.markHandled(t.id, key: key) }
-            AlertCenter.shared.alert(.failed, title: "A trigger could not start", body: "\(t.name): \(error.localizedDescription)", tag: "trigger-\(t.id)")
+            AlertCenter.shared.alert(.failed, title: "A trigger could not start", body: "\(t.name): \(error.localizedDescription)", tag: "trigger-\(t.id)", project: URL(fileURLWithPath: t.repo).lastPathComponent)
             return .failed("Could not start: \(error.localizedDescription)")
         }
         store.record(TriggerRun(triggerId: t.id, name: t.name, what: what, outcome: .started))
         store.ran(t.id)
         if let key { store.markHandled(t.id, key: key) }
         ws.audit.record(AuditEntry(session: sessionId, tool: "trigger", summary: "\(t.name): \(what)", outcome: "allowed (trigger)"))
-        AppModel.shared.notify("Trigger started: \(t.name)", body: what)
+        AppModel.shared.notify("Trigger started: \(t.name)", body: what, project: URL(fileURLWithPath: t.repo).lastPathComponent)
         return .started(what)
     }
 

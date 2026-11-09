@@ -392,7 +392,7 @@ final class SessionController: Identifiable {
             pending.append(Pending(id: e.request.id, source: e.source, request: e.request))
             state = .waiting
             ws.notifyApproval(session: meta.title, repo: URL(fileURLWithPath: meta.cwd).lastPathComponent)
-            AlertCenter.shared.alert(.needs, title: "Approval needed", body: "\(e.request.tool) in \(meta.title)", tag: "perm-\(e.request.id)", session: id)
+            AlertCenter.shared.alert(.needs, title: "Approval needed", body: "\(e.request.tool) in \(meta.title)", tag: "perm-\(e.request.id)", session: id, project: meta.project)
         }
     }
 
@@ -972,6 +972,6 @@ final class Workspace {
         LessonLearner.shared.chiefTurnEnded(c)
         CleanupCenter.shared.chiefTurnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
-        AppModel.shared.notify("\(c.meta.title) finished")
+        AppModel.shared.notify("\(c.meta.title) finished", project: c.meta.project)
     }
 }

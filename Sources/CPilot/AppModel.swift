@@ -168,12 +168,14 @@ final class AppModel {
         AppDelegate.shared.showManager()   // the sheet lives in the Manager window; from the popover this brings it forward
     }
 
-    func notify(_ title: String, body: String = "") {
+    /// `project` is shown under the title, so a banner says which repository it is about.
+    func notify(_ title: String, body: String = "", project: String? = nil) {
         guard settings.notify, Bundle.main.bundleIdentifier != nil else { return }   // a bare `swift run` binary cannot post
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
             guard granted else { return }
             let c = UNMutableNotificationContent(); c.title = title; c.body = body
+            if let project, !project.isEmpty { c.subtitle = project }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
     }

@@ -53,7 +53,7 @@ final class CIWatcher {
             schedule.record(key, hasPending: watch.hasPending || eager)
             if watch.hasPending || eager { running = true }
             if first { continue }
-            for e in events { await announce(e, in: key) }
+            for e in events { await announce(e, in: key, project: URL(fileURLWithPath: r.dir).lastPathComponent) }
         }
         watches = watches.filter { done.contains($0.key) }
         schedule.keep(only: done)
@@ -83,16 +83,16 @@ final class CIWatcher {
         return false
     }
 
-    private func announce(_ e: CIWatch.Event, in repo: String) async {
+    private func announce(_ e: CIWatch.Event, in repo: String, project: String) async {
         if e.conflict {
-            AppModel.shared.notify("#\(e.pr.number) has merge conflicts", body: "\(e.pr.title). It can't merge until the conflict is resolved.")
+            AppModel.shared.notify("#\(e.pr.number) has merge conflicts", body: "\(e.pr.title). It can't merge until the conflict is resolved.", project: project)
             return
         }
         switch e.verdict {
         case .passed:
             if await isMergedByCPilot(e.pr.number, in: repo) { return }
-            AppModel.shared.notify("#\(e.pr.number) checks passed", body: e.pr.title)
-        case .failed(let names): AppModel.shared.notify("#\(e.pr.number) checks failed", body: names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more" : ""))
+            AppModel.shared.notify("#\(e.pr.number) checks passed", body: e.pr.title, project: project)
+        case .failed(let names): AppModel.shared.notify("#\(e.pr.number) checks failed", body: names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more" : ""), project: project)
         default: break
         }
     }
