@@ -161,7 +161,7 @@ enum RemoteAPI {
             do { dir = try await resolveRepo(body, device: device, server: server) } catch { return fail(400, error.localizedDescription) }
             let text = ((body["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             do {
-                let c = try await ws.openChief(repo: dir, environment: nil)
+                let c = try await ws.openChief(repo: dir, environment: nil, show: false)
                 if !text.isEmpty { c.loadIfNeeded(); c.draft = String(text.prefix(20_000)); c.send() }
                 audit(c.id, "chief pilot: \(text.prefix(80))")
                 return ok(["session_id": c.id])
@@ -186,7 +186,7 @@ enum RemoteAPI {
         let access: AccessLevel = wanted == .fullAccess ? .editFiles : wanted
         let title = String(prompt.split(separator: "\n").first?.prefix(60) ?? "Phone session")
         do {
-            let c = try await ws.create(.init(folder: dir, backend: backend, access: access, branch: "phone/" + slug(title), useWorktree: true, firstMessage: prompt, title: title))
+            let c = try await ws.create(.init(folder: dir, backend: backend, access: access, branch: "phone/" + slug(title), useWorktree: true, firstMessage: prompt, title: title, select: false))
             ws.audit.record(AuditEntry(session: c.id, tool: "remote", summary: "\(device.name): started \(title)", outcome: "allowed"))
             AppModel.shared.notify("\(device.name) started a session", body: title)
             return ok(["session_id": c.id])

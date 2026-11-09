@@ -359,7 +359,7 @@ final class StackCenter {
         self.busy = "Waiting for Claude to finish \(job.branch)"
         let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
         let session: SessionController
-        do { session = try await Workspace.shared.create(.init(folder: job.path, access: level, firstMessage: Stacks.collapsePrompt(job), environment: self.repo?.environment, title: "Combine: \(job.branch)", select: false)) }
+        do { session = try await Workspace.shared.create(.init(folder: job.path, access: level, firstMessage: Stacks.collapsePrompt(job), environment: self.repo?.environment, title: "Combine: \(job.branch)", spawned: true, select: false)) }
         catch { await Stacks.abortCollapse(job, in: dir); throw error }
         self.notice = "Claude is combining \(job.sources.count) branches into \(job.branch). This carries on when it is done."
         try await self.awaitCollapse(job, session, dir: dir)
@@ -448,7 +448,7 @@ final class StackCenter {
         let prompt = "A restack of the branch \(c.branch) stopped on a merge conflict in \(files). The rebase is stopped in this folder\(c.isolated ? ", a temporary copy made only for it" : ""). Resolve the conflict markers so both sides' intent is kept, run the tests, `git add` the files and run `git -c core.editor=true rebase --continue`. If more conflicts appear, resolve them the same way. Do not switch branches, do not push and do not commit anything else: CPilot moves the branch itself once the rebase has finished."
         let level: AccessLevel = [.readOnly, .askFirst].contains(Workspace.shared.policy.defaultLevel) ? .editFiles : Workspace.shared.policy.defaultLevel
         do {
-            try await Workspace.shared.create(.init(folder: c.dir, access: level, firstMessage: prompt, environment: r.environment, title: "Resolve conflict: \(c.branch)", select: show))
+            try await Workspace.shared.create(.init(folder: c.dir, access: level, firstMessage: prompt, environment: r.environment, title: "Resolve conflict: \(c.branch)", spawned: !show, select: show))
             if show { AppDelegate.shared.showManager(pane: .sessions) } else { notice = "Claude is resolving the conflict in \(c.branch). Stacks carries on when it is done." }
         } catch { AppModel.shared.fail(error, action: "Start the session that resolves the conflict") }
     }
