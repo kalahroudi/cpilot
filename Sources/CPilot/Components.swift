@@ -346,3 +346,30 @@ struct AsyncButton<Label: View>: View {
 extension AsyncButton where Label == Text {
     init(_ title: String, action: @escaping @MainActor () async -> Void) { self.init(action: action) { Text(title) } }
 }
+
+/// Picks a Claude model from the aliases and whatever Claude Code lists for this account, or any id typed in. The list is read each time it is shown.
+struct ModelPicker: View {
+    @Binding var selection: String
+    @State private var options = ClaudeModels.current()
+    @State private var custom = false
+    @State private var typed = ""
+    var body: some View {
+        HStack(spacing: 8) {
+            let list = ClaudeModels.options(including: selection, in: options)
+            Menu {
+                ForEach(list, id: \.value) { o in
+                    Button { selection = o.value; custom = false } label: { Text(o.detail.isEmpty ? o.label : "\(o.label) — \(o.detail)") }
+                }
+                Divider()
+                Button("Other model id…") { typed = selection; custom = true }
+                Button("Refresh list") { options = ClaudeModels.current() }
+            } label: { Text(ClaudeModels.label(for: selection, in: list)) }
+                .menuStyle(.borderlessButton).fixedSize()
+            if custom {
+                TextField("claude-…", text: $typed).textFieldStyle(CPField()).font(.system(size: 12.5, design: .monospaced)).frame(maxWidth: 220)
+                    .onSubmit { selection = typed.trimmingCharacters(in: .whitespaces); custom = false }
+            }
+        }
+        .onAppear { options = ClaudeModels.current() }
+    }
+}

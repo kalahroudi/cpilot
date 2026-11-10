@@ -69,7 +69,7 @@ final class Prefs {
     /// Phone access: a loopback web server published on your tailnet. Off until you turn it on.
     var remoteEnabled: Bool { didSet { d.set(remoteEnabled, forKey: "remoteEnabled") } }
     var chiefAutonomy: String { didSet { d.set(chiefAutonomy, forKey: "chiefAutonomy") } }
-    /// The model reviewers the chief pilot starts use ("" is the default model, "opus", "sonnet" or "haiku").
+    /// The model reviewers the chief pilot starts use ("" is the default model, else an alias or a full model id).
     var reviewerModel: String { didSet { d.set(reviewerModel, forKey: "reviewerModel") } }
     var chiefMode: ChiefPilot.Autonomy { ChiefPilot.Autonomy(rawValue: chiefAutonomy) ?? .leads }
     /// A local checkout of SecurityCage (with npm install done), used for scans.
