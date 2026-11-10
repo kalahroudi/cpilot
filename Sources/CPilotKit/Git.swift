@@ -49,7 +49,10 @@ public enum Git {
     public static func defaultBranch(_ dir: String) async -> String {
         let r = (try? await Shell.check("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd: url(dir)))?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let r, r.hasPrefix("origin/") { return String(r.dropFirst(7)) }
-        return "main"
+        // No remote HEAD recorded: take the usual names that exist here, then the branch that is checked out. "main" is the last guess, not the first.
+        for name in ["main", "master", "trunk", "develop"] where await branchExists(name, in: dir) { return name }
+        let current = (try? await Shell.check("git", ["branch", "--show-current"], cwd: url(dir)))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return current.flatMap { $0.isEmpty ? nil : $0 } ?? "main"
     }
 
     /// The newest default branch to start a session from: the remote's after a fetch, else the local one.
@@ -58,7 +61,10 @@ public enum Git {
         _ = try? await Shell.run("git", ["fetch", "origin", name], cwd: url(dir), timeout: 60)
         let remote = "origin/\(name)"
         let ok = (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", remote], cwd: url(dir)))?.ok ?? false
-        return ok ? remote : name
+        if ok { return remote }
+        // The branch is not there either (a repository with no commit on it yet): start from where the repository is.
+        let local = (try? await Shell.run("git", ["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], cwd: url(dir)))?.ok ?? false
+        return local ? name : "HEAD"
     }
 
     public static func slugify(_ title: String) -> String {
