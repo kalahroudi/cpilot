@@ -54,6 +54,12 @@ extension RepoRef {
         return out
     }
 
+    /// A copy CPilot made for one job (a conflict resolution in `restack`, a session's `worktrees` checkout). It is never a repository of its own,
+    /// and once the job is cleaned up it is gone, so git can no longer say which repository it belonged to.
+    public static func isTemporaryCopy(_ dir: String, appRoot: String = AppPaths().root.path) -> Bool {
+        ["restack", "worktrees"].contains { dir.hasPrefix("\(appRoot)/\($0)/") }
+    }
+
     /// Whether `path` is this repository's folder or inside it (a session started in a subfolder belongs to the repository).
     public func contains(_ path: String) -> Bool {
         let base = dir.hasSuffix("/") ? String(dir.dropLast()) : dir

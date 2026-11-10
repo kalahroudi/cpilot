@@ -27,7 +27,8 @@ final class Project {
     func repos() -> [PRCenter.Repo] {
         var raw: [RepoRef] = []
         if let c = current { raw.append(RepoRef(dir: c.dir, environment: c.environment)) }
-        for m in Workspace.shared.sessions { raw.append(RepoRef(dir: m.cwd, environment: m.environment)) }
+        // A temporary copy (a restack's conflict resolution, a worktree) belongs to a repository that is listed anyway.
+        for m in Workspace.shared.sessions where m.environment != nil || !RepoRef.isTemporaryCopy(m.cwd) { raw.append(RepoRef(dir: m.cwd, environment: m.environment)) }
         for d in known { raw.append(RepoRef(dir: d)) }
         if raw.contains(where: { roots[$0.key] == nil }) { resolveRoots(raw) }
         return RepoRef.collapse(raw, roots: roots).map { PRCenter.Repo(dir: $0.dir, environment: $0.environment) }
@@ -74,6 +75,7 @@ final class Project {
     /// You opened a session: its repository becomes the active one. Specs, Stacks and Pull requests load it when you open them.
     func follow(dir: String, environment: String?) {
         let ref = RepoRef(dir: dir, environment: environment)
+        if environment == nil, RepoRef.isTemporaryCopy(dir), roots[ref.key] == nil { return }
         let top = roots[ref.key] ?? dir
         let r = PRCenter.Repo(dir: top, environment: environment)
         guard r != current else { return }
