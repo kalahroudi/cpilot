@@ -86,7 +86,7 @@ struct NewSessionSheet: View {
                 }
                 if backend.kind == .claude {
                     Divider()
-                    field("Model") { Segmented(options: [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")], selection: $model) }
+                    field("Model") { ModelPicker(selection: $model) }
                 }
                 Divider()
                 field("Access") {

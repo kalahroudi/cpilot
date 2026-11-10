@@ -128,7 +128,7 @@ struct SettingsPane: View {
                     Segmented(options: ChiefPilot.Autonomy.allCases.map { ($0.rawValue, $0.label) }, selection: $p.chiefAutonomy)
                 }
                 SettingRow("Reviewer model", "The model that reviews the pull requests the chief pilot starts. Choosing a different one from the model that wrote the code means the review does not share its blind spots. Default uses the same default as any new session.") {
-                    Segmented(options: [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")], selection: $p.reviewerModel)
+                    ModelPicker(selection: $p.reviewerModel)
                 }
                 SettingRow("Offer \"Merge all as admin\"", "On a stack that GitHub's rules block, merges every open pull request in order past those rules, after one confirmation. Each still needs its checks to pass. Off keeps the one-at-a-time button.") { toggle($p.adminMergeAll) }
                 SettingRow("Combine stacks that change the same files", "When open pull requests in different stacks edit the same files, a session combines them into one pull request by itself, checks it builds, and closes the old ones. Off keeps it a button on each stack.") { toggle($p.autoCollapse) }
