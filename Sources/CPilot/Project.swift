@@ -102,22 +102,17 @@ final class Project {
 }
 
 /// The one place the repository is chosen, at the top of the side menu so it is there on every pane. Specs, Stacks, Pull requests and
-/// Repo setup follow it. Repositories with the same folder name are told apart by their parent folders.
+/// Repo setup follow it. Repositories with the same folder name are told apart by their parent folders. With many repositories, type to find one.
 struct RepoSwitcher: View {
     var expanded = true
     let project = Project.shared
+    @State private var open = false
 
     var body: some View {
         let repos = project.repos()
         let labels = RepoLabels.labels(repos.map { RepoRef(dir: $0.dir, environment: $0.environment) }) { Workspace.shared.environment($0)?.name }
         func label(_ r: PRCenter.Repo) -> String { labels[RepoRef(dir: r.dir, environment: r.environment)] ?? r.name }
-        return Menu {
-            ForEach(repos, id: \.self) { r in
-                Button { project.choose(r) } label: { if r == project.current { Label(label(r), systemImage: "checkmark") } else { Text(label(r)) } }
-            }
-            if !repos.isEmpty { Divider() }
-            AsyncButton("Add a folder…") { await project.addFolder() }
-        } label: {
+        return Button { open.toggle() } label: {
             HStack(spacing: 8) {
                 Image(systemName: "folder").font(.system(size: 14)).foregroundStyle(Theme.accent).frame(width: 22)
                 if expanded {
@@ -130,9 +125,63 @@ struct RepoSwitcher: View {
             .frame(maxWidth: .infinity, alignment: expanded ? .leading : .center)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
         }
-        .menuStyle(.button).buttonStyle(.soft).menuIndicator(.hidden)
+        .buttonStyle(.soft)
+        .popover(isPresented: $open, arrowEdge: .trailing) {
+            RepoSearchList(repos: repos, labels: labels, current: project.current) { r in project.choose(r); open = false } add: { open = false; Task { await project.addFolder() } }
+        }
         .help(project.current.map { "Repository: \(label($0)). Specs, Stacks and Pull requests follow it." } ?? "Choose a repository")
         .accessibilityLabel("Repository")
         .onAppear { project.ensureDefault() }
+    }
+}
+
+/// The search box and the repositories that match it. Return picks the first match.
+private struct RepoSearchList: View {
+    let repos: [PRCenter.Repo]
+    let labels: [RepoRef: String]
+    let current: PRCenter.Repo?
+    let pick: (PRCenter.Repo) -> Void
+    let add: () -> Void
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    private func ref(_ r: PRCenter.Repo) -> RepoRef { RepoRef(dir: r.dir, environment: r.environment) }
+    private func label(_ r: PRCenter.Repo) -> String { labels[ref(r)] ?? r.name }
+    private var matches: [PRCenter.Repo] {
+        let byRef = Dictionary(repos.map { (ref($0), $0) }, uniquingKeysWith: { first, _ in first })
+        return RepoLabels.filter(repos.map(ref), labels: labels, query: query).compactMap { byRef[$0] }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search repositories", text: $query)
+                .textFieldStyle(CPField()).focused($focused)
+                .onSubmit { if let first = matches.first { pick(first) } }
+                .accessibilityLabel("Search repositories")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(matches, id: \.self) { r in
+                        Button { pick(r) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).opacity(r == current ? 1 : 0).frame(width: 12)
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(label(r)).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
+                                    if r.environment == nil { Text(r.dir).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head) }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 6).padding(.vertical, 4).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if matches.isEmpty { Text(repos.isEmpty ? "No repositories yet." : "No repository matches.").font(.callout).foregroundStyle(.secondary).padding(6) }
+                }
+            }
+            .frame(maxHeight: 280)
+            Divider()
+            Button("Add a folder…", action: add).buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Theme.accent)
+        }
+        .padding(10).frame(width: 300)
+        .onAppear { focused = true }
     }
 }

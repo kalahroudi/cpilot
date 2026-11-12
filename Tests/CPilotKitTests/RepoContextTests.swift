@@ -193,6 +193,26 @@ final class RepoContextTests: XCTestCase {
         p.keep(only: [])
         XCTAssertTrue(p.isDue("locked", now: t0), "a repository that left the list starts fresh if it returns")
     }
+
+    func testSearchMatchesEveryWordInTheLabelOrPath() {
+        let repos = [ref("/work/app"), ref("/personal/app"), ref("/work/api"), ref("/srv/shop", "box")]
+        let labels = RepoLabels.labels(repos) { $0 == "box" ? "Build server" : nil }
+        func names(_ q: String) -> [String] { RepoLabels.filter(repos, labels: labels, query: q).map(\.dir) }
+        XCTAssertEqual(names(""), repos.map(\.dir)); XCTAssertEqual(names("   "), repos.map(\.dir))
+        XCTAssertEqual(names("API"), ["/work/api"])
+        XCTAssertEqual(names("app"), ["/work/app", "/personal/app"])
+        XCTAssertEqual(names("personal app"), ["/personal/app"])
+        XCTAssertEqual(names("app work"), ["/work/app"])
+        XCTAssertEqual(names("build"), ["/srv/shop"])
+        XCTAssertEqual(names("nothing like it"), [])
+    }
+
+    func testSearchPutsLabelMatchesBeforePathOnlyMatches() {
+        let repos = [ref("/code/tools/zeta"), ref("/code/tools"), ref("/code/zeta-tools")]
+        let labels = RepoLabels.labels(repos)
+        // "tools" is in every path; the labels that contain it come first, in their given order.
+        XCTAssertEqual(RepoLabels.filter(repos, labels: labels, query: "tools").map(\.dir), ["/code/tools", "/code/zeta-tools", "/code/tools/zeta"])
+    }
 }
 
 final class TemporaryCopyTests: XCTestCase {

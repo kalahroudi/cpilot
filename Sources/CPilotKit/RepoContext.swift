@@ -42,6 +42,22 @@ public enum RepoLabels {
     }
 }
 
+extension RepoLabels {
+    /// The repositories that match what was typed in a picker's search box. Every word must appear (in any order, ignoring case) in the repository's label or its full folder path;
+    /// those that match the label come before those that only match somewhere in the path, and the given order is kept within each group. Nothing typed keeps them all.
+    public static func filter(_ repos: [RepoRef], labels: [RepoRef: String], query: String) -> [RepoRef] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return repos }
+        var hits: [(rank: Int, repo: RepoRef)] = []
+        for r in repos {
+            let label = (labels[r] ?? URL(fileURLWithPath: r.dir).lastPathComponent).lowercased(), path = r.dir.lowercased()
+            if words.allSatisfy({ label.contains($0) }) { hits.append((0, r)) }
+            else if words.allSatisfy({ label.contains($0) || path.contains($0) }) { hits.append((1, r)) }
+        }
+        return hits.enumerated().sorted { ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset) }.map(\.element.repo)
+    }
+}
+
 extension RepoRef {
     /// Folders inside one repository are one repository. `roots` maps a reference's `key` to the top folder git reported for it; a folder
     /// that has not been looked up yet stays as it is. The first appearance keeps its place in the list.
