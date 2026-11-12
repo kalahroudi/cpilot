@@ -44,7 +44,8 @@ public enum TestFirst {
         case .all: return (true, ["every task is tested first"])
         case .risky:
             let hay = ([task.title] + task.touches + criteria.map(\.text)).joined(separator: " ").lowercased()
-            let hits = riskyWords.filter { hay.contains($0) }
+            // A word counts from its start, so "lock" finds "locked" but not "block", and "role" finds "roles" but not "controller".
+            let hits = riskyWords.filter { hay.range(of: "(?<![a-z0-9])" + NSRegularExpression.escapedPattern(for: $0), options: .regularExpression) != nil }
             return (!hits.isEmpty, hits.prefix(4).map { "mentions \"\($0)\"" })
         }
     }

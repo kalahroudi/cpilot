@@ -197,7 +197,7 @@ enum RemotePage {
     function mdCached(m){const k=m.id+":"+m.text.length;let n=mdCache.get(k);if(!n){n=md(m.text);mdCache.set(k,n);if(mdCache.size>400)mdCache.delete(mdCache.keys().next().value)}return n}
 
     /* ---------- state ---------- */
-    let st={approvals:[],sessions:[],repos:[],agents:[]},me={name:"",canApprove:false},paired=true,tab="board",open=null,msgs=[],lastRev=null,es=null,live=false,shell=null,access="editFiles",draftNew={},toastT=null;
+    let st={approvals:[],proposals:[],sessions:[],repos:[],agents:[]},me={name:"",canApprove:false},paired=true,tab="board",open=null,msgs=[],lastRev=null,es=null,live=false,shell=null,access="editFiles",draftNew={},toastT=null;
     const api=async(method,path,body)=>{const r=await fetch(path,{method,headers:{"X-CPilot":"1","Content-Type":"application/json"},body:body?JSON.stringify(body):undefined,credentials:"same-origin"});
       let j={};try{j=await r.json()}catch(e){}if(r.status===401){paired=false;draw();throw new Error("unpaired")}if(!r.ok)throw new Error(j.error||("Error "+r.status));return j};
     const toast=(msg)=>{document.querySelectorAll(".toast").forEach(t=>t.remove());const t=h("div",{class:"toast"},msg);document.body.append(t);clearTimeout(toastT);toastT=setTimeout(()=>t.remove(),4200)};
@@ -227,10 +227,22 @@ enum RemotePage {
       h("div",{class:"grow"},h("div",{class:"t"},s.title),h("div",{class:"s"},s.repo+(s.branch?" · "+s.branch:""))),
       h("div",{class:"ago"},ago(s.updated)),h("span",{class:"chev"},ic("next")))}
     function approvalCards(){
-      return st.approvals.map(a=>h("div",{class:"card amber"},h("div",{class:"row"},h("div",{class:"badge approval"},ic("shield")),h("div",{class:"grow"},h("div",{class:"t",style:"white-space:normal"},a.title))),
+      return [...proposalCards(),...st.approvals.map(a=>h("div",{class:"card amber"},h("div",{class:"row"},h("div",{class:"badge approval"},ic("shield")),h("div",{class:"grow"},h("div",{class:"t",style:"white-space:normal"},a.title))),
         h("div",{class:"s wrap",style:"white-space:pre-wrap;margin-top:8px"},a.detail),
         a.high&&!me.canApprove?h("div",{class:"hint row",style:"gap:8px"},ic("lock"),"This device may not approve pushes and merges. Answer at the Mac, or allow it in CPilot, Settings, Remote.")
-        :h("div",{class:"acts"},h("button",{class:"btn primary",onclick:()=>act(()=>api("POST","/v1/approvals/"+a.id,{allow:true}))},ic("check"),"Allow once"),h("button",{class:"btn danger",onclick:()=>act(()=>api("POST","/v1/approvals/"+a.id,{allow:false}))},ic("x"),"Deny"))));
+        :h("div",{class:"acts"},h("button",{class:"btn primary",onclick:()=>act(()=>api("POST","/v1/approvals/"+a.id,{allow:true}))},ic("check"),"Allow once"),h("button",{class:"btn danger",onclick:()=>act(()=>api("POST","/v1/approvals/"+a.id,{allow:false}))},ic("x"),"Deny"))))];
+    }
+    /* A decision CPilot puts to you: what, why it matters, what it recommends, and what each answer does. */
+    function proposalCards(){
+      return (st.proposals||[]).map(p=>h("div",{class:"card amber"},h("div",{class:"t",style:"white-space:normal"},p.what),
+        h("div",{class:"s wrap",style:"margin-top:8px"},h("b",{},"Why it matters. "),p.why),
+        h("div",{class:"s wrap",style:"margin-top:6px"},h("b",{},"Recommended. "),p.recommendation),
+        h("div",{class:"s wrap",style:"margin-top:6px"},h("b",{},"If you approve. "),p.ifApprove),
+        h("div",{class:"s wrap",style:"margin-top:6px"},h("b",{},"If you decline. "),p.ifDecline),
+        p.evidence&&p.evidence.length?h("details",{style:"margin-top:8px"},h("summary",{},"Evidence ("+p.evidence.length+")"),...p.evidence.map(e=>h("div",{class:"s wrap",style:"white-space:pre-wrap;margin-top:4px"},e))):null,
+        !me.canApprove?h("div",{class:"hint row",style:"gap:8px"},ic("lock"),"This device may decline, but only the Mac or an allowed device can approve."):null,
+        h("div",{class:"acts"},me.canApprove?h("button",{class:"btn primary",onclick:()=>act(()=>api("POST","/v1/proposals/"+p.id,{approve:true}))},ic("check"),p.approve):null,
+          h("button",{class:"btn danger",onclick:()=>act(()=>api("POST","/v1/proposals/"+p.id,{approve:false}))},ic("x"),p.decline))));
     }
     const seg=(opts,cur,onpick)=>{const box=h("div",{class:"seg"});opts.forEach(([v,l])=>box.append(h("button",{class:v===cur?"on":"",type:"button",onclick:()=>{onpick(v);[...box.children].forEach(b=>b.classList.toggle("on",b===box.children[opts.findIndex(o=>o[0]===v)]))}},l)));return box};
     const field=(label,el)=>[h("label",{},label),el];
@@ -431,7 +443,7 @@ enum RemotePage {
       const nav=$("#nav");
       if(!paired||open){nav.replaceChildren();document.body.classList.toggle("insession",!!open&&paired);return}
       document.body.classList.remove("insession");
-      const need=st.sessions.filter(s=>s.group==="approval").length+st.approvals.length;
+      const need=st.sessions.filter(s=>s.group==="approval").length+st.approvals.length+(st.proposals||[]).length;
       const tabs=[["board","Board","list"],["chief","Chief","compass"],["new","New","plus"],["me","Device","phone"]];
       nav.replaceChildren(h("div",{class:"in"},...tabs.map(([k,l,i])=>h("button",{class:tab===k?"on":"",onclick:()=>{tab=k;draw();paintNav();window.scrollTo(0,0)}},ic(i),l,k==="board"&&need?h("span",{class:"n"},need):null))));
     }

@@ -49,7 +49,7 @@ enum RemoteAPI {
         // "POST /v1/sessions/:id/permissions/:pid": the session and request ids stand in for their segments.
         let id = parts.count > 2 ? parts[2] : "", pid = parts.count > 4 ? parts[4] : ""
         let shape = r.method + " /" + parts.enumerated().map { i, seg in
-            (i == 2 && parts.count > 1 && (parts[1] == "sessions" || parts[1] == "approvals")) ? ":id" : (i == 4 ? ":pid" : seg)
+            (i == 2 && parts.count > 1 && (parts[1] == "sessions" || parts[1] == "approvals" || parts[1] == "proposals")) ? ":id" : (i == 4 ? ":pid" : seg)
         }.joined(separator: "/")
 
         switch shape {
@@ -128,6 +128,15 @@ enum RemoteAPI {
             let allow = (r.json["allow"] as? Bool) == true
             c.resolve(pid, allow: allow, scope: .once)      // once only: "always" and "this session" stay at the Mac
             audit(id, "\(allow ? "allowed" : "denied") a tool request in \(c.meta.title)")
+            return ok()
+
+        case "POST /v1/proposals/:id":
+            guard let p = ws.proposals.proposal(id), p.isOpen else { return fail(404, "That decision is already made.") }
+            let yes = (r.json["approve"] as? Bool) == true
+            // Approving changes code, a spec or memory, so it needs the same permission as a push or a merge; saying no does not.
+            if yes, !device.canApprove { return fail(403, "This device may not approve. Answer at the Mac, or allow it in CPilot, Settings, Remote.") }
+            audit("proposal", "\(yes ? "approved" : "declined"): \(p.what)")
+            if yes { if let why = await ProposalActions.approve(p) { return fail(409, why) } } else { await ProposalActions.decline(p) }
             return ok()
 
         case "POST /v1/approvals/:id":
@@ -270,6 +279,11 @@ enum RemoteAPI {
         let state: [String: Any] = [
             "approvals": ApprovalBroker.shared.pending.map { ["id": $0.id, "title": $0.title, "detail": $0.detail, "high": $0.high] },
             "sessions": sessions,
+            "proposals": ws.proposals.open().prefix(20).map { p -> [String: Any] in
+                let l = ProposalActions.labels(p)
+                return ["id": p.id, "kind": p.kind, "what": p.what, "why": p.why, "recommendation": p.recommendation, "ifApprove": p.ifApprove, "ifDecline": p.ifDecline,
+                        "evidence": p.evidence.prefix(6).map { String($0.prefix(400)) }, "approve": l.approve, "decline": l.decline]
+            },
             "repos": repos().map { ["dir": $0.dir, "name": URL(fileURLWithPath: $0.dir).lastPathComponent] },
             "agents": [["id": "claude", "name": "Claude"]] + ws.acpAgents.map { ["id": $0.id, "name": $0.name] },
             "chiefMode": Prefs.shared.chiefAutonomy,

@@ -34,6 +34,11 @@ final class TestFirstTests: XCTestCase {
         let plain = TestFirst.decide(mode: .risky, task: SpecTask(id: "T2", title: "Rename a label in the toolbar", done: false, touches: ["Sources/Toolbar.swift"]), criteria: [])
         XCTAssertFalse(plain.test); XCTAssertEqual(plain.reasons, [])
         XCTAssertTrue(TestFirst.decide(mode: .risky, task: SpecTask(id: "T3", title: "Add a button", done: false, touches: ["Sources/Auth/Login.swift"]), criteria: []).test)   // a file the task names counts
+        // a word counts from its start: these only contain a risky stem inside another word
+        for title in ["Block the toolbar while loading", "Add a controller for the sidebar", "Trace the layout pass", "Embrace the new grid", "Clock widget in the header"] {
+            XCTAssertFalse(TestFirst.decide(mode: .risky, task: SpecTask(id: "T9", title: title, done: false), criteria: []).test, title)
+        }
+        XCTAssertTrue(TestFirst.decide(mode: .risky, task: SpecTask(id: "T9", title: "Fix the race when two writers lock the file", done: false), criteria: []).test)
     }
 
     // MARK: The prompts
