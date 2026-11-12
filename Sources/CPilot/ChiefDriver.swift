@@ -117,6 +117,20 @@ enum ChiefDriver {
                 return (200, ["session_id": c.id, "status": "A reviewer is working on #\(n). Call pr_reviews with wait_seconds to follow it."])
             } catch { return fail("Could not start the reviewer: \(error.localizedDescription)") }
 
+        case .worktreeStatus:
+            let ws = Workspace.shared
+            let metas = ws.sessions.filter { $0.cwd == repo.dir && $0.environment == nil && $0.chief != true && !$0.archived && $0.worktree != nil }.sorted { $0.updatedAt > $1.updatedAt }
+            var rows: [[String: Any]] = []
+            for m in metas.prefix(30) {
+                guard let wt = m.worktree, FileManager.default.fileExists(atPath: wt) else { continue }
+                var task: (spec: String, id: String, title: String)?
+                for d in specs.docs { if let t = d.tasks.first(where: { $0.branch != nil && $0.branch == m.branch }) { task = (d.id, t.id, t.title) } }
+                if let want = text("task"), task?.id != want { continue }
+                if let want = text("id"), task?.spec != want { continue }
+                rows.append(await worktreeRow(m, wt, task: task, busy: ws.controller(m.id)?.isBusy == true))
+            }
+            return (200, ["worktrees": rows, "note": rows.isEmpty ? "No task, reviewer or tester session of this repository has a worktree right now." : "Give the user the `commands` they need, each as inline code exactly as written, so CPilot can offer a button that runs it in that worktree."])
+
         case .sessionMessage:
             guard let target = text("target_session"), let message = text("text") else { return fail("target_session and text are required.") }
             // Only the sessions the chief pilot starts: reviewers, and the task sessions of specs. Never the user's own sessions.
@@ -151,6 +165,24 @@ enum ChiefDriver {
         case .stackRestack, .stackSubmit, .prMerge:
             return await stackAction(action, body, repo: repo, approve: approve)
         }
+    }
+
+    /// One worktree as the chief pilot sees it: where it is, what is staged and changed in it, and what can be run there.
+    private static func worktreeRow(_ m: SessionMeta, _ wt: String, task: (spec: String, id: String, title: String)?, busy: Bool) async -> [String: Any] {
+        let url = URL(fileURLWithPath: wt)
+        let status = GitStatusSummary.parse((try? await Shell.check("git", ["status", "--porcelain=v1", "-z"], cwd: url, timeout: 20)) ?? "")
+        let head = ((try? await Shell.check("git", ["log", "-1", "--format=%h %s"], cwd: url, timeout: 20)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        func read(_ name: String) -> String? { try? String(contentsOf: url.appendingPathComponent(name), encoding: .utf8) }
+        let lockfiles = Set((try? FileManager.default.contentsOfDirectory(atPath: wt)) ?? []).intersection(["pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lockb", "bun.lock"])
+        let found = [read("package.json").flatMap { ProjectScripts.node(packageJSON: $0, lockfiles: lockfiles) }, read("Makefile").flatMap(ProjectScripts.make), read("justfile").flatMap(ProjectScripts.just)].compactMap { $0 }
+        var r: [String: Any] = ["session_id": m.id, "title": m.title, "branch": m.branch ?? "", "worktree": wt, "state": busy ? "working" : "idle",
+                                "role": m.reviewOf != nil ? "reviewer" : m.role ?? "task",
+                                "staged": Array(status.staged.prefix(30)), "unstaged": Array(status.unstaged.prefix(30)), "untracked": Array(status.untracked.prefix(30)), "last_commit": head,
+                                "scripts": found.map { ["runner": $0.runner, "names": ProjectScripts.relevant($0.scripts)] },
+                                "commands": WorktreeCommands.suggestions(path: wt, status: status, scripts: found)]
+        if let task { r["spec"] = task.spec; r["task"] = task.id; r["task_title"] = task.title }
+        if let n = m.reviewOf { r["pr"] = n }
+        return r
     }
 
     /// Waits up to `wait_seconds` (at most 90) for `done`, so the chief pilot does not have to poll.

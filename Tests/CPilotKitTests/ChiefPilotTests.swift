@@ -40,7 +40,7 @@ final class ChiefPilotTests: XCTestCase {
     }
 
     func testOnlyWorkStartingActionsNeedAWake() {
-        XCTAssertEqual(Set(ChiefPilot.Action.allCases.filter { !$0.startsWork }), [.specApprove, .specJob, .prReviews, .taskDone])
+        XCTAssertEqual(Set(ChiefPilot.Action.allCases.filter { !$0.startsWork }), [.specApprove, .specJob, .prReviews, .taskDone, .worktreeStatus])
     }
 
     func testChiefOwnsCompletenessInEveryMode() {

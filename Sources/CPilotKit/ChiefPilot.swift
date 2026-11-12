@@ -28,10 +28,12 @@ public enum ChiefPilot {
         case specCreate = "spec_create", specStage = "spec_stage", specJob = "spec_job", specApprove = "spec_approve"
         case taskStart = "task_start", stackRestack = "stack_restack", stackSubmit = "stack_submit", prMerge = "pr_merge"
         case prReview = "pr_review", prReviews = "pr_reviews", sessionMessage = "session_message", taskDone = "task_done"
+        /// Read-only: what is staged, changed and runnable in each task's worktree.
+        case worktreeStatus = "worktree_status"
         /// Pushes and merges are the actions that reach outside the machine or change the main branch.
         public var needsApproval: Bool { self == .stackSubmit || self == .prMerge }
         /// Actions after which the chief pilot has nothing to do until background work finishes, so it ends its turn and has to be woken.
-        public var startsWork: Bool { self != .specApprove && self != .specJob && self != .prReviews && self != .taskDone }
+        public var startsWork: Bool { self != .specApprove && self != .specJob && self != .prReviews && self != .taskDone && self != .worktreeStatus }
         public func requiresApproval(_ autonomy: Autonomy) -> Bool { autonomy == .asks && needsApproval }
     }
 
@@ -48,6 +50,7 @@ public enum ChiefPilot {
         - task_done {id, task, done?}: mark a task delivered when its work is already on the trunk without going through the task's own branch (committed there directly, or by a pull request that was not made for the task). Check that the files and checks the task names are on the trunk first. `done: false` undoes it. Delivered tasks unlock the ones that need them.
         - stack_restack, stack_submit, pr_merge: keep the stack current, push it and open its pull requests, and merge from the bottom. pr_merge {pr} merges one pull request by number, including one that is not in a stack (it refuses while the pull request is built on another open one). \(autonomy == .asks ? "stack_submit and pr_merge ask the user first; if they decline, stop and say so." : "They run without asking, because the user chose to let you lead; the reviewer, checks and merge rules still decide whether a merge happens.")
         - pr_review {pr, focus?}: assign a reviewer to a pull request. It is a separate session that reviews the diff, fixes what it finds, and commits and pushes the fixes to the pull request's own branch. pr_reviews shows each open pull request's reviewer, whether it is still working, and what it reported. `focus` adds what this reviewer must check on top of the usual review.
+        - worktree_status {id?, task?}: read-only. For each task, reviewer or tester session of this repository: its worktree path, branch, what is staged, changed and untracked there, its last commit, and the scripts that exist there (from package.json, Makefile, justfile) with ready-to-type commands. Use it before asking the user to do anything at the command line.
         - session_message {target_session, text}: send a follow-up to a reviewer or task session you started. It never asks the user. If the session is working, the message goes out when its turn ends. Use this, not send_message or start_session, which ask the user and are not for you.
 
         \(howToWork(autonomy, testFirst: testFirst))
@@ -67,7 +70,8 @@ public enum ChiefPilot {
         6. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
         7. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
         8. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn. CPilot wakes you when that work finishes, and again from time to time while you wait, until you say STATUS: DONE. You do not need to stay in a long wait. Never end a turn with a plan to do something later and no STATUS line: nobody will prompt you, CPilot only wakes you for what you wait on.
-        8a. \(ChiefStatus.instructions)\(testFirst ? "\n" + TestFirst.chiefGuidance : "")
+        8a. \(ChiefStatus.instructions)
+        8c. When a step needs the user at the command line in a worktree (approving a protected-file change, resolving a conflict, running a check only they can), the user should not have to find the worktrees. Call worktree_status for the tasks involved, then list under each task's id and title the exact commands, in the order to run them, each as inline code in the form `cd <worktree path> && <command>`. Take the paths and the script names from worktree_status; never guess a script name, and if the one you need is not listed say what you are unsure of. CPilot turns each into a button that runs in that worktree. Say in a few words what each one does. Never tell the user to open or find a worktree.\(testFirst ? "\n" + TestFirst.chiefGuidance : "")
         9. After each step, tell the user in one or two lines what happened and what comes next.
         """
         switch autonomy {

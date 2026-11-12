@@ -68,24 +68,52 @@ private struct TerminalPane: NSViewRepresentable {
     static func dismantleNSView(_ view: LocalProcessTerminalView, coordinator: ()) { view.terminate() }
 }
 
-/// Offers the commands a reply tells you to run. Nothing runs until you press one.
+/// Offers the commands a reply tells you to run. Nothing runs until you press one. A command that names a worktree (`cd <worktree> && …`) runs in that worktree, grouped under the task it belongs to,
+/// so you do not have to go to each one. Only this repository's own folders are accepted.
 struct RunChips: View {
     let text: String
     let session: SessionController
     @State private var target: TerminalTarget?
 
+    /// The folders a command may name: this session's, and those of the repository's other sessions (their worktrees).
+    private var allowed: Set<String> {
+        let ws = Workspace.shared
+        let mine = ws.sessions.filter { $0.cwd == session.meta.cwd && $0.environment == session.meta.environment }
+        return Set(mine.flatMap { [$0.worktree, $0.cwd].compactMap { $0 } } + [session.meta.workingDirectory, session.meta.cwd])
+    }
+
+    /// What to call a folder: the session working in it, or the folder's own name.
+    private func name(_ dir: String) -> String {
+        Workspace.shared.sessions.first { $0.worktree == dir }?.title ?? URL(fileURLWithPath: dir).lastPathComponent
+    }
+
+    private func chip(_ c: RunnableCommand) -> some View {
+        let t = TerminalTarget(command: c.command, directory: c.directory ?? session.meta.workingDirectory, env: session.env)
+        return Button { target = t } label: {
+            HStack(spacing: 5) { Image(systemName: "play.fill").font(.system(size: 9)); Text(RunnableCommands.shellLine(c.command)).font(.system(size: 11.5, design: .monospaced)).lineLimit(1) }
+                .padding(.horizontal, 9).padding(.vertical, 4).background(Theme.fill, in: Capsule())
+        }.buttonStyle(.soft).foregroundStyle(Theme.accent)
+        .help(c.directory == nil ? "Run in a terminal in this session's folder" : "Run in a terminal in \(name(t.directory))")
+        .contextMenu { if TerminalLaunch.ghosttyInstalled { Button("Run in Ghostty") { Task { _ = try? await Shell.run("/usr/bin/open", TerminalLaunch.ghosttyOpenArgs(directory: t.directory, command: t.command, env: t.env)) } } } }
+    }
+
     var body: some View {
-        let cmds = RunnableCommands.find(in: text)
+        let cmds = RunnableCommands.find(in: text, allowedDirectories: allowed)
         if !cmds.isEmpty {
-            FlowLayout(spacing: 6) {
-                ForEach(cmds) { c in
-                    let t = TerminalTarget(command: c.command, directory: session.meta.workingDirectory, env: session.env)
-                    Button { target = t } label: {
-                        HStack(spacing: 5) { Image(systemName: "play.fill").font(.system(size: 9)); Text(RunnableCommands.shellLine(c.command)).font(.system(size: 11.5, design: .monospaced)).lineLimit(1) }
-                            .padding(.horizontal, 9).padding(.vertical, 4).background(Theme.fill, in: Capsule())
-                    }.buttonStyle(.soft).foregroundStyle(Theme.accent)
-                    .help("Run in a terminal in this session's folder")
-                    .contextMenu { if TerminalLaunch.ghosttyInstalled { Button("Run in Ghostty") { Task { _ = try? await Shell.run("/usr/bin/open", TerminalLaunch.ghosttyOpenArgs(directory: t.directory, command: t.command, env: t.env)) } } } }
+            let here = cmds.filter { $0.directory == nil }
+            let folders = cmds.compactMap(\.directory).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            VStack(alignment: .leading, spacing: 8) {
+                if !here.isEmpty { FlowLayout(spacing: 6) { ForEach(here) { chip($0) } } }
+                ForEach(folders, id: \.self) { dir in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder").font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text(name(dir)).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
+                            Button("Open here") { target = TerminalTarget(command: "git status", directory: dir, env: session.env) }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.accent)
+                                .help(dir)
+                        }
+                        FlowLayout(spacing: 6) { ForEach(cmds.filter { $0.directory == dir }) { chip($0) } }
+                    }
                 }
             }.sheet(item: $target) { TerminalSheet(target: $0) }
         }
