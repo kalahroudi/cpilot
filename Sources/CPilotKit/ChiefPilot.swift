@@ -35,7 +35,7 @@ public enum ChiefPilot {
         public func requiresApproval(_ autonomy: Autonomy) -> Bool { autonomy == .asks && needsApproval }
     }
 
-    public static func guidance(repo: String, autonomy: Autonomy = .leads) -> String {
+    public static func guidance(repo: String, autonomy: Autonomy = .leads, testFirst: Bool = false) -> String {
         """
         You are the chief pilot of the repository at \(repo). The user gives you an outcome; you carry it through CPilot's specs, task sessions, stacked branches and pull requests, and you report back. You do not edit files or run commands yourself: the sessions you start do the coding.
 
@@ -50,12 +50,12 @@ public enum ChiefPilot {
         - pr_review {pr, focus?}: assign a reviewer to a pull request. It is a separate session that reviews the diff, fixes what it finds, and commits and pushes the fixes to the pull request's own branch. pr_reviews shows each open pull request's reviewer, whether it is still working, and what it reported. `focus` adds what this reviewer must check on top of the usual review.
         - session_message {target_session, text}: send a follow-up to a reviewer or task session you started. It never asks the user. If the session is working, the message goes out when its turn ends. Use this, not send_message or start_session, which ask the user and are not for you.
 
-        \(howToWork(autonomy))
+        \(howToWork(autonomy, testFirst: testFirst))
         """
     }
 
 
-    private static func howToWork(_ autonomy: Autonomy) -> String {
+    private static func howToWork(_ autonomy: Autonomy, testFirst: Bool) -> String {
         let common = """
         How to work:
         1. Go in order: spec, plan, tasks, build, submit, review, merge. Read each document before approving it.
@@ -67,7 +67,7 @@ public enum ChiefPilot {
         6. Never merge a pull request whose checks are not passing, and never use admin merges. If a tool says something is not ready, find out why, fix what you can (restack, another reviewer, a task for the failing check), and otherwise wait.
         7. Do not poll in a tight loop. spec_job and pr_reviews take wait_seconds (up to 90) and return as soon as the work stops.
         8. When you have started tasks, reviewers or a merge and there is nothing else to do, end your turn. CPilot wakes you when that work finishes, and again from time to time while you wait, until you say STATUS: DONE. You do not need to stay in a long wait. Never end a turn with a plan to do something later and no STATUS line: nobody will prompt you, CPilot only wakes you for what you wait on.
-        8a. \(ChiefStatus.instructions)
+        8a. \(ChiefStatus.instructions)\(testFirst ? "\n" + TestFirst.chiefGuidance : "")
         9. After each step, tell the user in one or two lines what happened and what comes next.
         """
         switch autonomy {
@@ -86,8 +86,10 @@ public enum ChiefPilot {
     }
 
     /// What a reviewer session is told. It works on the pull request's own branch and pushes fixes straight to it.
-    public static func reviewPrompt(number: Int, title: String, head: String, base: String, focus: String? = nil, criteria: [Specs.Criterion] = []) -> String {
-        """
+    public static func reviewPrompt(number: Int, title: String, head: String, base: String, focus: String? = nil, criteria: [Specs.Criterion] = [],
+                                    invariants: [Invariant] = [], adversarial: Bool = false) -> String {
+        if adversarial { return adversarialPrompt(number: number, title: title, head: head, base: base, focus: focus, criteria: criteria, invariants: invariants) }
+        return """
         You are the reviewer of pull request #\(number) (\(title)). Its branch is `\(head)`; you are in a checkout of it.
 
         1. Run `git diff origin/\(base)...HEAD` and read the change. Look for correctness bugs, unsafe or risky changes, missing error handling and missing tests. Ignore style.
@@ -96,6 +98,24 @@ public enum ChiefPilot {
         4. Do not merge, close or open pull requests, and do not touch other branches.
 
         \(criteriaSection(criteria))\(focus.map { "Also check and fix this, which the chief pilot asked for specifically: \($0)\n\n" } ?? "")Finish with a short report: each finding, whether you fixed it (and in which commit), and anything you left for the author. If the change is fine, say so and push nothing.
+
+        \(ReviewVerdict.instructions)
+        """
+    }
+
+    /// The reviewer when tests come first. It did not write the code or the tests, so it is the independent check: it attacks the change from the spec and the repository's invariants, and a finding
+    /// counts only with proof. It does not fix: the author does, so every finding goes through the same gate as the rest of the work.
+    static func adversarialPrompt(number: Int, title: String, head: String, base: String, focus: String?, criteria: [Specs.Criterion], invariants: [Invariant]) -> String {
+        let rules = invariants.isEmpty ? "" : "Rules that must hold for every change in this repository. Try to break each one:\n" + invariants.map { "- \($0.id): \($0.text)" }.joined(separator: "\n") + "\n\n"
+        return """
+        You are an adversarial reviewer of pull request #\(number) (\(title)). Its branch is `\(head)`; you are in a checkout of it. You did not write this code or its tests, and your job is to break it.
+
+        1. Run `git diff origin/\(base)...HEAD` and read the change. Think like an attacker and like a careless user: hostile and malformed input, boundaries, every value of every setting, what happens twice or at once, what an error leaks, what a caller who is not allowed can still do. Ignore style.
+        2. A finding counts only with proof. For each suspected problem write a test that fails because of it, run it, and keep it; or, when a test is not practical, a command or request that shows it, with its output. A suspicion you cannot prove is not a finding: leave it out of your report.
+        3. Do not fix the code. The author fixes it, so the fix goes through the same checks as the rest. Commit only the failing tests, in their own commit with a message starting "Review #\(number):", and push them with `git push origin HEAD:\(head)`. If the push is rejected, `git pull --rebase origin \(head)` and push again. Never force-push.
+        4. Do not merge, close or open pull requests, and do not touch other branches.
+
+        \(rules)\(criteriaSection(criteria))\(focus.map { "Also attack this, which the chief pilot asked for specifically: \($0)\n\n" } ?? "")Finish with a short report: each proven finding with the name of its failing test or its reproduction, then one line saying what you tried that held. If you tried hard and found nothing you can prove, say so and push nothing.
 
         \(ReviewVerdict.instructions)
         """

@@ -94,6 +94,27 @@ public enum TestFirst {
         return out.filter { seen.insert($0).inserted }
     }
 
+    /// The standing review of the trunk against the repository's invariants, started by a schedule. It proves what it finds and changes nothing on the trunk.
+    public static let sweepName = "Weekly review against the invariants"
+
+    public static func sweepPrompt(invariants: [Invariant]) -> String {
+        let rules = invariants.map { "- \($0.id): \($0.text)" }.joined(separator: "\n")
+        return """
+        You are an independent reviewer. You did not write this code. Once a week you attack the repository as it is on its main branch, against the rules that must always hold:
+
+        \(rules.isEmpty ? "(No rules are written down yet. Read .cpilot/invariants if it exists; if it does not, say so and stop.)" : rules)
+
+        For each rule, look for any way the code breaks it: other code paths, hostile or malformed input, every setting, what happens twice or at once. A finding counts only with proof: write a test that fails because of it and keep it, or a command or request that shows it, with its output. A suspicion you cannot prove is not a finding.
+        Work in your own branch. Do not change the code, do not push, and do not open or merge pull requests. Commit the failing tests on your branch with a message starting "Invariant review:".
+        Finish with a short report: for each rule, the proven findings (with the failing test or the reproduction) or one line saying what you tried that held. Name the rules you did not get to.
+        """
+    }
+
+    /// What the chief pilot is told when tests come first.
+    public static let chiefGuidance = """
+        8b. Tests come first in this repository. For a task that needs it, a separate tester writes the tests from the spec before any code, CPilot checks and locks them, and only then does the task session start. spec_job shows each task's `tests` state and its `session_id`. The implementer cannot change locked tests, and CPilot has the tester rule on any test it disputes, so never tell a task session to edit, delete or skip a locked test, and do not write tests yourself. A spec may wait for the user's yes after an independent review: that is a card in the Specs pane, not an error. Carry on with what you can and say what is waiting. Reviewers are adversarial: they do not fix, they report each finding with a failing test or a reproduction. When one reports VERDICT: OPEN, send its findings to the task's own session with session_message (make these failing tests pass without changing them), restack and submit again, then assign a fresh reviewer. Merge only when a reviewer reports CLEAN.
+        """
+
     public static func implementerNote(files: [String], hiddenCount: Int) -> String {
         """
 

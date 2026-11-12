@@ -20,6 +20,8 @@ public struct GateState: Codable, Equatable, Sendable {
     public var escalated: String?
     /// The commit whose protected-file changes the user was last told about, so a re-check does not say it twice. Optional so older files still load.
     public var flaggedHead: String?
+    /// The commit mutation testing last measured, so the same code is not mutated twice. Optional so older files still load.
+    public var mutatedHead: String?
     public init() {}
 }
 
@@ -170,6 +172,14 @@ public struct TesterState: Codable, Equatable, Sendable {
     public init(session: String, branch: String, phase: String = "writing", dispute: String? = nil, started: Date = .now) { self.session = session; self.branch = branch; self.phase = phase; self.dispute = dispute; self.started = started }
 }
 
+/// What the second tester wrote: kept in a ref no branch reaches, never shown to the implementer.
+public struct HeldBack: Codable, Equatable, Sendable {
+    public var ref: String
+    public var files: [String]
+    public var trace: [String: [String]]
+    public init(ref: String, files: [String], trace: [String: [String]]) { self.ref = ref; self.files = files; self.trace = trace }
+}
+
 /// What the gate knows about one task, kept across restarts: its counters, whether it gave up, whether it is waiting for the answer to a message it
 /// sent back, and the commit it last passed on (so a task that has not changed since is not checked again).
 public struct GateRecord: Codable, Equatable, Sendable {
@@ -187,6 +197,11 @@ public struct GateRecord: Codable, Equatable, Sendable {
     public var locked: LockedTests?
     /// The tester working on the task now. Optional so older files still load.
     public var tester: TesterState?
+    /// The second, independent tester, when Settings name a model for it, and what it wrote once it is done (kept only in a ref). Optional so older files still load.
+    public var testerB: TesterState?
+    public var heldBack: HeldBack?
+    /// The two testers' tests were compared once. Optional so older files still load.
+    public var compared: Bool?
     public var updated = Date()
     public init() {}
 }

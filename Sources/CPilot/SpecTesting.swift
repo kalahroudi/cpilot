@@ -26,6 +26,14 @@ extension SpecCenter {
         return Invariants.parse(text)
     }
 
+    /// Where a task's tests stand, in words: for the chief pilot's view of the job. Nil when tests first does not apply to the task.
+    func testsState(_ id: String, _ taskId: String) -> String? {
+        guard let rec = gateRecord(id, taskId) else { return nil }
+        if let t = rec.tester { return t.phase == "writing" ? "a tester is writing the tests" : t.phase == "disputing" ? "the tester is ruling on a disputed test" : "the tester is strengthening the tests" }
+        if let l = rec.locked { return "locked: \(l.files.count) test file\(l.files.count == 1 ? "" : "s")" + (l.hiddenFiles.isEmpty ? "" : ", \(l.hiddenFiles.count) held back") + (rec.held != nil ? "; waiting for the user" : "") }
+        return nil
+    }
+
     func lastAnswer(_ c: SessionController) -> String { c.items.last(where: { $0.kind == .assistant && $0.status == .done })?.text ?? "" }
 
     // MARK: Starting
@@ -46,12 +54,21 @@ extension SpecCenter {
 
         let criteria = Specs.criteria(spec: d.spec ?? "", covers: task.covers)
         let invariants = await readInvariants(r)
-        let prompt = TestFirst.testerPrompt(task: task, criteria: criteria, invariants: invariants, constitution: constitution, hidden: Prefs.shared.hiddenTests)
+        let second = !Prefs.shared.secondTesterModel.isEmpty
+        // With a second tester its tests are the held-back set, so the first tester keeps nothing back itself.
+        let prompt = TestFirst.testerPrompt(task: task, criteria: criteria, invariants: invariants, constitution: constitution, hidden: Prefs.shared.hiddenTests && !second)
         let temp = "tests-" + branch
         do {
             let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: temp, parent: parent, title: "\(task.id) tests", prompt: prompt, focus: false,
                                                          model: Prefs.shared.testerModel, role: "tester", onTurnEnd: testerHandler(id, task.id))
             rec.tester = TesterState(session: c.id, branch: temp)
+            if second {
+                let tempB = "tests-b-" + branch
+                let b = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: tempB, parent: parent, title: "\(task.id) tests (independent)",
+                                                             prompt: TestFirst.testerPrompt(task: task, criteria: criteria, invariants: invariants, constitution: constitution, hidden: false) + TesterReconcile.secondTesterNote,
+                                                             focus: false, model: Prefs.shared.secondTesterModel, role: "tester", onTurnEnd: testerHandler(id, task.id))
+                rec.testerB = TesterState(session: b.id, branch: tempB)
+            }
             Workspace.shared.gates.set(rec, for: skey)
             c.addNotice("CPilot: a tester writes the tests for \(task.id) first (\(decision.reasons.isEmpty ? "tests first is on" : decision.reasons.joined(separator: ", "))). The implementer starts when they are locked.")
             Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id) \(task.title): tests first", outcome: "allowed by rule"))
@@ -65,9 +82,12 @@ extension SpecCenter {
     /// Tester sessions that were working before a restart: listen for their turns again, and look at the ones that had finished.
     func reattachTesters(_ id: String, _ d: SpecDoc) {
         for t in d.tasks where !t.done {
-            guard let rec = gateRecord(id, t.id), let ts = rec.tester, let c = Workspace.shared.controller(ts.session) else { continue }
-            c.onTurnEnd = testerHandler(id, t.id)
-            if !c.isBusy { Task { @MainActor in await self.testerTurnEnded(id, t.id, c) } }
+            guard let rec = gateRecord(id, t.id) else { continue }
+            for ts in [rec.tester, rec.testerB].compactMap({ $0 }) {
+                guard let c = Workspace.shared.controller(ts.session) else { continue }
+                c.onTurnEnd = testerHandler(id, t.id)
+                if !c.isBusy { Task { @MainActor in await self.testerTurnEnded(id, t.id, c) } }
+            }
         }
     }
 
@@ -75,16 +95,23 @@ extension SpecCenter {
 
     func testerTurnEnded(_ id: String, _ taskId: String, _ c: SessionController) async {
         let key = "\(gateKey(id, taskId))#tester"
-        guard let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), let rec0 = gateRecord(id, taskId), let ts = rec0.tester, ts.session == c.id, TesterGuard.active.insert(key).inserted else { return }
+        guard let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), let rec0 = gateRecord(id, taskId), TesterGuard.active.insert(key).inserted else { return }
         defer { TesterGuard.active.remove(key) }
         var rec = rec0
+        if let b = rec.testerB, b.session == c.id {
+            if case .failed = c.state { return }
+            await secondTests(id, d, task, c, &rec)
+            Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
+            return
+        }
+        guard let ts = rec0.tester, ts.session == c.id else { return }
         let answering = rec.answering
         rec.answering = false
         // The user spoke to the tester after it was held: count again from here.
         if rec.held != nil, !answering { rec.held = nil; rec.tester?.runs = 0 }
         if rec.held != nil { Workspace.shared.gates.set(rec, for: gateKey(id, taskId)); return }
         if case .failed = c.state { return }
-        if ts.phase == "writing" { await firstTests(id, d, task, c, &rec) } else { await amendment(id, d, task, c, &rec) }
+        if ts.phase == "writing" || ts.phase == "waiting" { await firstTests(id, d, task, c, &rec) } else { await amendment(id, d, task, c, &rec) }
         Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
     }
 
@@ -140,13 +167,44 @@ extension SpecCenter {
             }
         }
 
+        // A second tester writes the held-back set on its own. The two are compared once both are done: where they expect different behavior, the spec is ambiguous.
+        let second = !Prefs.shared.secondTesterModel.isEmpty
+        if second, rec.compared != true {
+            guard let held = rec.heldBack else {
+                rec.tester?.phase = "waiting"
+                c.addNotice("CPilot: these tests are ready. Waiting for the second tester before they are locked.")
+                return
+            }
+            let theirs = await Exec.with(env) { () -> [String: String] in
+                var out: [String: String] = [:]
+                for f in held.files { out[f] = (try? await Shell.check("git", ["show", "\(held.ref):\(f)"], cwd: URL(fileURLWithPath: r.dir), timeout: 30)) ?? "" }
+                return out
+            }
+            let model = [Prefs.shared.specReviewModel, Prefs.shared.reviewerModel].first { !$0.isEmpty } ?? "sonnet"
+            if let answer = await ClaudeOneShot.run(TesterReconcile.prompt(criteria: criteria, first: seen.files, second: theirs), in: r.dir, model: model, timeout: 240) {
+                let split = TesterReconcile.parse(answer)
+                if !split.isEmpty {
+                    let payload = (try? JSONEncoder().encode(DisputePayload(spec: id, task: task.id, dir: r.dir, environment: r.environment))).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    Workspace.shared.proposals.add(TesterReconcile.card(task: task, split, scope: RepoRef(dir: r.dir, environment: r.environment).key, payload: payload))
+                    rec.held = "The two testers read the spec differently in \(split.count) place\(split.count == 1 ? "" : "s"). It is waiting for you."
+                    c.addNotice(rec.held ?? "", error: true)
+                    AlertCenter.shared.alert(.needs, title: "Two testers disagree", body: "\(task.id) \(task.title): the spec can be read two ways.", tag: "split-\(task.id)", session: c.id, project: projectName)
+                    NotificationCenter.default.post(name: Dreamer.changed, object: nil)
+                    return
+                }
+            } else {
+                c.addNotice("CPilot could not compare the two testers' tests, so it goes on without that check.", error: true)
+            }
+            rec.compared = true
+        }
         do {
-            let hidden = Prefs.shared.hiddenTests ? TestFirst.parseHidden(last) : []
-            let locked = try await Exec.with(c.env) { try await TestLock.freeze(worktree: url, parent: parent, key: "\(id)-\(task.id)", hidden: hidden, trace: trace, message: "\(task.id) tests: \(task.title)") }
+            let hidden = second ? [] : (Prefs.shared.hiddenTests ? TestFirst.parseHidden(last) : [])
+            var locked = try await Exec.with(c.env) { try await TestLock.freeze(worktree: url, parent: parent, key: "\(id)-\(task.id)", hidden: hidden, trace: trace, message: "\(task.id) tests: \(task.title)") }
+            if let held = rec.heldBack { locked.hiddenRef = held.ref; locked.hiddenFiles = held.files; locked.hiddenTrace = held.trace }
             let branch = Specs.taskBranch(spec: id, task: task)
             try await Exec.with(env) { _ = try await Shell.check("git", ["branch", branch, locked.commit], cwd: URL(fileURLWithPath: r.dir)) }
             await retireTester(c, repo: r.dir, branch: ts.branch)
-            rec.locked = locked; rec.tester = nil; rec.answering = false
+            rec.locked = locked; rec.tester = nil; rec.heldBack = nil; rec.answering = false
             Workspace.shared.gates.set(rec, for: gateKey(id, task.id))
             Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id): \(locked.files.count) test file\(locked.files.count == 1 ? "" : "s") locked, \(locked.hiddenFiles.count) held back", outcome: "allowed by rule"))
             AppModel.shared.notify("Tests locked for \(task.id)", body: "\(locked.files.count) visible, \(locked.hiddenFiles.count) held back. The implementer starts now.", project: projectName)
@@ -158,6 +216,88 @@ extension SpecCenter {
             rec.held = why
             c.addNotice(why, error: true)
             AlertCenter.shared.alert(.failed, title: "Tests for a task need you", body: "\(task.id) \(task.title): \(why)", tag: "tester-\(task.id)", session: c.id, project: projectName)
+        }
+    }
+
+    /// The second tester's tests: the same checks as the first's, files named so they never collide with the first tester's, and then kept only in a ref. The implementer never sees them.
+    private func secondTests(_ id: String, _ d: SpecDoc, _ task: SpecTask, _ c: SessionController, _ rec: inout GateRecord) async {
+        guard let r = repo, let tsB = rec.testerB else { return }
+        let url = c.meta.workingDirectory
+        let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
+        let last = lastAnswer(c)
+        let seen = await Exec.with(c.env) { () -> (files: [String: String], dirty: Bool) in
+            let f = (try? await TestLock.changedFiles(worktree: url, parent: parent)) ?? [:]
+            let s = (try? await Shell.check("git", ["status", "--porcelain"], cwd: URL(fileURLWithPath: url), timeout: 30)) ?? ""
+            return (f, !s.isEmpty)
+        }
+        if seen.files.isEmpty, !seen.dirty, TaskNudge.asksQuestion(last) { return }
+        let criteria = Specs.criteria(spec: d.spec ?? "", covers: task.covers)
+        let trace = TestFirst.parseTrace(last)
+        var problems = TestFirst.problems(required: TestFirst.requiredIds(criteria: criteria, invariants: await readInvariants(r)), trace: trace, files: seen.files)
+        let plain = seen.files.keys.filter { !$0.lowercased().contains("independent") }.sorted()
+        if !plain.isEmpty { problems.append("Put the word \"Independent\" in the name of every test file, so yours never share a file with the other tester's: " + plain.map { "`\($0)`" }.joined(separator: ", ") + ".") }
+        if seen.dirty { problems.append("Some of your changes are not committed. Commit the test files with the message \"\(task.id) tests: \(task.title)\".") }
+        let finish = "Fix them, commit only test files, and end with the TRACE lines again."
+        func back(_ problems: [String]) {
+            var t = tsB; t.runs += 1; rec.testerB = t
+            if t.runs > Self.testerRunLimit {
+                rec.held = "The second tester was sent back \(Self.testerRunLimit) times and its tests still do not pass the checks: \(problems.first ?? "")"
+                c.addNotice(rec.held ?? "", error: true)
+                AlertCenter.shared.alert(.failed, title: "Tests for a task need you", body: "\(task.id) \(task.title): \(rec.held ?? "")", tag: "tester-b-\(task.id)", session: c.id, project: projectName)
+                return
+            }
+            c.addNotice("CPilot checked the second tester's tests for \(task.id): \(problems.first ?? "needs attention") Sent back (try \(t.runs) of \(Self.testerRunLimit)).")
+            c.draft = "CPilot checked your tests and found problems:\n" + problems.map { "- \($0)" }.joined(separator: "\n") + "\n\n" + finish
+            c.send()
+        }
+        guard problems.isEmpty else { back(problems); return }
+        var commands = task.verify.map { [$0] } ?? []
+        if commands.isEmpty { commands = await TaskGateRunner.defaultCommands(repo: r.dir) }
+        if !commands.isEmpty {
+            switch TestFirst.red(await TaskGateRunner.runChecks(commands, in: c)) {
+            case .green: back(["Your tests pass although the code does not exist yet, so they check nothing. Make each one fail until the behavior is built."]); return
+            case .unclear(let why): back([why + " Fix the tests so they fail only because the behavior is missing."]); return
+            case .red: break
+            }
+        }
+        do {
+            let h = try await Exec.with(c.env) { try await TestLock.holdBack(worktree: url, parent: parent, key: "\(id)-\(task.id)-b", trace: trace) }
+            await retireTester(c, repo: r.dir, branch: tsB.branch)
+            rec.testerB = nil; rec.heldBack = HeldBack(ref: h.ref, files: h.files, trace: h.trace)
+            Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id): second tester's \(h.files.count) test file\(h.files.count == 1 ? "" : "s") held back", outcome: "allowed by rule"))
+            // The first tester may already be waiting for this: it goes on to compare the two and lock.
+            if let a = rec.tester, a.phase == "waiting", let ac = Workspace.shared.controller(a.session) {
+                rec.tester?.phase = "writing"
+                await firstTests(id, d, task, ac, &rec)
+            }
+        } catch {
+            rec.held = "The second tester's tests could not be kept: \(error.localizedDescription)"
+            c.addNotice(rec.held ?? "", error: true)
+        }
+    }
+
+    /// A person settled the disagreement by editing the spec: both testers write their tests again from it.
+    func restartTesting(_ id: String, _ taskId: String) async {
+        guard let r = repo, var rec = gateRecord(id, taskId) else { return }
+        for t in [rec.tester, rec.testerB].compactMap({ $0 }) {
+            if let c = Workspace.shared.controller(t.session) { await retireTester(c, repo: r.dir, branch: t.branch) }
+        }
+        if let h = rec.heldBack { await Exec.with(env) { await TestLock.dropHidden(repo: r.dir, LockedTests(commit: "", files: [:], hiddenRef: h.ref, hiddenFiles: h.files)) } }
+        rec.tester = nil; rec.testerB = nil; rec.heldBack = nil; rec.compared = nil; rec.locked = nil; rec.held = nil; rec.answering = false
+        Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
+        if let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }) { await implement(id, task) }
+    }
+
+    /// A person chose the first tester's reading: the second tester's tests are dropped and the first tester's are locked.
+    func keepFirstTester(_ id: String, _ taskId: String) async {
+        guard let r = repo, var rec = gateRecord(id, taskId) else { return }
+        if let h = rec.heldBack { await Exec.with(env) { await TestLock.dropHidden(repo: r.dir, LockedTests(commit: "", files: [:], hiddenRef: h.ref, hiddenFiles: h.files)) } }
+        rec.heldBack = nil; rec.compared = true; rec.held = nil
+        Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
+        if let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }), let a = rec.tester, let c = Workspace.shared.controller(a.session) {
+            rec.tester?.phase = "writing"
+            await firstTests(id, d, task, c, &rec)
+            Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
         }
     }
 
@@ -206,6 +346,33 @@ extension SpecCenter {
             implementer.addNotice(rec.held ?? "", error: true)
         }
         return true
+    }
+
+    /// Mutation testing found changes to the code that no test notices. The tester adds tests that catch them; after `Mutation.strengthenLimit` rounds a person is asked.
+    func strengthenTests(_ id: String, _ d: SpecDoc, _ task: SpecTask, _ implementer: SessionController, _ rec: inout GateRecord, score: Double, survivors: [Mutation.Survivor], threshold: Double) async {
+        guard var locked = rec.locked, rec.tester == nil, let r = repo else { return }
+        let n = (locked.strengthenings ?? 0)
+        if n >= Mutation.strengthenLimit {
+            let why = "After \(n) rounds the tests still catch only \(Int(score.rounded()))% of the changes made to the code (the bar is \(Int(threshold.rounded()))%). It needs you."
+            rec.held = why
+            implementer.addNotice(why, error: true)
+            AlertCenter.shared.alert(.failed, title: "A task's tests are too weak", body: "\(task.id) \(task.title): \(why)", tag: "mutation-\(task.id)", session: implementer.id, project: projectName)
+            return
+        }
+        locked.strengthenings = n + 1
+        rec.locked = locked
+        let taskBranch = Specs.taskBranch(spec: id, task: task), temp = "tests-\(taskBranch)-m\(n + 1)"
+        let prompt = Mutation.strengthenPrompt(task: task, criteria: Specs.criteria(spec: d.spec ?? "", covers: task.covers), score: score, threshold: threshold, survivors: survivors)
+        do {
+            let c = try await Workspace.shared.startTask(repo: r.dir, environment: r.environment, branch: temp, parent: taskBranch, title: "\(task.id) tests (stronger)", prompt: prompt, focus: false,
+                                                         model: Prefs.shared.testerModel, role: "tester", onTurnEnd: testerHandler(id, task.id))
+            rec.tester = TesterState(session: c.id, branch: temp, phase: "strengthening")
+            implementer.addNotice("CPilot ran mutation testing: the tests catch \(Int(score.rounded()))% of the changes made to the code (the bar is \(Int(threshold.rounded()))%). The tester is adding tests that catch the rest; you will be told.")
+            Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id): mutation score \(Int(score.rounded()))%, \(survivors.count) mutants survive", outcome: "allowed by rule"))
+        } catch {
+            rec.held = "The tester could not be started to strengthen the tests: \(error.localizedDescription)"
+            implementer.addNotice(rec.held ?? "", error: true)
+        }
     }
 
     struct DisputePayload: Codable { var spec: String; var task: String; var dir: String; var environment: String? }

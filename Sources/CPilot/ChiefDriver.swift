@@ -108,7 +108,11 @@ enum ChiefDriver {
             if let m = reviewer(of: n, in: repo), Workspace.shared.controller(m.id)?.isBusy == true { return fail("#\(n) already has a reviewer working on it.") }
             if let why = Workspace.shared.unattendedHold() { return (200, ["held": why, "note": "No reviewer was started. You are woken when an agent finishes; ask again then."]) }
             do {
-                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus"), criteria: criteria(of: n, in: repo)),
+                // With tests first the reviewer attacks and proves, and does not fix; it is told the repository's invariants.
+                let adversarial = Prefs.shared.testFirst != "off"
+                let invariants = adversarial ? await SpecHub.shared.center(for: repo).readInvariants(repo) : []
+                let c = try await PRCenter.shared.startSession(on: pr, dir: repo.dir, prompt: ChiefPilot.reviewPrompt(number: n, title: pr.title, head: pr.headRefName, base: pr.baseRefName, focus: text("focus"), criteria: criteria(of: n, in: repo),
+                                                                                                                   invariants: invariants, adversarial: adversarial),
                                                                title: "Review #\(n)", readOnly: false, show: false, reviewOf: n)
                 return (200, ["session_id": c.id, "status": "A reviewer is working on #\(n). Call pr_reviews with wait_seconds to follow it."])
             } catch { return fail("Could not start the reviewer: \(error.localizedDescription)") }
@@ -218,6 +222,8 @@ enum ChiefDriver {
                 if let b = t.branch { r["branch"] = b }
                 if let p = t.pr { r["pr"] = p }
                 if let sm = c.summary(d.id, t.id) { r["risk"] = sm.risk.rawValue; r["changes"] = sm.headline; if !sm.reasons.isEmpty { r["risk_reasons"] = sm.reasons } }
+                if let s = c.taskSessions["\(d.id)/\(t.id)"] { r["session_id"] = s }
+                if let tests = c.testsState(d.id, t.id) { r["tests"] = tests }
                 return r
             },
         ]

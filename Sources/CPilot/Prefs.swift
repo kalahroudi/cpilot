@@ -45,6 +45,8 @@ final class Prefs {
     var testFirst: String { didSet { d.set(testFirst, forKey: "testFirst") } }
     /// The model that writes a task's tests. Empty uses the default model, so a different one can be chosen than writes the code.
     var testerModel: String { didSet { d.set(testerModel, forKey: "testerModel") } }
+    /// A second tester on another model writes its own tests from the spec, held back from the implementer; where the two read the spec differently, you are asked. Empty is off.
+    var secondTesterModel: String { didSet { d.set(secondTesterModel, forKey: "secondTesterModel") } }
     /// Keep a share of the tester's tests from the implementer, run only by the gate.
     var hiddenTests: Bool { didSet { d.set(hiddenTests, forKey: "hiddenTests") } }
     /// Review each spec for gaps before any tests are written, and approve it by itself when the review finds nothing.
@@ -136,6 +138,7 @@ final class Prefs {
         testFirst = d.string(forKey: "testFirst") ?? "off"
         testerModel = d.string(forKey: "testerModel") ?? ""
         hiddenTests = d.bool(forKey: "hiddenTests")
+        secondTesterModel = d.string(forKey: "secondTesterModel") ?? ""
         specReview = d.bool(forKey: "specReview")
         specAutoApprove = d.bool(forKey: "specAutoApprove")
         specReviewModel = d.string(forKey: "specReviewModel") ?? ""

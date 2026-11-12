@@ -75,6 +75,7 @@ enum ProposalActions {
         switch p.kind {
         case "spec_review": ("Approve the spec", "Let me change it")
         case "test_dispute": ("Unlock the tests", "Keep them locked")
+        case "tester_split": ("I settled it: write the tests again", "Keep the first tester's tests")
         default: ("Approve", "Not now")
         }
     }
@@ -93,6 +94,11 @@ enum ProposalActions {
             await center(dir: pl.dir, environment: pl.environment).releaseLock(pl.spec, pl.task)
             Workspace.shared.proposals.decide(p.id, .applied, by: "you")
             return nil
+        case "tester_split":
+            guard let pl = try? JSONDecoder().decode(SpecCenter.DisputePayload.self, from: Data(p.payload.utf8)) else { return "That proposal cannot be read." }
+            Workspace.shared.proposals.decide(p.id, .applied, by: "you")
+            await center(dir: pl.dir, environment: pl.environment).restartTesting(pl.spec, pl.task)
+            return nil
         default: return "Nothing knows how to carry out this proposal."
         }
     }
@@ -103,6 +109,9 @@ enum ProposalActions {
         case "test_dispute":
             if let pl = try? JSONDecoder().decode(SpecCenter.DisputePayload.self, from: Data(p.payload.utf8)) { center(dir: pl.dir, environment: pl.environment).keepLock(pl.spec, pl.task) }
             Workspace.shared.proposals.decide(p.id, .declined, by: "you")
+        case "tester_split":
+            Workspace.shared.proposals.decide(p.id, .declined, by: "you")
+            if let pl = try? JSONDecoder().decode(SpecCenter.DisputePayload.self, from: Data(p.payload.utf8)) { await center(dir: pl.dir, environment: pl.environment).keepFirstTester(pl.spec, pl.task) }
         default: Workspace.shared.proposals.decide(p.id, .declined, by: "you")
         }
     }

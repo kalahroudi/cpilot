@@ -135,7 +135,18 @@ struct SettingsPane: View {
                 }
                 if prefs.testFirst != "off" {
                     SettingRow("Tester model", "The model that writes the tests. Choose a different one from the model that writes the code, so the tests do not share its misreadings. Default uses the same default as any new session.") { ModelPicker(selection: $p.testerModel) }
+                    SettingRow("Second tester", "A second tester on another model writes its own tests from the same spec, without seeing the first's. Its tests are the held-back set, and where the two testers expect different behavior the spec is ambiguous, so you are asked before any code is written. Empty is off. It needs a different model from the tester's to be independent.") { ModelPicker(selection: $p.secondTesterModel) }
                     SettingRow("Hold some tests back", "The tester keeps about a third of its tests (edge cases, abuse, every setting) out of the implementer's checkout, so the code cannot be fitted to them. Only the gate runs them, and a failure names the requirement, never the test.") { toggle($p.hiddenTests) }
+                    SettingRow("Weekly review of the trunk", "Adds a schedule that starts a session every week to attack this repository's main branch against the rules in .cpilot/invariants. It proves each finding with a failing test or a reproduction, on its own branch, and changes nothing on main. You can change or remove the schedule in Triggers.") {
+                        AsyncButton("Add the schedule") {
+                            guard let r = Project.shared.current, r.environment == nil else { AppModel.shared.show("Open a repository on this Mac first.", error: true); return }
+                            let text = (try? await Shell.check("cat", [r.dir + "/.cpilot/invariants"], timeout: 15)) ?? ""
+                            let rules = Invariants.parse(text)
+                            guard !rules.isEmpty else { AppModel.shared.show("Write the rules that must always hold in .cpilot/invariants first, one per line starting with a dash.", error: true); return }
+                            TriggerEngine.shared.store.upsert(Trigger(name: TestFirst.sweepName, repo: r.dir, kind: .schedule, action: .session, prompt: TestFirst.sweepPrompt(invariants: rules), schedule: Schedule(frequency: .weekly, hour: 9, minute: 0, weekday: 2)))
+                            AppModel.shared.show("Added: every Monday at 9:00 a session reviews \(r.name) against \(rules.count) rule\(rules.count == 1 ? "" : "s").")
+                        }.buttonStyle(Pill(kind: .plain))
+                    }
                     SettingRow("Review each spec first", "Before any tests are written, a reviewer looks for gaps in the spec: ambiguity, missing cases, abuse cases, rules from .cpilot/invariants it does not cover. You are asked to approve the spec, with the reasons, unless the review finds nothing and the next setting is on.") { toggle($p.specReview) }
                     if prefs.specReview {
                         SettingRow("Approve a spec by itself when the review finds nothing", "A spec with open questions or findings always waits for you.") { toggle($p.specAutoApprove) }

@@ -149,4 +149,26 @@ final class TestLockTests: XCTestCase {
         let r = try await Shell.run("git", ["rev-parse", "--verify", "--quiet", "refs/cpilot/hidden/k"], cwd: URL(fileURLWithPath: dir))
         XCTAssertFalse(r.ok)
     }
+
+    func testHoldBackKeepsAWholeTestersWorkOnlyInARef() async throws {
+        try await makeTesterBranch()
+        let h = try await TestLock.holdBack(worktree: dir, parent: "main", key: "b", trace: ["A2": ["testDoubleSlashHost", "testNotThere"], "R9": ["testUnrelated"]])
+        XCTAssertEqual(h.ref, "refs/cpilot/hidden/b"); XCTAssertEqual(h.files, ["Tests/AbuseTests.swift", "Tests/GatewayTests.swift", "Tests/HiddenGatewayTests.swift"])
+        XCTAssertEqual(h.trace, ["A2": ["testDoubleSlashHost"]])
+        let refTip = try await git("rev-parse", h.ref), headTip = try await git("rev-parse", "HEAD")
+        XCTAssertEqual(refTip, headTip)
+        // it works as the held-back set of a task whose branch has only another tester's visible tests
+        try await git("checkout", "-q", "main"); try await git("checkout", "-q", "-b", "task")
+        try write("Tests/FirstTests.swift", "func testFirst() {}\n"); try await git("add", "-A"); try await git("commit", "-q", "-m", "visible")
+        let l = LockedTests(commit: try await git("rev-parse", "HEAD"), files: ["Tests/FirstTests.swift": try await git("rev-parse", "HEAD:Tests/FirstTests.swift")], hiddenRef: h.ref, hiddenFiles: h.files, hiddenTrace: h.trace)
+        var seen: [String] = []
+        let r = await TestLock.runHidden(worktree: dir, l, commands: ["x"]) { cmd in
+            seen = h.files.filter { FileManager.default.fileExists(atPath: self.dir + "/" + $0) }
+            return GateCheck(command: cmd, ok: true, output: "")
+        }
+        XCTAssertNil(r.problem); XCTAssertEqual(seen, h.files)
+        let clean = try await git("status", "--porcelain")
+        XCTAssertEqual(clean, "")
+        do { _ = try await TestLock.holdBack(worktree: dir, parent: "task", key: "c", trace: [:]); XCTFail("nothing changed") } catch { XCTAssertTrue("\(error)".contains("No test file")) }
+    }
 }

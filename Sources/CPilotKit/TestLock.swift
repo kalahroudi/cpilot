@@ -15,6 +15,8 @@ public struct LockedTests: Codable, Equatable, Sendable {
     /// Requirement or rule id → the hidden tests that cover it, so a failure can be reported by requirement without showing the test.
     public var hiddenTrace: [String: [String]]
     public var disputes: Int
+    /// Rounds the tester was asked to add tests that kill surviving mutants. Optional so older files still load.
+    public var strengthenings: Int?
     public init(commit: String, files: [String: String], hiddenRef: String? = nil, hiddenFiles: [String] = [], hiddenTrace: [String: [String]] = [:], disputes: Int = 0) {
         self.commit = commit; self.files = files; self.hiddenRef = hiddenRef; self.hiddenFiles = hiddenFiles; self.hiddenTrace = hiddenTrace; self.disputes = disputes
     }
@@ -67,6 +69,16 @@ public enum TestLock {
         for f in visible { files[f] = try await git(["rev-parse", "HEAD:\(f)"], in: worktree) }
         let hiddenTrace = trace.mapValues { names in names.filter { n in hiddenSet.contains { changed[$0]?.contains(TestFirst.testBaseName(n)) == true } } }.filter { !$0.value.isEmpty }
         return LockedTests(commit: head, files: files, hiddenRef: ref, hiddenFiles: hidden.sorted(), hiddenTrace: hiddenTrace)
+    }
+
+    /// A tester's whole work, kept only in a ref: the same place held-back tests live, with nothing put on any branch. Returns the ref, the files, and which tests cover which requirement.
+    public static func holdBack(worktree: String, parent: String, key: String, trace: [String: [String]]) async throws -> (ref: String, files: [String], trace: [String: [String]]) {
+        let changed = try await changedFiles(worktree: worktree, parent: parent)
+        guard !changed.isEmpty else { throw Failure.message("No test file was committed.") }
+        let r = "refs/cpilot/hidden/\(key)"
+        try await git(["update-ref", r, "HEAD"], in: worktree)
+        let all = changed.values.joined(separator: "\n")
+        return (r, changed.keys.sorted(), trace.mapValues { $0.filter { all.contains(TestFirst.testBaseName($0)) } }.filter { !$0.value.isEmpty })
     }
 
     /// What is wrong with the locked tests in `worktree`: a file changed, deleted, or left different from the commit. Empty when they are exactly as the tester wrote them.

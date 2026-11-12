@@ -522,6 +522,11 @@ final class SpecCenter {
                 rec.passedHead = head.isEmpty ? nil : head; rec.nudges = nil
                 if let summary { rec.summary = summary }
             case .sentBack: rec.answering = true; rec.passedHead = nil; Workspace.shared.gates.set(rec, for: skey); return
+            case .strengthen(let score, let survivors, let threshold):
+                rec.passedHead = nil
+                await strengthenTests(id, d, task, session, &rec, score: score, survivors: survivors, threshold: threshold)
+                Workspace.shared.gates.set(rec, for: skey)
+                return
             case .held(let why):
                 rec.held = why; rec.passedHead = nil
                 Workspace.shared.gates.set(rec, for: skey)

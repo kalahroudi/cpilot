@@ -215,7 +215,7 @@ final class SessionController: Identifiable {
         c.fork = meta.forkPending == true
         c.model = meta.model
         c.access = ws.policy.level(for: meta)
-        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd, autonomy: Prefs.shared.chiefMode) : nil].compactMap { $0 }.joined(separator: "\n\n")
+        c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd, autonomy: Prefs.shared.chiefMode, testFirst: Prefs.shared.testFirst != "off") : nil].compactMap { $0 }.joined(separator: "\n\n")
         if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
         if meta.chief == true, env == nil { c.mcpConfigPath = ChiefPilot.mcpConfig(server: AgentIntegrations.serverPath(), session: id, existing: c.mcpConfigPath) }
         if let env {
