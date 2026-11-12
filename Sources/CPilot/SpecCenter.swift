@@ -415,6 +415,8 @@ final class SpecCenter {
         let autonomy = jobs[id]?.autonomy ?? .step
         switch stage {
         case .specify:
+            // With tests first on, an independent review looks for gaps in the spec first; a person decides unless it finds nothing.
+            if await reviewSpec(id) { return }
             if !d.openQuestions.isEmpty && autonomy == .step { return }       // wait for the answers
             if autonomy == .step { return }                                   // step by step: you start the next stage
             await run(id, .plan)

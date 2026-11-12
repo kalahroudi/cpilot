@@ -185,6 +185,7 @@ extension SpecCenter {
                 ifApprove: "The tests are unlocked and the implementer may change them. The gate stops enforcing them.",
                 ifDecline: "The tests stay locked and the implementer is told to make them pass.",
                 evidence: [dispute], payload: payload))
+            NotificationCenter.default.post(name: Dreamer.changed, object: nil)
             rec.held = "The implementer still disputes a locked test after \(locked.disputes) rulings. It is waiting for you."
             implementer.addNotice("CPilot: a person must decide whether this test may change. Waiting.", error: true)
             AlertCenter.shared.alert(.needs, title: "A locked test is disputed", body: "\(task.id) \(task.title): the implementer and the tester disagree.", tag: "dispute-\(task.id)", session: implementer.id, project: projectName)

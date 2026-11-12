@@ -49,6 +49,38 @@ struct ProposalCard: View {
     }
 }
 
+/// Decisions waiting for you from tests-first work (a spec to approve, a disputed test), each as a plain card.
+struct NeedsYouPanel: View {
+    var scope: String?
+    @State private var open: [Proposal] = []
+    @State private var message: String?
+
+    var body: some View {
+        Group {
+            if !open.isEmpty || message != nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Needs you").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(open) { p in
+                        let l = ProposalActions.labels(p)
+                        ProposalCard(proposal: p, approveLabel: l.approve, declineLabel: l.decline) {
+                            Task { message = await ProposalActions.approve(p); reload() }
+                        } decline: { Task { await ProposalActions.decline(p); reload() } }
+                    }
+                    if let message { Text(message).font(.system(size: 12)).foregroundStyle(Theme.warn) }
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.pane)
+                .overlay(alignment: .bottom) { Divider() }
+            }
+        }
+        .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: Dreamer.changed)) { _ in reload() }
+    }
+
+    private func reload() {
+        open = Workspace.shared.proposals.open().filter { $0.kind != "dream" && (scope == nil || $0.scope == scope) }
+    }
+}
+
 /// Memory changes that dreams proposed and are waiting for you, and the ones they made on their own, each with Undo.
 struct DreamsPanel: View {
     @State private var open: [Proposal] = []

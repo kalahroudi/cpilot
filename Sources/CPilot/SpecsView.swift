@@ -31,6 +31,7 @@ struct SpecsView: View {
                     Button("New work") { center.preset = nil; center.newWork = true }.buttonStyle(Pill(kind: .primary)).disabled(center.repo == nil)
                 }
             }
+            NeedsYouPanel(scope: center.repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key })
             if center.repo == nil {
                 VStack(spacing: 8) {
                     Text("Choose a repository").font(.system(size: 15, weight: .semibold))
