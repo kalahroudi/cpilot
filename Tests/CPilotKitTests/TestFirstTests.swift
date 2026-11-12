@@ -104,7 +104,7 @@ final class TestFirstTests: XCTestCase {
     }
 
     func testBrokenTestsAreNotRed() {
-        for out in ["Tests/GatewayTests.swift:3:1: error: expected declaration", "SyntaxError: Unexpected token '}'", "bash: swift: command not found", "sh: ./run-tests: Permission denied", "the build failed for some reason"] {
+        for out in ["Tests/GatewayTests.swift:3:1: error: expected declaration", "SyntaxError: Unexpected token '}'", "bash: swift: command not found", "sh: ./run-tests: Permission denied", "the build failed for some reason", "bash: ./scripts/run-tests.sh: No such file or directory"] {
             guard case .unclear = TestFirst.red(check(out)) else { return XCTFail(out) }
         }
     }
@@ -119,5 +119,51 @@ final class TestFirstTests: XCTestCase {
         XCTAssertEqual(TestFirst.parseRuling("**DISPUTE: AMENDED, because the test assumed a trailing slash**"), .amended("the test assumed a trailing slash"))
         XCTAssertNil(TestFirst.parseRuling("no ruling here"))
         XCTAssertTrue(TestFirst.disputePrompt(task: task, dispute: "testX: wrong").contains("DISPUTE: UPHELD"))
+    }
+}
+
+/// Gives the real Claude the tester's prompt in a throwaway repository, then runs every check CPilot applies to a tester's work on what it produced.
+/// Runs only when CPILOT_LIVE=1 (it uses real quota). Claude may only read, write and run git and python3 in the temporary folder.
+final class LiveTesterTests: XCTestCase {
+    func testARealTesterProducesTestsThatPassEveryCheck() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CPILOT_LIVE"] == "1", "set CPILOT_LIVE=1")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("live-tester-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let url = URL(fileURLWithPath: dir)
+        try FileManager.default.createDirectory(atPath: dir + "/.cpilot", withIntermediateDirectories: true)
+        try "# Gateway\nA tiny HTTP gateway library written in Python.\n".write(toFile: dir + "/README.md", atomically: true, encoding: .utf8)
+        try "python3 -m unittest discover -s tests -p 'test_*.py'\n".write(toFile: dir + "/.cpilot/verify", atomically: true, encoding: .utf8)
+        func git(_ a: String...) async throws -> String { try await Shell.check("git", a, cwd: url, timeout: 60) }
+        try await git("init", "-q", "-b", "main"); try await git("config", "user.email", "t@example.com"); try await git("config", "user.name", "T")
+        try await git("add", "-A"); try await git("commit", "-q", "-m", "base"); try await git("checkout", "-q", "-b", "tests-t001")
+
+        let task = SpecTask(id: "T001", title: "Resolve the upstream URL for a request path and never leave the configured origin", done: false, covers: ["R1"])
+        let criteria = [Specs.Criterion(id: "R1", text: "gateway.resolve_upstream(path, origin) returns the absolute URL on the configured origin for a request path, and raises ValueError for any path that would resolve to another origin.",
+                                        checks: ["A1 (R1) resolve_upstream('/a/b', 'https://up.example') returns 'https://up.example/a/b'.", "A2 (R1) A path starting with // or containing a backslash host, or using .. to climb out, never resolves to another origin."])]
+        let invariants = [Invariant(id: "I1", text: "No request path may make the gateway contact a host other than the configured origin.")]
+        let prompt = TestFirst.testerPrompt(task: task, criteria: criteria, invariants: invariants, constitution: nil, hidden: true)
+        // Only what a tester needs, in the throwaway folder: no permission prompts are switched off.
+        let tools = "Read,Write,Edit,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(python3:*),Bash(ls:*),Bash(mkdir:*)"
+        let out = try await Shell.run("claude", ["-p", prompt, "--model", "sonnet", "--permission-mode", "acceptEdits", "--allowedTools", tools], cwd: url, timeout: 900)
+        let report = out.stdout
+        if report.isEmpty { print("LIVE TESTER no report; status \(out.status) stderr: \(out.stderr.prefix(500))") }
+        print("LIVE TESTER report tail: \(report.suffix(700))")
+
+        let files = try await TestLock.changedFiles(worktree: dir, parent: "main")
+        let trace = TestFirst.parseTrace(report)
+        let required = TestFirst.requiredIds(criteria: criteria, invariants: invariants)
+        XCTAssertEqual(required, ["A1", "A2", "I1"])
+        let problems = TestFirst.problems(required: required, trace: trace, files: files)
+        XCTAssertEqual(problems, [], "the tester's work fails CPilot's checks")
+        let status = try await git("status", "--porcelain")
+        XCTAssertEqual(status.trimmingCharacters(in: .whitespacesAndNewlines), "", "the tester left changes uncommitted")
+        let r = try await Shell.run("bash", ["-lc", "python3 -m unittest discover -s tests -p 'test_*.py'"], cwd: url, timeout: 120)
+        let verdict = TestFirst.red([GateCheck(command: "unittest", ok: r.ok, output: r.stdout + r.stderr)])
+        print("LIVE TESTER red verdict: \(verdict) files: \(files.keys.sorted()) hidden: \(TestFirst.parseHidden(report))")
+        guard case .red = verdict else { return XCTFail("tests are not red: \(verdict)\n\(r.stderr.suffix(600))") }
+        let locked = try await TestLock.freeze(worktree: dir, parent: "main", key: "live", hidden: TestFirst.parseHidden(report), trace: trace, message: "T001 tests")
+        print("LIVE TESTER locked: visible \(locked.files.keys.sorted()) hidden \(locked.hiddenFiles)")
+        let verified = await TestLock.verify(worktree: dir, locked)
+        XCTAssertEqual(verified, [])
     }
 }

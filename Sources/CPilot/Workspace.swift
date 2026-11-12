@@ -884,7 +884,7 @@ final class Workspace {
 
     /// A session for one spec task: its own branch on top of `parent`, in its own copy of the files.
     @discardableResult
-    func startTask(repo: String, environment: String?, branch: String, parent: String, title: String, prompt: String, focus: Bool,
+    func startTask(repo: String, environment: String?, branch: String, parent: String, title: String, prompt: String, focus: Bool, model: String? = nil, role: String? = nil,
                    onTurnEnd: @escaping (SessionController) -> Void) async throws -> SessionController {
         let remote = self.environment(environment)
         var level: AccessLevel = policy.defaultLevel == .readOnly ? .editFiles : (policy.defaultLevel == .fullAccess ? .editFiles : policy.defaultLevel)
@@ -893,6 +893,9 @@ final class Workspace {
         var meta = SessionMeta(title: title, cwd: repo, access: level, branch: branch)
         meta.environment = environment
         meta.spawned = !focus
+        // A different model can write the tests than writes the code (Settings, Limits); nothing set means the usual one.
+        if let model, !model.isEmpty { meta.model = model }
+        meta.role = role
         let path = remote.map { "\($0.remoteHome)/.cpilot/worktrees/\(meta.id)" } ?? AppPaths().root.appendingPathComponent("worktrees/\(meta.id)").path
         try await Exec.with(remote) {
             _ = try await Shell.check("mkdir", ["-p", (path as NSString).deletingLastPathComponent])

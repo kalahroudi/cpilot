@@ -30,7 +30,26 @@ enum TaskGateRunner {
         return ScopeGuard.defaultProtected + text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
     }
 
-    static func run(task: SpecTask, session c: SessionController, parent: String, repo: String, passedHead: String?, state: inout GateState) async -> Outcome {
+    /// Runs verification commands in a session's checkout, in order, and stops at the first that fails (what a later command prints after a failed build is only noise).
+    static func runChecks(_ commands: [String], in c: SessionController) async -> [GateCheck] {
+        let url = URL(fileURLWithPath: c.meta.workingDirectory)
+        var checks: [GateCheck] = []
+        for command in commands {
+            let result = await Exec.with(c.env) { () -> GateCheck in
+                do {
+                    let r = try await Shell.run("bash", ["-lc", command], cwd: url, timeout: 900)
+                    return GateCheck(command: command, ok: r.ok, output: r.stdout + (r.stderr.isEmpty ? "" : "\n" + r.stderr))
+                } catch { return GateCheck(command: command, ok: false, output: "\(error.localizedDescription)") }
+            }
+            checks.append(result)
+            if !result.ok { break }
+        }
+        return checks
+    }
+
+    /// `locked` is the task's tests written first by a tester: they must still be exactly as the tester wrote them, and the held-back ones are run once everything else passes.
+    static func run(task: SpecTask, session c: SessionController, parent: String, repo: String, passedHead: String?, state: inout GateState,
+                    locked: LockedTests? = nil, criteria: [Specs.Criterion] = []) async -> Outcome {
         let url = URL(fileURLWithPath: c.meta.workingDirectory)
         let inputs = await Exec.with(c.env) { () -> (diff: String, dirty: Bool, head: String, commands: [String]) in
             let head = (try? await Shell.check("git", ["rev-parse", "HEAD"], cwd: url, timeout: 15)) ?? ""
@@ -47,17 +66,23 @@ enum TaskGateRunner {
         let protected = await protectedPaths(repo: repo)
         var problems = DiffCheck.problems(diff: inputs.diff, touches: task.touches, protected: protected)
         if inputs.dirty { problems.append("Some of your changes are not committed. Commit them with the message \"\(task.id): \(task.title)\".") }
-
-        var checks: [GateCheck] = []
-        for command in inputs.commands {
-            let result = await Exec.with(c.env) { () -> GateCheck in
-                do {
-                    let r = try await Shell.run("bash", ["-lc", command], cwd: url, timeout: 900)
-                    return GateCheck(command: command, ok: r.ok, output: r.stdout + (r.stderr.isEmpty ? "" : "\n" + r.stderr))
-                } catch { return GateCheck(command: command, ok: false, output: "\(error.localizedDescription)") }
+        // Locked tests are put back as the tester wrote them before anything runs, so the tests that run are always the tester's own.
+        if let locked {
+            let changed = await Exec.with(c.env) { await TestLock.verify(worktree: url.path, locked) }
+            if !changed.isEmpty {
+                await Exec.with(c.env) { await TestLock.restore(worktree: url.path, locked) }
+                problems += changed.map { $0 + " CPilot put it back as the tester wrote it; commit it as it is." }
             }
-            checks.append(result)
-            if !result.ok { break }        // what a later command would print after a failed build is only noise
+        }
+
+        var checks = await runChecks(inputs.commands, in: c)
+        // Tests the tester held back run last, once everything else passes. A failure names the requirement, never the test.
+        if let locked, locked.hiddenRef != nil, checks.allSatisfy(\.ok), problems.isEmpty {
+            let hidden = await Exec.with(c.env) { await TestLock.runHidden(worktree: url.path, locked, commands: inputs.commands) { cmd in (await runChecks([cmd], in: c)).first ?? GateCheck(command: cmd, ok: false, output: "") } }
+            if let p = hidden.problem { problems.append(p) }
+            else if let bad = hidden.checks.first(where: { !$0.ok }) {
+                checks.append(GateCheck(command: "checks CPilot holds back", ok: false, output: TestLock.hiddenFeedback(failedIds: TestLock.failedHiddenIds(output: bad.output, locked), criteria: criteria)))
+            }
         }
 
         switch TaskGate.decide(&state, checks: checks, problems: problems) {

@@ -53,7 +53,7 @@ final class SpecCenter {
     private var hub: SpecHub { SpecHub.shared }
     /// Repos whose specs are committed instead of hidden from git ("environment|folder"). Read each time: every center shares it.
     private static let trackedKey = "trackedSpecRepos"
-    private var projectName: String? { repo.map { URL(fileURLWithPath: $0.dir).lastPathComponent } }
+    var projectName: String? { repo.map { URL(fileURLWithPath: $0.dir).lastPathComponent } }
     private func trackKey(_ r: PRCenter.Repo) -> String { "\(r.environment ?? "")|\(r.dir)" }
     var tracked: Bool { repo.map { Set(UserDefaults.standard.stringArray(forKey: Self.trackedKey) ?? []).contains(trackKey($0)) } ?? false }
     func setTracked(_ on: Bool) async {
@@ -70,8 +70,8 @@ final class SpecCenter {
     var selected: String?
     var jobs: [String: Job] = [:]
     private var scope: String { repo.map { RepoRef(dir: $0.dir, environment: $0.environment).key } ?? "" }
-    private func change(_ id: String, _ f: (inout Job) -> Void) { if var j = jobs[id] { f(&j); jobs[id] = j } }
-    private func create(_ id: String, _ f: (inout Job) -> Void) { var j = jobs[id] ?? Job(); f(&j); jobs[id] = j }
+    func change(_ id: String, _ f: (inout Job) -> Void) { if var j = jobs[id] { f(&j); jobs[id] = j } }
+    func create(_ id: String, _ f: (inout Job) -> Void) { var j = jobs[id] ?? Job(); f(&j); jobs[id] = j }
 
     /// Keeps where this spec stands on disk, so a restart carries on from here. Forgotten once there is nothing left to carry on or wait for.
     private func saveRun(_ id: String, attempts: Int? = nil) {
@@ -98,12 +98,12 @@ final class SpecCenter {
     /// GitHub is queried on every refresh, so repeated refreshes inside this window are skipped.
     static let cooldown: TimeInterval = 60
     var env: EnvironmentConfig? { Workspace.shared.environment(repo?.environment) }
-    private var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
+    var taskSessions: [String: String] = [:]      // "specId/T003" -> session id
     /// The tasks the gate is checking right now ("specId/T003"). What it has seen of each task, and the tasks it gave up on, is kept in `GateStore`
     /// so a restart does not forget it. A held task is not submitted.
     private(set) var gating: Set<String> = []
-    private func gateKey(_ id: String, _ taskId: String) -> String { GateStore.key(repo: repo?.dir ?? "", environment: repo?.environment, spec: id, task: taskId) }
-    private func gateRecord(_ id: String, _ taskId: String) -> GateRecord? { Workspace.shared.gates.record(gateKey(id, taskId)) }
+    func gateKey(_ id: String, _ taskId: String) -> String { GateStore.key(repo: repo?.dir ?? "", environment: repo?.environment, spec: id, task: taskId) }
+    func gateRecord(_ id: String, _ taskId: String) -> GateRecord? { Workspace.shared.gates.record(gateKey(id, taskId)) }
     /// Nothing more to remember about a spec that is gone, or about a task that is finished.
     private func forgetGates(spec id: String) {
         Workspace.shared.gates.removeAll(prefix: GateStore.specPrefix(repo: repo?.dir ?? "", environment: repo?.environment, spec: id))
@@ -192,6 +192,7 @@ final class SpecCenter {
     /// Task sessions started before a restart: listen for their turns again, and nudge the ones that stopped before writing any code.
     private func reattachTasks(_ id: String, _ d: SpecDoc) {
         guard let r = repo else { return }
+        reattachTesters(id, d)
         for t in d.tasks where !t.done {
             guard let branch = t.branch, !merged.contains(branch),
                   let meta = Workspace.shared.session(forBranch: branch, repo: r.dir, environment: r.environment),
@@ -210,7 +211,7 @@ final class SpecCenter {
         }
     }
 
-    private func turnHandler(_ id: String, _ taskId: String) -> (SessionController) -> Void {
+    func turnHandler(_ id: String, _ taskId: String) -> (SessionController) -> Void {
         { [weak self] session in Task { @MainActor in await self?.taskTurnEnded(id, taskId, session) } }
     }
 
@@ -377,7 +378,7 @@ final class SpecCenter {
         }
     }
 
-    private func shouldAutoApprove(_ id: String, _ stage: SpecPrompts.Stage, _ text: String) -> Bool {
+    func shouldAutoApprove(_ id: String, _ stage: SpecPrompts.Stage, _ text: String) -> Bool {
         switch jobs[id]?.autonomy ?? .step {
         case .step: return false
         case .plan: return true
@@ -409,7 +410,7 @@ final class SpecCenter {
 
     func discard(_ id: String) { change(id) { $0.draft = nil }; saveRun(id) }
 
-    private func advance(_ id: String, after stage: SpecPrompts.Stage) async {
+    func advance(_ id: String, after stage: SpecPrompts.Stage) async {
         guard let d = doc(id) else { return }
         let autonomy = jobs[id]?.autonomy ?? .step
         switch stage {
@@ -454,7 +455,10 @@ final class SpecCenter {
         guard let r = repo, let d = doc(id), let text = d.tasksText else { return }
         let branch = Specs.taskBranch(spec: id, task: task)
         let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
-        let prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
+        // With tests first on, a tester writes and locks this task's tests before the implementer starts; this comes back when they are locked.
+        if await beginTesting(id, task, parent: parent) { return }
+        var prompt = SpecPrompts.implement(task: task, spec: d, constitution: constitution)
+        if let locked = gateRecord(id, task.id)?.locked { prompt += TestFirst.implementerNote(files: locked.files.keys.sorted(), hiddenCount: locked.hiddenFiles.count) }
         do {
             // The branch may already belong to a session (tasks.md lost its branch line, or this ran twice): carry on in that session rather than starting another.
             let c: SessionController
@@ -505,7 +509,10 @@ final class SpecCenter {
                 return
             }
             let parent = Specs.parentBranch(for: task, in: d.tasks, trunk: trunk, merged: merged)
-            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state)
+            // The implementer is sure a locked test is wrong: the tester rules on it, from the spec. The gate waits.
+            if await handleDispute(id, task, session, &rec) { Workspace.shared.gates.set(rec, for: skey); return }
+            let outcome = await TaskGateRunner.run(task: task, session: session, parent: parent, repo: r.dir, passedHead: rec.passedHead, state: &rec.state,
+                                                   locked: rec.locked, criteria: Specs.criteria(spec: d.spec ?? "", covers: task.covers))
             switch outcome {
             case .clear:
                 if nudge(session, task: task, rec: &rec) { Workspace.shared.gates.set(rec, for: skey); await continueBuilding(id); return }

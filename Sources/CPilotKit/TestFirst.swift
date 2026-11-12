@@ -82,6 +82,18 @@ public enum TestFirst {
         """
     }
 
+    /// The ids the tester must cover: each acceptance check (A1, A2, …) of the requirements, or the requirement itself when it has none, and every rule.
+    public static func requiredIds(criteria: [Specs.Criterion], invariants: [Invariant]) -> [String] {
+        var out: [String] = []
+        for c in criteria {
+            let checks = c.checks.compactMap { $0.split(whereSeparator: { $0 == " " || $0 == ":" || $0 == "." }).first.map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "*`")).uppercased() } }.filter { !$0.isEmpty }
+            out += checks.isEmpty ? [c.id] : checks
+        }
+        out += invariants.map(\.id)
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
+    }
+
     public static func implementerNote(files: [String], hiddenCount: Int) -> String {
         """
 
@@ -90,12 +102,13 @@ public enum TestFirst {
         """
     }
 
-    public static func disputePrompt(task: SpecTask, dispute: String) -> String {
-        """
+    public static func disputePrompt(task: SpecTask, dispute: String, criteria: [Specs.Criterion] = []) -> String {
+        let reqs = criteria.map { "- \($0.id): \($0.text)" + $0.checks.map { "\n    \($0)" }.joined() }.joined(separator: "\n")
+        return """
         You are the tester who wrote the locked tests for task \(task.id): \(task.title). The implementer disputes one of them:
 
         \(dispute)
-
+        \(reqs.isEmpty ? "" : "\nThe requirements of this task:\n\(reqs)\n")
         Decide from the spec, not from the implementer's wish to pass. If the test is wrong, fix it (or remove it and say why) and commit with the message "\(task.id) tests: amend". If the test is right, change nothing. Either way end with one line:
         DISPUTE: UPHELD, because <reason>      (the test stays)
         DISPUTE: AMENDED, because <reason>     (you changed the tests)
@@ -165,7 +178,7 @@ public enum TestFirst {
     }
 
     private static let missingCode = ["cannot find", "no such module", "undefined", "is not defined", "has no member", "not a member", "cannot resolve", "modulenotfounderror", "importerror", "cannot find symbol",
-                                      "unresolved", "no such file or directory", "is not a function", "cannot read prop", "could not find module", "no matching function", "use of unresolved"]
+                                      "unresolved", "is not a function", "cannot read prop", "could not find module", "no matching function", "use of unresolved"]
     private static let assertion = ["assert", "expected", "xctassert", "#expect", "failed:", "fail:", "--- fail", "expect(", "should", "received", "not equal", "to equal", "to be"]
     private static let broken = ["syntax error", "syntaxerror", "unexpected token", "parse error", "expected expression", "expected declaration", "command not found", "permission denied", "unterminated"]
 

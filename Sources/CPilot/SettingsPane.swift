@@ -130,6 +130,18 @@ struct SettingsPane: View {
                 SettingRow("Reviewer model", "The model that reviews the pull requests the chief pilot starts. Choosing a different one from the model that wrote the code means the review does not share its blind spots. Default uses the same default as any new session.") {
                     ModelPicker(selection: $p.reviewerModel)
                 }
+                SettingRow("Tests first", "A separate tester writes each task's tests from the spec, before any code, and the implementer cannot change them. The tester never sees the plan or the code. The gate runs the tester's own copy, so a test cannot be weakened to pass. Off keeps today's way: one session writes both. Risky tasks are those that mention security, money, deletion, migrations, permissions and the like.") {
+                    Segmented(options: [("off", "Off"), ("risky", "Risky tasks"), ("all", "Every task")], selection: $p.testFirst)
+                }
+                if prefs.testFirst != "off" {
+                    SettingRow("Tester model", "The model that writes the tests. Choose a different one from the model that writes the code, so the tests do not share its misreadings. Default uses the same default as any new session.") { ModelPicker(selection: $p.testerModel) }
+                    SettingRow("Hold some tests back", "The tester keeps about a third of its tests (edge cases, abuse, every setting) out of the implementer's checkout, so the code cannot be fitted to them. Only the gate runs them, and a failure names the requirement, never the test.") { toggle($p.hiddenTests) }
+                    SettingRow("Review each spec first", "Before any tests are written, a reviewer looks for gaps in the spec: ambiguity, missing cases, abuse cases, rules from .cpilot/invariants it does not cover. You are asked to approve the spec, with the reasons, unless the review finds nothing and the next setting is on.") { toggle($p.specReview) }
+                    if prefs.specReview {
+                        SettingRow("Approve a spec by itself when the review finds nothing", "A spec with open questions or findings always waits for you.") { toggle($p.specAutoApprove) }
+                        SettingRow("Spec review model", "Empty uses the reviewer model.") { ModelPicker(selection: $p.specReviewModel) }
+                    }
+                }
                 SettingRow("Offer \"Merge all as admin\"", "On a stack that GitHub's rules block, merges every open pull request in order past those rules, after one confirmation. Each still needs its checks to pass. Off keeps the one-at-a-time button.") { toggle($p.adminMergeAll) }
                 SettingRow("Combine stacks that change the same files", "When open pull requests in different stacks edit the same files, a session combines them into one pull request by itself, checks it builds, and closes the old ones. Off keeps it a button on each stack.") { toggle($p.autoCollapse) }
                 SettingRow("Resolve stack conflicts with Claude", "When a restack stops on a conflict, a session starts by itself in a temporary copy to resolve it. Merge all as admin waits for it and carries on. Off keeps it a button.") { toggle($p.autoResolveConflicts) }

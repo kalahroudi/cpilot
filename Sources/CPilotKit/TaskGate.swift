@@ -140,7 +140,7 @@ public enum DiffCheck {
         return out
     }
 
-    static func isTest(_ path: String) -> Bool {
+    public static func isTest(_ path: String) -> Bool {
         let p = path.lowercased(), name = (p as NSString).lastPathComponent
         return p.contains("/tests/") || p.hasPrefix("tests/") || p.contains("/test/") || p.hasPrefix("test/") || p.contains("/__tests__/")
             || name.contains("test.") || name.contains("tests.") || name.contains(".spec.") || name.hasPrefix("test_") || name.hasSuffix("_test.go") || name.hasSuffix("_spec.rb")
@@ -157,6 +157,19 @@ public enum DiffCheck {
     }
 }
 
+/// The tester session of one task: which session, on which temporary branch, how many times it was sent back, and what it is doing.
+public struct TesterState: Codable, Equatable, Sendable {
+    public var session: String
+    public var branch: String
+    public var started: Date
+    /// Times the tester was sent back to fix its tests.
+    public var runs = 0
+    /// "writing" while it writes the first tests, "disputing" while it rules on the implementer's objection.
+    public var phase: String
+    public var dispute: String?
+    public init(session: String, branch: String, phase: String = "writing", dispute: String? = nil, started: Date = .now) { self.session = session; self.branch = branch; self.phase = phase; self.dispute = dispute; self.started = started }
+}
+
 /// What the gate knows about one task, kept across restarts: its counters, whether it gave up, whether it is waiting for the answer to a message it
 /// sent back, and the commit it last passed on (so a task that has not changed since is not checked again).
 public struct GateRecord: Codable, Equatable, Sendable {
@@ -170,6 +183,10 @@ public struct GateRecord: Codable, Equatable, Sendable {
     public var summary: TaskSummary?
     /// What the session had used when the user last stepped in; the task's budget counts from there. Optional so older files still load.
     public var budgetBase: TaskUsage?
+    /// The task's tests, written first by a tester and frozen (see `TestLock`). Optional so older files still load.
+    public var locked: LockedTests?
+    /// The tester working on the task now. Optional so older files still load.
+    public var tester: TesterState?
     public var updated = Date()
     public init() {}
 }

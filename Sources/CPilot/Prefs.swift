@@ -41,6 +41,17 @@ final class Prefs {
     var dreamAuto: Bool { didSet { d.set(dreamAuto, forKey: "dreamAuto") } }
     /// The model a dream uses. Empty means Sonnet.
     var dreamModel: String { didSet { d.set(dreamModel, forKey: "dreamModel") } }
+    /// Which spec tasks get a tester first: "off", "risky" (security, money, deletion, migrations and the like) or "all". See `TestFirst`.
+    var testFirst: String { didSet { d.set(testFirst, forKey: "testFirst") } }
+    /// The model that writes a task's tests. Empty uses the default model, so a different one can be chosen than writes the code.
+    var testerModel: String { didSet { d.set(testerModel, forKey: "testerModel") } }
+    /// Keep a share of the tester's tests from the implementer, run only by the gate.
+    var hiddenTests: Bool { didSet { d.set(hiddenTests, forKey: "hiddenTests") } }
+    /// Review each spec for gaps before any tests are written, and approve it by itself when the review finds nothing.
+    var specReview: Bool { didSet { d.set(specReview, forKey: "specReview") } }
+    var specAutoApprove: Bool { didSet { d.set(specAutoApprove, forKey: "specAutoApprove") } }
+    /// The model that reviews a spec for gaps. Empty uses the reviewer model.
+    var specReviewModel: String { didSet { d.set(specReviewModel, forKey: "specReviewModel") } }
     /// Most agents working at once before work that starts by itself (triggers, the chief pilot's tasks and reviewers) waits. 0 is no limit.
     /// Remove the checkouts and put away the sessions of work that is delivered (Settings, Cleanup).
     var cleanUp: Bool { didSet { d.set(cleanUp, forKey: "cleanUp") } }
@@ -100,7 +111,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "testFirst": "off", "hiddenTests": true, "specReview": true, "specAutoApprove": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -122,6 +133,12 @@ final class Prefs {
         dream = d.bool(forKey: "dream")
         dreamAuto = d.bool(forKey: "dreamAuto")
         dreamModel = d.string(forKey: "dreamModel") ?? ""
+        testFirst = d.string(forKey: "testFirst") ?? "off"
+        testerModel = d.string(forKey: "testerModel") ?? ""
+        hiddenTests = d.bool(forKey: "hiddenTests")
+        specReview = d.bool(forKey: "specReview")
+        specAutoApprove = d.bool(forKey: "specAutoApprove")
+        specReviewModel = d.string(forKey: "specReviewModel") ?? ""
         cleanUp = d.bool(forKey: "cleanUp")
         keepArchivedDays = d.integer(forKey: "keepArchivedDays")
         maxAgents = d.integer(forKey: "maxAgents")

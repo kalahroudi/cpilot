@@ -68,6 +68,8 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     public var chief: Bool?
     /// The pull request this session was assigned to review and fix (by the chief pilot).
     public var reviewOf: Int?
+    /// "tester" for a session that writes a task's tests first. It is CPilot's own worker: lists leave it out, and cleanup puts it away when its tests are locked.
+    public var role: String?
     /// Set when CPilot started the session for the chief pilot's work (a task, a reviewer) and false when the user started it from the Specs pane.
     /// Sessions from before this was recorded have none; see `isWorker`.
     public var spawned: Bool?
@@ -91,7 +93,7 @@ public struct SessionMeta: Codable, Identifiable, Equatable, Sendable {
     /// they are reached from the Specs pane or the chief pilot, and show up when they need you.
     public var isWorker: Bool {
         if chief == true { return false }
-        return spawned ?? (reviewOf != nil || (branch ?? "").hasPrefix("spec-"))
+        return spawned ?? (reviewOf != nil || role != nil || (branch ?? "").hasPrefix("spec-"))
     }
 }
 
