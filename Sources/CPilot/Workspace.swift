@@ -527,6 +527,8 @@ final class Workspace {
     let index = MemoryIndex()
     let memory: MemoryStore
     let audit = AuditLog()
+    /// Decisions waiting for you (memory changes from dreams, and later spec and test checkpoints).
+    let proposals = ProposalStore()
     var policy = AccessPolicy.load()
     var acpAgents = AcpAgentConfig.load()
     var environments = EnvironmentConfig.load()
@@ -986,6 +988,7 @@ final class Workspace {
         AlertCenter.shared.turnEnded(c)
         ChiefWaker.shared.turnEnded(c)
         LessonLearner.shared.chiefTurnEnded(c)
+        Dreamer.shared.sessionEnded(c)
         CleanupCenter.shared.chiefTurnEnded(c)
         guard Prefs.shared.notify, Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
         AppModel.shared.notify("\(c.meta.title) finished", project: c.meta.project)

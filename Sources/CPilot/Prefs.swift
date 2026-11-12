@@ -35,6 +35,12 @@ final class Prefs {
     var memoryEngineURL: String { didSet { d.set(memoryEngineURL, forKey: "memoryEngineURL") } }
     /// When a chief pilot run ends, keep the lessons from its reviewers' reports and failures as a note every later session in the repository starts with.
     var learnLessons: Bool { didSet { d.set(learnLessons, forKey: "learnLessons") } }
+    /// Look over finished sessions now and then and propose changes that keep a repository's notes true. See `Dream`.
+    var dream: Bool { didSet { d.set(dream, forKey: "dream") } }
+    /// Let a dream change notes CPilot wrote itself (lessons, earlier dreams, agents) without waiting. Notes you wrote always wait for you. Every change can be undone.
+    var dreamAuto: Bool { didSet { d.set(dreamAuto, forKey: "dreamAuto") } }
+    /// The model a dream uses. Empty means Sonnet.
+    var dreamModel: String { didSet { d.set(dreamModel, forKey: "dreamModel") } }
     /// Most agents working at once before work that starts by itself (triggers, the chief pilot's tasks and reviewers) waits. 0 is no limit.
     /// Remove the checkouts and put away the sessions of work that is delivered (Settings, Cleanup).
     var cleanUp: Bool { didSet { d.set(cleanUp, forKey: "cleanUp") } }
@@ -94,7 +100,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -113,6 +119,9 @@ final class Prefs {
         conflictWaitMinutes = d.integer(forKey: "conflictWaitMinutes")
         recapAuto = d.bool(forKey: "recapAuto")
         learnLessons = d.bool(forKey: "learnLessons")
+        dream = d.bool(forKey: "dream")
+        dreamAuto = d.bool(forKey: "dreamAuto")
+        dreamModel = d.string(forKey: "dreamModel") ?? ""
         cleanUp = d.bool(forKey: "cleanUp")
         keepArchivedDays = d.integer(forKey: "keepArchivedDays")
         maxAgents = d.integer(forKey: "maxAgents")

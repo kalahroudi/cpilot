@@ -22,6 +22,8 @@ public struct AppPaths: Sendable {
     public var policyFile: URL { root.appendingPathComponent("policy.json") }
     public var agentsFile: URL { root.appendingPathComponent("agents.json") }
     public var environmentsFile: URL { root.appendingPathComponent("environments.json") }
+    /// Decisions waiting for a person, and what was decided. See `ProposalStore`.
+    public var proposalsFile: URL { root.appendingPathComponent("proposals.json") }
     public var settingsFile: URL { root.appendingPathComponent("settings.json") }
     /// Written by the running app so the MCP server can find it (loopback port + token), 0600.
     public var controlFile: URL { root.appendingPathComponent("control.json") }

@@ -172,6 +172,27 @@ extension MemoryStore {
         return write(scope: scope, name: name, body: v.body, actor: actor, reason: "Restored version \(version)")
     }
 
+    /// Deletes a note only if it is still the version the caller read. Returns false when it changed or is gone. The history keeps it, so `restore` brings it back.
+    @discardableResult
+    public func remove(scope: String, name: String, expect hash: String, actor: String) -> Bool {
+        let safe = Self.safeName(name)
+        return withLock {
+            let current = note(scope: scope, name: safe)
+            adoptOutsideEdit(scope: scope, name: safe, current: current)
+            guard let current, current.hash == hash else { return false }
+            try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(safe + ".md"))
+            append(scope: scope, name: safe, actor: actor, reason: "Deleted", body: "", deleted: true)
+            index?.remove(scope: scope, source: "note", ref: safe)
+            return true
+        }
+    }
+
+    /// Whether a person ever wrote or edited the note, or it predates the history. Automated writers only propose changes to such notes.
+    public func isPersonOwned(scope: String, name: String) -> Bool {
+        let h = history(scope: scope, name: name)
+        return h.isEmpty || h.contains { MemoryLint.isPerson($0.actor) }
+    }
+
     /// Every deleted note that can be restored, in any scope.
     public func allDeletedNotes() -> [(scope: String, name: String)] {
         let scopes = ((try? FileManager.default.contentsOfDirectory(atPath: historyRoot.path)) ?? []).sorted()

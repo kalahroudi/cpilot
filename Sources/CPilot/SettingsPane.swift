@@ -152,6 +152,18 @@ struct SettingsPane: View {
                         }.buttonStyle(Pill(kind: .plain))
                     }
                 }
+                SettingRow("Dream over recent sessions", "From time to time, after a few sessions in a repository have finished, CPilot asks Claude (one call, no tools) to look over what they did and propose changes that keep that repository's notes true: add what was learned, fix what is out of date, merge duplicates, remove what no longer holds. Every proposal must quote the sessions word for word, and a quote that is not really there is thrown away. Notes you wrote only ever change when you approve. Nothing is changed without keeping the old text in History.") { toggle($p.dream) }
+                if prefs.dream {
+                    SettingRow("Let dreams change notes CPilot wrote", "Lessons, notes from agents and earlier dreams can be changed straight away, and you can undo each change in Memory. Turn this off to approve every change yourself.") { toggle($p.dreamAuto) }
+                    SettingRow("Dream model", "The model that reads the sessions and writes the proposals. Empty uses Sonnet.") { ModelPicker(selection: $p.dreamModel) }
+                    SettingRow("Dream now", "Looks over the current repository's recent sessions without waiting.") {
+                        AsyncButton("Dream now") {
+                            guard let r = Project.shared.current, r.environment == nil else { AppModel.shared.show("Open a repository on this Mac first.", error: true); return }
+                            let o = await Dreamer.shared.dream(repo: r.dir, manual: true)
+                            AppModel.shared.show(o.message, error: { if case .failed = o { return true } else { return false } }())
+                        }.buttonStyle(Pill(kind: .plain))
+                    }
+                }
                 SettingRow("Long-term memory engine", "Optional. Connects a memory engine over MCP so sessions can recall what earlier sessions learned.") {
                     Segmented(options: [("files", "Off"), ("engine", "On")], selection: $p.memoryEngine)
                 }

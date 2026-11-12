@@ -47,9 +47,15 @@ struct MemoryView: View {
                             }
                         }.menuStyle(.button).fixedSize()
                     }
+                    AsyncButton("Dream now") {
+                        guard let r = Project.shared.current, r.environment == nil else { AppModel.shared.show("Open a repository on this Mac first.", error: true); return }
+                        let o = await Dreamer.shared.dream(repo: r.dir, manual: true)
+                        AppModel.shared.show(o.message, error: { if case .failed = o { return true } else { return false } }())
+                    }.buttonStyle(Pill(kind: .plain))
                     Button("New note") { startNote() }.buttonStyle(Pill(kind: .primary))
                 }
             }
+            DreamsPanel()
             HSplitView {
                 VStack(spacing: 8) {
                     SearchBox(prompt: "Search notes", text: $query).padding([.horizontal, .top], 10)
