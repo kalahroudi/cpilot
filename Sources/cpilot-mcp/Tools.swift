@@ -122,6 +122,7 @@ let allTools: [Tool] = {
         switch memory.write(scope: scope, name: try requireString(a, "name"), body: try requireString(a, "body"), expect: expect, actor: "agent", reason: "Saved through the MCP server") {
         case .saved(let n): return "Saved \(n.scope)/\(n.name). Hash: \(n.hash)"
         case .failed: throw ToolError(message: "Could not save the note.")
+        case .rejected(let why): throw ToolError(message: "Not saved: the note " + why.joined(separator: ", ") + ". Memory is read by every future session, so notes written by agents may not hold secrets, commands that fetch and run code, instructions to the agent, or ways around the checks, and may not replace most of an existing note. Rewrite it without that, or ask the user to add it in the Memory pane.")
         case .conflict(let now):
             guard let now else { throw ToolError(message: "That note is gone, so there is nothing to replace. Save it without expected_hash to create it again.") }
             throw ToolError(message: "The note \(now.name) already exists or changed since you read it, so nothing was saved. Merge your change into its current text and save again with expected_hash \(now.hash).\n\nCurrent text:\n\(now.body)")

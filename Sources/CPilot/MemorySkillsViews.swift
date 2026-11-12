@@ -127,7 +127,7 @@ struct MemoryView: View {
         case .conflict(let now):
             clash = Clash(message: sameNote ? (now == nil ? "This note was deleted while you were editing it." : "This note changed while you were editing it, by an agent, a finished run or another editor.")
                                             : "A note with this title already exists here.", current: now)
-        case .failed: problem = "Could not save the note."
+        case .failed, .rejected: problem = "Could not save the note."
         }
         reload()
     }

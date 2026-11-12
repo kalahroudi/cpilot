@@ -32,6 +32,8 @@ public enum MemoryWrite: Equatable, Sendable {
     case saved(MemoryNote)
     /// The note is not what the writer expected: someone changed, created or deleted it since it was read. `current` is what is there now (nil when it is gone); read it, merge, and try again.
     case conflict(current: MemoryNote?)
+    /// An automated writer's text broke the memory rules (see `MemoryLint`); nothing was written. The reasons are for the writer to fix.
+    case rejected([String])
     /// The file could not be written.
     case failed
 }
@@ -128,6 +130,11 @@ extension MemoryStore {
         case .hash(let h): if current?.hash != h { return .conflict(current: current) }
         }
         if let current, current.body == body { return .saved(current) }
+        if !MemoryLint.isPerson(actor) {
+            var why = MemoryLint.problems(body)
+            if MemoryLint.wipes(old: current?.body, new: body) { why.append("replaces most of the note") }
+            if !why.isEmpty { return .rejected(why) }
+        }
         let d = dir(scope)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         guard (try? body.write(to: d.appendingPathComponent(safe + ".md"), atomically: true, encoding: .utf8)) != nil else { return .failed }
@@ -144,7 +151,7 @@ extension MemoryStore {
             switch write(scope: scope, name: candidate, body: body, expect: .absent, actor: actor, reason: reason) {
             case .saved(let note): return note
             case .conflict: continue
-            case .failed: return nil
+            case .failed, .rejected: return nil
             }
         }
         return nil

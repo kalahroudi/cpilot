@@ -54,13 +54,9 @@ public enum Lessons {
         """
     }
 
-    private static let unsafe = ["http://", "https://", "www.", "curl ", "wget ", "| sh", "| bash", "|sh", "|bash", "sudo ", "rm -rf", "chmod 777",
-                                 "ignore previous", "ignore all", "ignore the above", "disregard", "system prompt", "you must always", "api key", "api_key", "password", "secret", "token", "private key", "```"]
-
-    /// A line that may be kept: plain, short, and free of anything that reads like a link, a secret or an instruction to the agent.
+    /// A line that may be kept: plain, short, and free of anything that reads like a link, a secret or an instruction to the agent (the same rules as every automated memory writer, with the strict ones).
     public static func isAcceptable(_ line: String) -> Bool {
-        let l = line.lowercased()
-        return !line.isEmpty && line.count <= maxLength && line.count >= 12 && !unsafe.contains { l.contains($0) }
+        !line.isEmpty && line.count <= maxLength && line.count >= 12 && MemoryLint.problems(line, .lesson).isEmpty
     }
 
     /// The lessons in Claude's answer: bullet lines only, at most `maxNew`, none that fail `isAcceptable`.

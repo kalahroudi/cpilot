@@ -62,7 +62,7 @@ public final class MemoryIndex: @unchecked Sendable {
 
     /// Obvious secrets never enter the index.
     public static func redact(_ s: String) -> String {
-        s.replacingOccurrences(of: #"(sk-|ghp_|gho_|github_pat_|AKIA|xox[bp]-)[A-Za-z0-9_\-]{12,}"#, with: "[redacted]", options: .regularExpression)
+        s.replacingOccurrences(of: MemoryLint.secretPattern, with: "[redacted]", options: .regularExpression)
     }
 
     /// Splits text into chunks of about `size` characters on paragraph and sentence boundaries.
