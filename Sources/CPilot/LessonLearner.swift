@@ -62,12 +62,11 @@ final class LessonLearner {
             return .failed("Claude could not be reached. It will try again after the next run.")
         }
         setSince(repo, started)
-        let merged = Lessons.merge(existing: existing, new: Lessons.parse(answer))
-        guard !merged.added.isEmpty else { return .nothing("Nothing new to keep.") }
-        ws.memory.save(scope: scope, name: Lessons.noteName, body: Lessons.render(merged.lessons))
-        ws.audit.record(AuditEntry(session: "lessons", tool: "lessons", summary: "\(URL(fileURLWithPath: repo).lastPathComponent): " + merged.added.joined(separator: " | "), outcome: "saved"))
-        AppModel.shared.notify("Learned \(merged.added.count) lesson\(merged.added.count == 1 ? "" : "s") for \(URL(fileURLWithPath: repo).lastPathComponent)", body: merged.added[0])
-        return .saved(merged.added)
+        let added = Lessons.record(Lessons.parse(answer), in: ws.memory, scope: scope, reason: "Learned from a finished run in \(URL(fileURLWithPath: repo).lastPathComponent)")
+        guard !added.isEmpty else { return .nothing("Nothing new to keep.") }
+        ws.audit.record(AuditEntry(session: "lessons", tool: "lessons", summary: "\(URL(fileURLWithPath: repo).lastPathComponent): " + added.joined(separator: " | "), outcome: "saved"))
+        AppModel.shared.notify("Learned \(added.count) lesson\(added.count == 1 ? "" : "s") for \(URL(fileURLWithPath: repo).lastPathComponent)", body: added[0])
+        return .saved(added)
     }
 
     static let summaryLabel = "The lead's closing summary"

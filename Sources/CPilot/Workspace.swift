@@ -945,7 +945,7 @@ final class Workspace {
         guard !isRemembered(text) else { return }
         let first = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Note"
         let title = name ?? String(first.prefix(48))
-        memory.save(scope: project.map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope, name: title, body: text)
+        memory.create(scope: project.map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope, name: title, body: text, actor: "you", reason: "Saved from a chat")
         refreshRemembered()
         AppModel.shared.show("Saved to memory")
     }

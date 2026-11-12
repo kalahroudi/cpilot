@@ -15,6 +15,13 @@ struct MemoryView: View {
     /// A note being written that is not saved yet. Without it the editor would look the same whether or not New note was pressed.
     @State private var creating = false
     @FocusState private var titleFocus: Bool
+    /// The hash of the text the editor was loaded with. Saving quotes it, so a note someone else changed in the meantime is not overwritten without a word.
+    @State private var baseHash: String?
+    @State private var clash: Clash?
+    @State private var problem: String?
+    @State private var showHistory = false
+
+    private struct Clash { var message: String; var current: MemoryNote? }
 
     private var projects: [(String, String)] {
         var seen = Set<String>(), out: [(String, String)] = [(MemoryStore.globalScope, "All projects")]
@@ -28,7 +35,20 @@ struct MemoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Memory", subtitle: "Notes every session starts with. Plain Markdown files you can edit anywhere. \(budget)") {
-                Button("New note") { startNote() }.buttonStyle(Pill(kind: .primary))
+                HStack(spacing: 8) {
+                    let deleted = ws.memory.allDeletedNotes()
+                    if !deleted.isEmpty {
+                        Menu("Deleted notes") {
+                            ForEach(deleted, id: \.name) { d in
+                                Button("Restore \(d.name)") {
+                                    if let last = ws.memory.history(scope: d.scope, name: d.name).first(where: { !$0.deleted }) { _ = ws.memory.restore(scope: d.scope, name: d.name, version: last.id) }
+                                    reload()
+                                }
+                            }
+                        }.menuStyle(.button).fixedSize()
+                    }
+                    Button("New note") { startNote() }.buttonStyle(Pill(kind: .primary))
+                }
             }
             HSplitView {
                 VStack(spacing: 8) {
@@ -54,13 +74,29 @@ struct MemoryView: View {
                         Dropdown(options: projects.map { ($0.0, $0.1) }, selection: $scope).frame(width: 170)
                     }
                     TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+                    if let c = clash {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(c.message).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                if let cur = c.current { Button("Show their version") { text = cur.body; baseHash = cur.hash; clash = nil }.buttonStyle(Pill(kind: .plain)) }
+                                Button("Save anyway") { save(overwrite: true) }.buttonStyle(Pill(kind: .plain))
+                                Text("The other version stays in History.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                            }
+                        }.padding(10).background(Theme.warnSoft, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Theme.danger) }
                     HStack {
                         if let sel = selection, let n = notes.first(where: { $0.id == sel }) {
-                            Button("Delete") { ws.memory.delete(scope: n.scope, name: n.name); selection = nil; creating = false; reload() }.buttonStyle(Pill(kind: .danger))
+                            Button("Delete") { ws.memory.delete(scope: n.scope, name: n.name); selection = nil; creating = false; clash = nil; reload() }.buttonStyle(Pill(kind: .danger))
+                            Button("History") { showHistory.toggle() }.buttonStyle(Pill(kind: .plain))
+                                .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+                                    MemoryHistoryList(scope: n.scope, name: n.name) { restored in
+                                        showHistory = false; text = restored.body; baseHash = restored.hash; clash = nil; reload()
+                                    }
+                                }
                         }
                         Spacer()
-                        Button("Save") { if let n = ws.memory.save(scope: scope, name: title, body: text) { creating = false; selection = n.id }; reload() }
-                            .buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || text.isEmpty)
+                        Button("Save") { save() }.buttonStyle(Pill(kind: .primary)).disabled(title.isEmpty || text.isEmpty)
                     }
                 }.padding(14).frame(minWidth: 340)
                 }
@@ -69,25 +105,75 @@ struct MemoryView: View {
         .background(Theme.pane)
         .onAppear(perform: reload)
         .onChange(of: selection) { _, id in
-            if let n = notes.first(where: { $0.id == id }) { creating = false; title = n.name; text = n.body; scope = n.scope }
+            clash = nil; problem = nil
+            if let n = notes.first(where: { $0.id == id }) { creating = false; title = n.name; text = n.body; scope = n.scope; baseHash = n.hash }
         }
     }
 
     /// An empty editor for a note of the repository you are in (or all projects without one), with the cursor in the title.
     private func startNote() {
-        selection = nil; creating = true; title = ""; text = ""
+        selection = nil; creating = true; title = ""; text = ""; baseHash = nil; clash = nil; problem = nil
         scope = Project.shared.current.map { MemoryStore.scope(forProject: $0.dir) } ?? MemoryStore.globalScope
         titleFocus = true
+    }
+
+    /// Saves the editor. A note that changed since it was opened (an agent, a finished run, another editor) is not replaced unless `overwrite` says so; either way the old text is kept in History.
+    private func save(overwrite: Bool = false) {
+        let editing = notes.first { $0.id == selection }
+        let sameNote = editing.map { $0.scope == scope && $0.name == MemoryStore.safeName(title) } ?? false
+        let expect: MemoryExpect = overwrite ? .anything : sameNote ? (baseHash.map { .hash($0) } ?? .anything) : .absent
+        switch ws.memory.write(scope: scope, name: title, body: text, expect: expect, actor: "you", reason: "Edited in Memory") {
+        case .saved(let n): clash = nil; problem = nil; creating = false; baseHash = n.hash; selection = n.id
+        case .conflict(let now):
+            clash = Clash(message: sameNote ? (now == nil ? "This note was deleted while you were editing it." : "This note changed while you were editing it, by an agent, a finished run or another editor.")
+                                            : "A note with this title already exists here.", current: now)
+        case .failed: problem = "Could not save the note."
+        }
+        reload()
     }
 
     /// Sessions load notes up to a cap, so show how close you are.
     private var budget: String {
         let used = notes.reduce(0) { $0 + $1.body.count }
-        return "\(used.formatted()) characters saved; a session loads up to 6,000."
+        return "\(used.formatted()) characters saved; a session loads up to \(MemoryStore.defaultLimit.formatted())."
     }
 
     private var filtered: [MemoryNote] { query.isEmpty ? notes : notes.filter { ($0.name + $0.body).localizedCaseInsensitiveContains(query) } }
     private func reload() { notes = ws.memory.allNotes(); ws.refreshRemembered() }
+}
+
+/// The saved versions of one note, newest first, each with who wrote it and why. Restoring one adds a new version; nothing is ever rewritten.
+private struct MemoryHistoryList: View {
+    let scope: String
+    let name: String
+    let restored: (MemoryNote) -> Void
+    @State private var versions: [MemoryVersion] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History of \(name)").font(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(versions) { v in
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(v.actor) · \(v.date, style: .relative) ago").font(.system(size: 12.5, weight: .medium))
+                                Text(v.deleted ? "Deleted" : v.reason.isEmpty ? String(v.body.prefix(80)) : v.reason).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer(minLength: 0)
+                            if !v.deleted, v.id != versions.first?.id {
+                                Button("Restore") {
+                                    if case .saved(let n) = Workspace.shared.memory.restore(scope: scope, name: name, version: v.id) { restored(n) }
+                                }.buttonStyle(Pill(kind: .plain))
+                            }
+                        }
+                    }
+                }
+            }.frame(maxHeight: 300)
+        }
+        .padding(14).frame(width: 340)
+        .onAppear { versions = Workspace.shared.memory.history(scope: scope, name: name) }
+    }
 }
 
 /// Skills already on this Mac. Claude loads them itself; this lists them and shows what each does.

@@ -8,6 +8,8 @@ public struct MemoryNote: Identifiable, Equatable, Sendable {
     public var name: String
     public var body: String
     public var modified: Date
+    /// What a writer quotes back to say which version it read. See `MemoryStore.write`.
+    public var hash: String { MemoryStore.hash(body) }
 }
 
 /// Memory is plain Markdown files, one per note, so people and every agent can read and edit them with any tool.
@@ -31,9 +33,9 @@ public final class MemoryStore: @unchecked Sendable {
         return "\(name.isEmpty ? "project" : name)-\(String(h % 1_000_000, radix: 36))"
     }
 
-    private func dir(_ scope: String) -> URL { root.appendingPathComponent(scope, isDirectory: true) }
+    func dir(_ scope: String) -> URL { root.appendingPathComponent(scope, isDirectory: true) }
 
-    static func safeName(_ n: String) -> String {
+    public static func safeName(_ n: String) -> String {
         let s = n.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
         let out = String(s).split(separator: "-").joined(separator: "-")
         return out.isEmpty ? "note" : String(out.prefix(60))
@@ -50,24 +52,28 @@ public final class MemoryStore: @unchecked Sendable {
     }
 
     public func allNotes() -> [MemoryNote] {
-        let scopes = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        let scopes = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }
         return scopes.flatMap { notes(scope: $0) }.sorted { $0.modified > $1.modified }
     }
 
+    /// Saves a note, replacing what is there. The old text stays in the note's history. Use `write` with `expect` when other writers may be changing the same note.
     @discardableResult
-    public func save(scope: String, name: String, body: String) -> MemoryNote? {
-        let d = dir(scope)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        let safe = Self.safeName(name)
-        let u = d.appendingPathComponent(safe + ".md")
-        guard (try? body.write(to: u, atomically: true, encoding: .utf8)) != nil else { return nil }
-        index?.replace(scope: scope, source: "note", ref: safe, text: safe + "\n\n" + body)
-        return MemoryNote(scope: scope, name: safe, body: body, modified: .now)
+    public func save(scope: String, name: String, body: String, actor: String = "you", reason: String = "") -> MemoryNote? {
+        if case .saved(let n) = write(scope: scope, name: name, body: body, actor: actor, reason: reason) { return n }
+        return nil
     }
 
-    public func delete(scope: String, name: String) {
-        try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(name + ".md"))
-        index?.remove(scope: scope, source: "note", ref: name)
+    /// Deletes a note. Its history is kept, so `restore` brings it back.
+    public func delete(scope: String, name: String, actor: String = "you") {
+        let safe = Self.safeName(name)
+        withLock {
+            let current = note(scope: scope, name: safe)
+            adoptOutsideEdit(scope: scope, name: safe, current: current)
+            guard current != nil else { return }
+            try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(safe + ".md"))
+            append(scope: scope, name: safe, actor: actor, reason: "Deleted", body: "", deleted: true)
+            index?.remove(scope: scope, source: "note", ref: safe)
+        }
     }
 
     /// Notes that match every word, best first: title hits count most, then how often the words appear, then how recent the note is.

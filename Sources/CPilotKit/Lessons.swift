@@ -104,6 +104,18 @@ public enum Lessons {
         return (Array(all.suffix(maxLessons)), added)
     }
 
+    /// Adds new lessons to a repository's note. The note is read, merged and written under the memory lock, so runs that finish together each add theirs and none is lost.
+    /// Returns the lessons that were added; empty when none were new.
+    public static func record(_ new: [String], in store: MemoryStore, scope: String, reason: String) -> [String] {
+        var added: [String] = []
+        let saved = store.update(scope: scope, name: noteName, actor: "lessons", reason: reason) { body in
+            let merged = merge(existing: read(body ?? ""), new: new)
+            added = merged.added
+            return merged.added.isEmpty ? nil : render(merged.lessons)
+        }
+        return saved == nil ? [] : added
+    }
+
     public static func render(_ lessons: [String]) -> String { header + "\n\n" + lessons.map { "- \($0)" }.joined(separator: "\n") + "\n" }
 
     /// The bullet lines of a note, so lines the user added or edited by hand are kept.

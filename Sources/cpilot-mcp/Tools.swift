@@ -105,11 +105,36 @@ let allTools: [Tool] = {
         return try json(MemoryIndex().search(q, scopes: scopes, limit: 8).map { Row(source: $0.source, ref: $0.ref, text: String($0.text.prefix(800))) })
     })
 
-    t.append(Tool(name: "save_memory", description: "Save a note to CPilot's memory so future sessions start with it. Use `project_folder` for a note about one project, or leave it empty for a note that applies everywhere.",
-                  properties: ["name": prop("string", "Short title."), "body": prop("string", "The note, in Markdown."), "project_folder": prop("string", "Optional project folder.")], required: ["name", "body"]) { a in
+    t.append(Tool(name: "read_memory", description: "Read one note from CPilot's memory, with its `hash`. Read a note before changing it, and pass the hash back as `expected_hash` to save_memory so you never overwrite what someone else wrote meanwhile.",
+                  properties: ["name": prop("string", "The note's title."), "project_folder": prop("string", "Optional project folder; leave empty for a note that applies everywhere.")], required: ["name"]) { a in
         let scope = (a["project_folder"] as? String).map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope
-        guard let n = memory.save(scope: scope, name: try requireString(a, "name"), body: try requireString(a, "body")) else { throw ToolError(message: "Could not save the note.") }
-        return "Saved \(n.scope)/\(n.name)."
+        let name = MemoryStore.safeName(try requireString(a, "name"))
+        guard let n = memory.notes(scope: scope).first(where: { $0.name == name }) else { throw ToolError(message: "No note called \(name) there.") }
+        struct Row: Encodable { let name: String; let hash: String; let body: String }
+        return try json(Row(name: n.name, hash: n.hash, body: n.body))
+    })
+
+    t.append(Tool(name: "save_memory", description: "Save a note to CPilot's memory so future sessions start with it. Use `project_folder` for a note about one project, or leave it empty for a note that applies everywhere. A note that already exists is only replaced when you pass the `expected_hash` you got from read_memory; if it changed since, you get its current text back to merge and try again. Every save is kept in the note's history.",
+                  properties: ["name": prop("string", "Short title."), "body": prop("string", "The note, in Markdown."), "project_folder": prop("string", "Optional project folder."),
+                               "expected_hash": prop("string", "The hash read_memory gave you for the note you are changing. Leave out to create a new note.")], required: ["name", "body"]) { a in
+        let scope = (a["project_folder"] as? String).map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope
+        let expect: MemoryExpect = (a["expected_hash"] as? String).map { .hash($0) } ?? .absent
+        switch memory.write(scope: scope, name: try requireString(a, "name"), body: try requireString(a, "body"), expect: expect, actor: "agent", reason: "Saved through the MCP server") {
+        case .saved(let n): return "Saved \(n.scope)/\(n.name). Hash: \(n.hash)"
+        case .failed: throw ToolError(message: "Could not save the note.")
+        case .conflict(let now):
+            guard let now else { throw ToolError(message: "That note is gone, so there is nothing to replace. Save it without expected_hash to create it again.") }
+            throw ToolError(message: "The note \(now.name) already exists or changed since you read it, so nothing was saved. Merge your change into its current text and save again with expected_hash \(now.hash).\n\nCurrent text:\n\(now.body)")
+        }
+    })
+
+    t.append(Tool(name: "memory_history", description: "The saved versions of one note, newest first: who wrote each (you, lessons, an agent, an outside edit), when, and why. A person can restore any version in CPilot's Memory pane.",
+                  properties: ["name": prop("string", "The note's title."), "project_folder": prop("string", "Optional project folder.")], required: ["name"]) { a in
+        let scope = (a["project_folder"] as? String).map(MemoryStore.scope(forProject:)) ?? MemoryStore.globalScope
+        struct Row: Encodable { let version: Int; let date: Date; let actor: String; let reason: String; let hash: String; let deleted: Bool }
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let rows = memory.history(scope: scope, name: try requireString(a, "name")).prefix(30).map { Row(version: $0.id, date: $0.date, actor: $0.actor, reason: $0.reason, hash: $0.hash, deleted: $0.deleted) }
+        return String(data: try enc.encode(Array(rows)), encoding: .utf8) ?? "[]"
     })
 
     t.append(Tool(name: "list_pull_requests", description: "List open pull requests for a repository folder, through the user's GitHub login.", properties: ["folder": prop("string", "Repository folder.")], required: ["folder"]) { a in
