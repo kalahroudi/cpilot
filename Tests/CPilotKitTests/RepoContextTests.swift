@@ -194,3 +194,12 @@ final class RepoContextTests: XCTestCase {
         XCTAssertTrue(p.isDue("locked", now: t0), "a repository that left the list starts fresh if it returns")
     }
 }
+
+final class TemporaryCopyTests: XCTestCase {
+    func testCopiesUnderTheAppFolderAreNotRepositories() {
+        let root = "/Users/me/Library/Application Support/CPilot"
+        XCTAssertTrue(RepoRef.isTemporaryCopy("\(root)/restack/spec-008-t002", appRoot: root))
+        XCTAssertTrue(RepoRef.isTemporaryCopy("\(root)/worktrees/ABC", appRoot: root))
+        XCTAssertFalse(RepoRef.isTemporaryCopy("/Users/me/code/shadow", appRoot: root))
+    }
+}
