@@ -92,11 +92,18 @@ public final class MemoryIndex: @unchecked Sendable {
         for chunk in Self.chunks(clean) where chunk.count >= 12 { insert(scope: scope, source: source, ref: ref, ts: ts, text: chunk) }
     }
 
-    /// Replaces everything stored for `ref` (used for notes, which change as you edit them).
+    /// Replaces everything stored for one item (used for notes, which change as you edit them). The same note name exists in many scopes, so the scope and source are part of the key.
     public func replace(scope: String, source: String, ref: String, text: String) {
-        remove(ref: ref); add(scope: scope, source: source, ref: ref, text: text)
+        remove(scope: scope, source: source, ref: ref); add(scope: scope, source: source, ref: ref, text: text)
     }
 
+    /// Removes one item: the notes called `ref` in `scope`, and nothing else with the same name.
+    public func remove(scope: String, source: String, ref: String) {
+        lock.lock(); defer { lock.unlock() }
+        run("DELETE FROM chunks WHERE scope = ? AND source = ? AND ref = ?", [.text(scope), .text(source), .text(ref)])
+    }
+
+    /// Removes everything stored for a reference that is unique on its own, such as a session id.
     public func remove(ref: String) {
         lock.lock(); defer { lock.unlock() }
         run("DELETE FROM chunks WHERE ref = ?", [.text(ref)])
@@ -110,7 +117,7 @@ public final class MemoryIndex: @unchecked Sendable {
     private func insert(scope: String, source: String, ref: String, ts: Date, text: String) {
         let vec = embedder?.embed(text).map { v in v.withUnsafeBufferPointer { Data(buffer: $0) } }
         lock.lock(); defer { lock.unlock() }
-        run("DELETE FROM chunks WHERE ref = ? AND text = ?", [.text(ref), .text(text)])     // never store the same chunk twice
+        run("DELETE FROM chunks WHERE scope = ? AND source = ? AND ref = ? AND text = ?", [.text(scope), .text(source), .text(ref), .text(text)])     // never store the same chunk twice
         run("INSERT INTO chunks(scope, source, ref, ts, text, vec) VALUES(?,?,?,?,?,?)",
             [.text(scope), .text(source), .text(ref), .double(ts.timeIntervalSince1970), .text(text), vec.map { .blob($0) } ?? .null])
     }

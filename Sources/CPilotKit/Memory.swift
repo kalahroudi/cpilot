@@ -67,7 +67,7 @@ public final class MemoryStore: @unchecked Sendable {
 
     public func delete(scope: String, name: String) {
         try? FileManager.default.removeItem(at: dir(scope).appendingPathComponent(name + ".md"))
-        index?.remove(ref: name)
+        index?.remove(scope: scope, source: "note", ref: name)
     }
 
     /// Notes that match every word, best first: title hits count most, then how often the words appear, then how recent the note is.
