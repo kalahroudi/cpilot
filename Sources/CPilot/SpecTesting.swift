@@ -208,7 +208,8 @@ extension SpecCenter {
             Workspace.shared.gates.set(rec, for: gateKey(id, task.id))
             Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id): \(locked.files.count) test file\(locked.files.count == 1 ? "" : "s") locked, \(locked.hiddenFiles.count) held back", outcome: "allowed by rule"))
             AppModel.shared.notify("Tests locked for \(task.id)", body: "\(locked.files.count) visible, \(locked.hiddenFiles.count) held back. The implementer starts now.", project: projectName)
-            await implement(id, task)
+            // Nobody asked for this session on screen: the tester finished by itself, so the implementer stays in the background like the tester did.
+            await implement(id, task, focus: false)
         } catch TestLock.Failure.message(let m) {
             sendBack(c, task, &rec, [m], then: finish)
         } catch {
@@ -285,7 +286,7 @@ extension SpecCenter {
         if let h = rec.heldBack { await Exec.with(env) { await TestLock.dropHidden(repo: r.dir, LockedTests(commit: "", files: [:], hiddenRef: h.ref, hiddenFiles: h.files)) } }
         rec.tester = nil; rec.testerB = nil; rec.heldBack = nil; rec.compared = nil; rec.locked = nil; rec.held = nil; rec.answering = false
         Workspace.shared.gates.set(rec, for: gateKey(id, taskId))
-        if let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }) { await implement(id, task) }
+        if let d = doc(id), let task = d.tasks.first(where: { $0.id == taskId }) { await implement(id, task, focus: false) }
     }
 
     /// A person chose the first tester's reading: the second tester's tests are dropped and the first tester's are locked.
