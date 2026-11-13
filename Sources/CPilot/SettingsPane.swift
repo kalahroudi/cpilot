@@ -99,6 +99,12 @@ struct SettingsPane: View {
                 SettingRow("Agents working at once", "Triggers, and the tasks and reviewers the chief pilot starts, wait while this many agents are working. Sessions you start yourself are never held.") {
                     Segmented(options: [(2, "2"), (4, "4"), (8, "8"), (0, "No limit")], selection: $p.maxAgents)
                 }
+                SettingRow("Compact long conversations (unattended)", "The chief pilot, tasks and reviewers run for hours and every call re-reads the whole conversation. Claude summarizes theirs when it reaches this size. On your own usage, calls above 200k tokens were most of what was processed. Takes effect when a session next starts.") {
+                    Segmented(options: [(150_000, "150k"), (200_000, "200k"), (300_000, "300k"), (0, "Claude's default")], selection: $p.autocompactUnattended)
+                }
+                SettingRow("Compact long conversations (yours)", "The same for sessions you drive yourself. Off by default: summarizing can lose detail you are relying on, and the banner offers Continue lean instead.") {
+                    Segmented(options: [(0, "Off"), (200_000, "200k"), (300_000, "300k"), (500_000, "500k")], selection: $p.autocompactYours)
+                }
                 SettingRow("Carry on after Claude's usage limit resets", "When the limit is reached (\"resets 2am\"), work that starts by itself waits for the reset instead of asking again and again, and the chief pilot and CPilot's own workers carry on when it resets. Your own sessions are never held, and you can carry on early from the banner. Off still holds the work, but nothing resumes by itself.") { toggle($p.resumeAfterLimit) }
                 SettingRow("Daily budget", "Once agents have spent this much today (all sessions count), work that starts by itself waits until tomorrow. A turn already under way finishes.") {
                     Segmented(options: [(0, "Off"), (10, "$10"), (25, "$25"), (50, "$50"), (100, "$100")], selection: $p.dailyBudget)

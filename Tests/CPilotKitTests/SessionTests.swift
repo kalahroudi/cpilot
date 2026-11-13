@@ -95,4 +95,16 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(pol.decide(req("Edit", "/code/shop/a.ts", path: "/code/shop/a.ts"), session: ef), .allow(reason: "Edit files"))
         XCTAssertEqual(pol.decide(req("Bash", "make"), session: s, sessionGrants: ["Bash:make"]), .allow(reason: "Allowed for this session"))
     }
+
+    func testTheCompactionWindowIsPassedOnlyWhenItIsInClaudesRange() {
+        var c = ClaudeRunner.Config(cwd: "/r")
+        XCTAssertFalse(ClaudeRunner.arguments(c).contains("--autocompact"))
+        c.autocompactTokens = 200_000
+        let a = ClaudeRunner.arguments(c)
+        XCTAssertEqual(a[a.firstIndex(of: "--autocompact")! + 1], "200k")
+        c.autocompactTokens = 50_000
+        XCTAssertFalse(ClaudeRunner.arguments(c).contains("--autocompact"))
+        c.autocompactTokens = 2_000_000
+        XCTAssertFalse(ClaudeRunner.arguments(c).contains("--autocompact"))
+    }
 }

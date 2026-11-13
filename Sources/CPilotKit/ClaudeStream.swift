@@ -236,6 +236,8 @@ public final class ClaudeRunner: @unchecked Sendable {
         public var transport: Transport = .local
         /// Tools the agent may not use at all (for example Bash and the file editors, for read-only document stages).
         public var disallowedTools: [String] = []
+        /// Compact the conversation when it reaches this many tokens (Claude Code accepts 100k to 1M). Nil leaves it to Claude Code. Every call re-reads the whole conversation, so a smaller window is a smaller bill.
+        public var autocompactTokens: Int?
         public init(cwd: String) { self.cwd = cwd }
     }
 
@@ -265,6 +267,7 @@ public final class ClaudeRunner: @unchecked Sendable {
         for d in c.addDirs { a += ["--add-dir", d] }
         if let m = c.mcpConfigPath { a += ["--mcp-config", m] }
         if !c.disallowedTools.isEmpty { a += ["--disallowedTools"] + c.disallowedTools }
+        if let t = c.autocompactTokens, (100_000...1_000_000).contains(t) { a += ["--autocompact", "\(t / 1000)k"] }
         return a
     }
 

@@ -225,6 +225,9 @@ final class SessionController: Identifiable {
         c.resumeId = meta.remoteId
         c.fork = meta.forkPending == true
         c.model = meta.model
+        // Sessions nobody is watching (the chief pilot, tasks, reviewers) carry on for hours, so their context only grows: they compact earlier than the ones you drive yourself.
+        let tokens = meta.chief == true || meta.isWorker ? Prefs.shared.autocompactUnattended : Prefs.shared.autocompactYours
+        c.autocompactTokens = tokens > 0 ? tokens : nil
         c.access = ws.policy.level(for: meta)
         c.appendSystemPrompt = [ws.memory.context(forProject: meta.cwd), Artifacts.agentGuidance, meta.chief == true ? ChiefPilot.guidance(repo: meta.cwd, autonomy: Prefs.shared.chiefMode, testFirst: Prefs.shared.testFirst != "off") : nil].compactMap { $0 }.joined(separator: "\n\n")
         if Prefs.shared.memoryEngine == "engine", env == nil { c.mcpConfigPath = MemoryEngine.claudeConfig(base: Prefs.shared.memoryEngineURL, bank: MemoryEngine.bank(forProject: meta.cwd)) }
