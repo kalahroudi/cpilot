@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         model.onStatusChange = { [weak self] state in self?.statusItem.button?.image = StatusIcon.image(state) }
 
         Task { await model.refresh() }
+        UsageLens.shared.start()
         applyHotkey()
         ControlServer.shared.start()
         if Prefs.shared.remoteEnabled || ProcessInfo.processInfo.environment["CPILOT_REMOTE_LOCAL"] != nil { Task { await RemoteServer.shared.start() } }

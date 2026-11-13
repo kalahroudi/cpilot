@@ -108,3 +108,18 @@ final class UsageLedgerTests: XCTestCase {
         XCTAssertEqual(store.summary(session: "S1")?.calls, 2)
     }
 }
+
+/// Reads the real ~/.claude/projects, only when asked for: `CPILOT_LIVE_LENS=1 swift test --filter LiveLensTests`.
+final class LiveLensTests: XCTestCase {
+    func testRealTranscriptsMatchAHandCount() throws {
+        guard ProcessInfo.processInfo.environment["CPILOT_LIVE_LENS"] != nil else { throw XCTSkip("set CPILOT_LIVE_LENS=1") }
+        let store = UsageStore(path: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("live-\(UUID().uuidString).db"))
+        let t0 = Date(); let files = store.sync(); let took = Date().timeIntervalSince(t0)
+        let all = store.sessions()
+        print("LENS files=\(files) sessions=\(all.count) seconds=\(took)")
+        for s in all.sorted(by: { $0.cacheRead > $1.cacheRead }).prefix(4) {
+            print("LENS \(s.session.prefix(8)) calls=\(s.calls) read=\(s.cacheRead / 1000)k write=\(s.cacheWrite / 1000)k out=\(s.output / 1000)k peak=\(s.peakContext / 1000)k hit=\(Int((s.cacheHitRate ?? 0) * 100))% cost=\(s.cost.map { String(format: "%.0f", $0) } ?? "?") cold=\(s.coldStarts)")
+        }
+        let t1 = Date(); XCTAssertLessThan(store.sync(), 10); print("LENS second sync seconds=\(Date().timeIntervalSince(t1))")
+    }
+}

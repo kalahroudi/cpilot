@@ -87,13 +87,20 @@ public enum TranscriptUsage {
 
     /// Claude Code writes one line per content block of a message, each carrying the same message id and usage (the output count grows as the message streams).
     /// So rows are merged by id: counted once, with the largest output seen.
-    public static func parse(_ text: String, session fallback: String) -> Parsed {
+    public static func parse(_ text: String, session fallback: String) -> Parsed { parse(Data(text.utf8), session: fallback) }
+
+    private static let usageMark = Data("\"usage\"".utf8)
+    private static let resultMark = Data("\"tool_result\"".utf8)
+
+    /// Most lines of a transcript (request blobs, attachments, snapshots) are large and say nothing about usage, so a line is decoded only when it can.
+    public static func parse(_ data: Data, session fallback: String) -> Parsed {
         var order: [String] = []
         var rows: [String: UsageRow] = [:]
         var tools: [String: ToolEvent] = [:]
         var toolOrder: [String] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard line.first == "{", let data = line.data(using: .utf8), let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            guard line.first == 0x7B, line.range(of: usageMark) != nil || line.range(of: resultMark) != nil,
+                  let obj = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
                   let type = obj["type"] as? String, let message = obj["message"] as? [String: Any] else { continue }
             let session = (obj["sessionId"] as? String) ?? fallback
             let ts = date(obj["timestamp"] as? String)
@@ -322,24 +329,30 @@ public final class UsageStore: @unchecked Sendable {
     }
 
     /// Reads what each transcript under `root` gained since the last time, so a launch reads only what is new. A transcript that shrank was rewritten and is read again from the start.
+    /// A transcript never read before and untouched for `maxAge` is left out, and the newest are read first, so the recent weeks are there within moments of the first launch.
     /// Returns how many files held something new.
     @discardableResult
-    public func sync(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)) -> Int {
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else { return 0 }
-        var changed = 0
+    public func sync(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true), maxAge: TimeInterval = 90 * 86_400) -> Int {
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey], options: [.skipsHiddenFiles]) else { return 0 }
+        var found: [(url: URL, size: Int, modified: Date)] = []
         for case let url as URL in walker where url.pathExtension == "jsonl" {
-            guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { continue }
-            var (off, known) = offset(of: url.path)
-            if size < known || off > size { off = 0 }
-            if size == off { continue }
-            guard let h = try? FileHandle(forReadingFrom: url) else { continue }
+            guard let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]), let size = v.fileSize else { continue }
+            found.append((url, size, v.contentModificationDate ?? .distantPast))
+        }
+        var changed = 0
+        for f in found.sorted(by: { $0.modified > $1.modified }) {
+            var (off, known) = offset(of: f.url.path)
+            if known == 0, Date().timeIntervalSince(f.modified) > maxAge { continue }
+            if f.size < known || off > f.size { off = 0 }
+            if f.size == off { continue }
+            guard let h = try? FileHandle(forReadingFrom: f.url) else { continue }
             defer { try? h.close() }
             try? h.seek(toOffset: UInt64(off))
             guard let data = try? h.readToEnd(), let end = data.lastIndex(of: 0x0A) else { continue }
             let chunk = data.prefix(through: end)
-            add(TranscriptUsage.parse(String(decoding: chunk, as: UTF8.self), session: url.deletingPathExtension().lastPathComponent))
-            setOffset(off + chunk.count, size: size, of: url.path)
-            known = size; changed += 1
+            add(TranscriptUsage.parse(Data(chunk), session: f.url.deletingPathExtension().lastPathComponent))
+            setOffset(off + chunk.count, size: f.size, of: f.url.path)
+            known = f.size; changed += 1
         }
         return changed
     }

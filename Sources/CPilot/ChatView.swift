@@ -106,6 +106,7 @@ struct ChatHeader: View {
                     Badge(text: session.meta.project, kind: .neutral)
                     if let b = session.meta.branch { Badge(text: b, kind: .neutral) }
                     if session.cost > 0 { Text(String(format: "$%.2f", session.cost)).font(.system(size: 11)).foregroundStyle(.secondary) }
+                    LensChip(session: session)
                 }
             }
             Spacer()
