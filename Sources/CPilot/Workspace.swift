@@ -49,6 +49,10 @@ final class SessionController: Identifiable {
     private var sessionGrants: Set<String> = []
     private var sleepTask: Task<Void, Never>?
     private var stoppedOnPurpose = false
+    @ObservationIgnored private var parkedNotice = false
+    /// The model Claude says it is running, once the agent has started: what "Default" turned out to be.
+    var activeModel: String?
+    @ObservationIgnored private var modelChangePending = false
 
     init(meta: SessionMeta, workspace: Workspace) { self.meta = meta; self.id = meta.id; self.ws = workspace }
 
@@ -156,10 +160,17 @@ final class SessionController: Identifiable {
 
     // MARK: Sending
 
-    func send() {
+    /// `byUser: false` is for messages CPilot sends by itself (a wake, a retry, a follow-up). While Claude's usage limit holds they are kept and go out at the reset, because sending them only fails again.
+    func send(byUser: Bool = true) {
         guard canSend else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
+        if !byUser, meta.backend.kind == .claude, UsageHold.shared.active != nil, !text.isEmpty {
+            draft = ""; attachments = []
+            UsageHold.shared.park(text, for: self)
+            if !parkedNotice { parkedNotice = true; addNotice("Claude's usage limit is reached, so CPilot is holding what it would send. \(UsageHold.shared.summary() ?? "")") }
+            return
+        }
         draft = ""; attachments = []; meta.draft = nil
         if isBusy { queued.append(QueuedMessage(text: text, attachments: atts)); return }
         start(text, atts)
@@ -227,11 +238,14 @@ final class SessionController: Identifiable {
                 c.transport = .daemon(env, key: meta.id, attachOnly: attach, fromLine: from)
             } else { c.transport = .ssh(env) }
         }
+        // Which process exited matters: one that was stopped (a model change, going to sleep) may report after its replacement has started.
+        let box = RunnerBox()
         let r = ClaudeRunner(config: c, onLine: { [weak self] line in
             Task { @MainActor in self?.handle(line: line) }
-        }, onExit: { [weak self] status in
-            Task { @MainActor in self?.runnerExited(status) }
+        }, onExit: { [weak self, box] status in
+            Task { @MainActor in self?.runnerExited(status, from: box.runner) }
         })
+        box.runner = r
         parser = ClaudeStreamParser()
         stoppedOnPurpose = false
         try await r.start()
@@ -251,7 +265,8 @@ final class SessionController: Identifiable {
     private func handle(line: String) {
         for ev in parser.parse(line: line) {
             switch ev {
-            case .initialized(let sid, _):
+            case .initialized(let sid, let model):
+                if let model, !model.isEmpty { activeModel = model }
                 if meta.remoteId != sid || meta.forkPending == true { meta.remoteId = sid; meta.forkPending = nil; ws.save(meta) }
             case .item(let item):
                 items.upsert(item)
@@ -261,13 +276,23 @@ final class SessionController: Identifiable {
             case .turnEnded(let isError, let text, let cost):
                 if let c = cost { self.cost += c; turnCost += c }
                 if let n = runner?.linesReceived { meta.remoteLines = n }
-                if isError, let t = text, !t.isEmpty { addNotice(t, error: true) }
+                if isError, let t = text, !t.isEmpty {
+                    // Claude's usage limit: say so once, with when it lifts, and hold automated work until then (see `UsageHold`).
+                    if let hit = UsageLimit.detect(t) {
+                        UsageHold.shared.engage(hit, session: self)
+                        addNotice(t + (UsageHold.shared.summary().map { " · CPilot holds automated work. \($0)." } ?? ""), error: true)
+                    } else { addNotice(t, error: true) }
+                }
                 finishTurn()
             }
         }
     }
 
-    private func runnerExited(_ status: Int32) {
+    private final class RunnerBox { weak var runner: ClaudeRunner? }
+
+    private func runnerExited(_ status: Int32, from exited: ClaudeRunner? = nil) {
+        // A process we already replaced: nothing about the current one changed.
+        if let exited, let current = runner, exited !== current { return }
         let tail = runner?.stderrTail.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let seen = runner?.linesReceived ?? meta.remoteLines ?? 0
         runner = nil
@@ -438,6 +463,11 @@ final class SessionController: Identifiable {
         meta.updatedAt = .now; ws.save(meta)
         ws.turnFinished(self)
         onTurnEnd?(self)
+        if modelChangePending {
+            modelChangePending = false; activeModel = nil; sleep()
+            if !queued.isEmpty { sendNextQueued() }
+            return
+        }
         if case .failed = state {} else if state == .idle, !queued.isEmpty { sendNextQueued(); return }
         scheduleSleep()
         suggestNext()
@@ -486,6 +516,18 @@ final class SessionController: Identifiable {
         sleepTask?.cancel()
         state = .asleep
         unloadIfIdle()
+    }
+
+    /// Changes the model from the next message on. The agent is restarted on the same conversation, so nothing is lost; one that is working finishes its turn on the old model first.
+    /// An empty value is the default. Servers and other agents keep what they were started with.
+    func setModel(_ value: String) {
+        guard meta.backend.kind == .claude else { return }
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (v.isEmpty ? nil : v) != meta.model else { return }
+        meta.model = v.isEmpty ? nil : v; ws.save(meta)
+        let name = ClaudeModels.label(for: v, in: ClaudeModels.current())
+        if isBusy { modelChangePending = true; addNotice("The model changes to \(name) after the current turn.") }
+        else { activeModel = nil; sleep(); addNotice("Model set to \(name). Your next message uses it, on the same conversation.") }
     }
 
     /// Changing access restarts the agent with the new permission mode; the conversation continues.
@@ -549,7 +591,8 @@ final class Workspace {
     var runningAgents: Int { controllers.values.filter(\.isBusy).count }
     /// Why work that starts by itself should wait, or nil. Your own sessions are never held by this.
     func unattendedHold() -> String? {
-        Guardrails.hold(running: runningAgents, limit: Prefs.shared.maxAgents, spentToday: ledger.spent(since: Guardrails.startOfDay()), budget: Double(Prefs.shared.dailyBudget))
+        if let until = UsageHold.shared.active { return "Claude's usage limit is reached. Work that starts by itself carries on at \(UsageHold.clock(until))." }
+        return Guardrails.hold(running: runningAgents, limit: Prefs.shared.maxAgents, spentToday: ledger.spent(since: Guardrails.startOfDay()), budget: Double(Prefs.shared.dailyBudget))
     }
 
     private init() {
@@ -922,7 +965,7 @@ final class Workspace {
         c.loaded = true
         c.onTurnEnd = onTurnEnd
         if focus { select(meta.id) }
-        c.draft = prompt; c.send()
+        c.draft = prompt; c.send(byUser: false)
         return c
     }
 

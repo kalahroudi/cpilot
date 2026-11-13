@@ -41,6 +41,8 @@ final class Prefs {
     var dreamAuto: Bool { didSet { d.set(dreamAuto, forKey: "dreamAuto") } }
     /// The model a dream uses. Empty means Sonnet.
     var dreamModel: String { didSet { d.set(dreamModel, forKey: "dreamModel") } }
+    /// When Claude's usage limit is reached, the chief pilot and CPilot's own workers carry on by themselves once it resets. Work that starts by itself always waits for the reset.
+    var resumeAfterLimit: Bool { didSet { d.set(resumeAfterLimit, forKey: "resumeAfterLimit") } }
     /// Which spec tasks get a tester first: "off", "risky" (security, money, deletion, migrations and the like) or "all". See `TestFirst`.
     var testFirst: String { didSet { d.set(testFirst, forKey: "testFirst") } }
     /// The model that writes a task's tests. Empty uses the default model, so a different one can be chosen than writes the code.
@@ -113,7 +115,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "testFirst": "off", "hiddenTests": true, "specReview": true, "specAutoApprove": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "resumeAfterLimit": true, "testFirst": "off", "hiddenTests": true, "specReview": true, "specAutoApprove": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -133,6 +135,7 @@ final class Prefs {
         recapAuto = d.bool(forKey: "recapAuto")
         learnLessons = d.bool(forKey: "learnLessons")
         dream = d.bool(forKey: "dream")
+        resumeAfterLimit = d.bool(forKey: "resumeAfterLimit")
         dreamAuto = d.bool(forKey: "dreamAuto")
         dreamModel = d.string(forKey: "dreamModel") ?? ""
         testFirst = d.string(forKey: "testFirst") ?? "off"

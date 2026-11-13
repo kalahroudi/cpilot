@@ -2,9 +2,9 @@
 
 import Foundation
 
-/// When a recurring trigger runs. Times are in the Mac's own time zone.
+/// When a trigger runs: once at a chosen moment, or again and again. Times are in the Mac's own time zone.
 public struct Schedule: Codable, Equatable, Sendable {
-    public enum Frequency: String, Codable, CaseIterable, Sendable { case hourly, daily, weekdays, weekly }
+    public enum Frequency: String, Codable, CaseIterable, Sendable { case hourly, daily, weekdays, weekly, once }
     public var frequency: Frequency
     /// For `hourly`: run again this many hours after the last run.
     public var everyHours: Int
@@ -12,14 +12,18 @@ public struct Schedule: Codable, Equatable, Sendable {
     public var minute: Int
     /// For `weekly`: 1 is Sunday, 7 is Saturday (as `Calendar` counts).
     public var weekday: Int
+    /// For `once`: the moment it runs. Optional so older files still load.
+    public var at: Date?
 
-    public init(frequency: Frequency = .daily, everyHours: Int = 6, hour: Int = 9, minute: Int = 0, weekday: Int = 2) {
-        self.frequency = frequency; self.everyHours = max(1, min(everyHours, 168)); self.hour = max(0, min(hour, 23)); self.minute = max(0, min(minute, 59)); self.weekday = max(1, min(weekday, 7))
+    public init(frequency: Frequency = .daily, everyHours: Int = 6, hour: Int = 9, minute: Int = 0, weekday: Int = 2, at: Date? = nil) {
+        self.frequency = frequency; self.everyHours = max(1, min(everyHours, 168)); self.hour = max(0, min(hour, 23)); self.minute = max(0, min(minute, 59)); self.weekday = max(1, min(weekday, 7)); self.at = at
     }
 
     /// The first run time strictly after `date`.
     public func next(after date: Date, calendar: Calendar = .current) -> Date {
         switch frequency {
+        case .once:
+            return at ?? .distantFuture
         case .hourly:
             return date.addingTimeInterval(Double(everyHours) * 3600)
         case .daily:
@@ -39,12 +43,15 @@ public struct Schedule: Codable, Equatable, Sendable {
 
     /// Due when the first run after the last run (or after the trigger was made) has passed. A Mac that was off for several runs runs once, not once for each.
     public func isDue(lastRun: Date?, createdAt: Date, now: Date = .now, calendar: Calendar = .current) -> Bool {
-        next(after: lastRun ?? createdAt, calendar: calendar) <= now
+        // A one-off runs once: when its moment has come and it has not run. A Mac that was off then runs it when it is on again.
+        if frequency == .once { return lastRun == nil && (at ?? .distantFuture) <= now }
+        return next(after: lastRun ?? createdAt, calendar: calendar) <= now
     }
 
     public func summary(calendar: Calendar = .current) -> String {
         let time = String(format: "%02d:%02d", hour, minute)
         switch frequency {
+        case .once: return at.map { "Once, \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Once"
         case .hourly: return everyHours == 1 ? "Every hour" : "Every \(everyHours) hours"
         case .daily: return "Every day at \(time)"
         case .weekdays: return "Weekdays at \(time)"
@@ -73,12 +80,17 @@ public struct Trigger: Codable, Identifiable, Equatable, Sendable {
     public var schedule: Schedule
     public var createdAt: Date
     public var lastRun: Date?
+    /// For a schedule: send the prompt to this existing session instead of starting new work ("carry on at 2am"). Optional so older files still load.
+    public var sessionId: String?
 
     public init(id: String = UUID().uuidString, name: String, repo: String, kind: Kind, action: Action = .chief, enabled: Bool = true, prompt: String = "",
-                label: String = "cpilot", schedule: Schedule = Schedule(), createdAt: Date = .now, lastRun: Date? = nil) {
+                label: String = "cpilot", schedule: Schedule = Schedule(), createdAt: Date = .now, lastRun: Date? = nil, sessionId: String? = nil) {
         self.id = id; self.name = name; self.repo = repo; self.kind = kind; self.action = action; self.enabled = enabled
-        self.prompt = prompt; self.label = label; self.schedule = schedule; self.createdAt = createdAt; self.lastRun = lastRun
+        self.prompt = prompt; self.label = label; self.schedule = schedule; self.createdAt = createdAt; self.lastRun = lastRun; self.sessionId = sessionId
     }
+
+    /// A one-off that has already run: kept in the list so you can see it happened, but it never runs again.
+    public var isFinishedOneOff: Bool { kind == .schedule && schedule.frequency == .once && lastRun != nil }
 
     public func summary(calendar: Calendar = .current) -> String {
         let what: String
@@ -87,7 +99,7 @@ public struct Trigger: Codable, Identifiable, Equatable, Sendable {
         case .issueLabel: what = "Your issue labelled \"\(label)\""
         case .failingChecks: what = "Your pull request fails its checks"
         }
-        return what + " · " + (action == .chief ? "chief pilot" : "one session")
+        return what + " · " + (sessionId != nil ? "a message to a session" : action == .chief ? "chief pilot" : "one session")
     }
 
     /// Why this trigger cannot run as set, or nil.
@@ -95,6 +107,7 @@ public struct Trigger: Codable, Identifiable, Equatable, Sendable {
         if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name." }
         if repo.isEmpty { return "Choose a repository." }
         if kind == .schedule, prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Say what it should do." }
+        if kind == .schedule, schedule.frequency == .once, schedule.at == nil { return "Choose when it should run." }
         if kind == .issueLabel, label.trimmingCharacters(in: .whitespaces).isEmpty { return "Name the label." }
         return nil
     }
@@ -243,7 +256,9 @@ public enum TriggerPolicy {
     }
 
     public static func scheduledPrompt(_ t: Trigger) -> String {
-        "This is a scheduled task (\"\(t.name)\", \(t.schedule.summary())).\n\n\(t.prompt.trimmingCharacters(in: .whitespacesAndNewlines))"
+        // A message to a session you were already working with reads as a continuation, not as a new task.
+        if t.sessionId != nil { return "CPilot (scheduled for \(t.schedule.at.map { $0.formatted(date: .omitted, time: .shortened) } ?? "now")): " + t.prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return "This is a scheduled task (\"\(t.name)\", \(t.schedule.summary())).\n\n\(t.prompt.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 
     /// A branch name for a session a trigger starts.

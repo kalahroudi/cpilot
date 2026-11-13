@@ -21,6 +21,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ChatHeader(session: session)
             Divider().opacity(0.5)
+            UsageBanner()
             if session.recapVisible { RecapCard(session: session).padding(.horizontal, 16).padding(.top, 10) }
             transcript
             TasksStrip(parent: session)
@@ -100,7 +101,7 @@ struct ChatHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.meta.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 6) {
-                    Badge(text: backendName, kind: .accent)
+                    if session.meta.backend.kind == .claude { SessionModelMenu(session: session) } else { Badge(text: backendName, kind: .accent) }
                     if let e = session.env { Badge(text: e.name, kind: .accent).help("Running on \(e.target)") }
                     Badge(text: session.meta.project, kind: .neutral)
                     if let b = session.meta.branch { Badge(text: b, kind: .neutral) }
@@ -118,6 +119,7 @@ struct ChatHeader: View {
     }
 
     @State private var summarize = false
+    @State private var scheduling = false
     @State private var stacking = false
     @State private var stackName = ""
 
@@ -126,6 +128,7 @@ struct ChatHeader: View {
             Button("Recap this session") { session.refreshRecap(force: true); session.recapVisible = true }
             if session.meta.branch != nil { Button("Stack a new branch on top…") { stacking = true } }
             Button("Fork this session") { ws.fork(session) }
+            if session.env == nil { Button("Schedule a message…") { scheduling = true } }
             Menu("Continue with another agent") {
                 if session.meta.backend.kind != .claude { Button("Claude") { ws.fork(session, to: .claude) } }
                 ForEach(ws.acpAgents.filter { $0.id != session.meta.backend.acpAgent }) { a in Button(a.name) { ws.fork(session, to: .acp(a.id)) } }
@@ -137,6 +140,7 @@ struct ChatHeader: View {
         } label: { Image(systemName: "ellipsis.circle") }
         .menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary).help("Fork, switch agent, save to memory")
         .sheet(isPresented: $summarize) { SummarizeSheet(session: session) }
+        .sheet(isPresented: $scheduling) { ScheduleMessageSheet(session: session) }
         .sheet(isPresented: $stacking) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Stack a new branch").font(.system(size: 16, weight: .semibold))
@@ -696,5 +700,154 @@ struct BackgroundWork: View {
                 }
             }.background(Theme.pane)
         }
+    }
+}
+
+
+/// The model this session runs on, as Claude reports it (so "Default" shows what it turned out to be), and a way to change it at any time. The agent restarts on the same conversation, so nothing is lost;
+/// a session that is working finishes its turn on the old model first.
+struct SessionModelMenu: View {
+    let session: SessionController
+    @State private var options = ClaudeModels.current()
+    @State private var asking = false
+    @State private var typed = ""
+
+    var body: some View {
+        let chosen = session.meta.model ?? ""
+        let list = ClaudeModels.options(including: chosen, in: options)
+        let running = session.activeModel.map { ClaudeModels.name(ofRunning: $0, in: list) }
+        let title = chosen.isEmpty ? (running.map { "\($0) · default" } ?? "Default model") : ClaudeModels.label(for: chosen, in: list)
+        Menu {
+            Text("Model for this session")
+            ForEach(list.filter { !$0.older }, id: \.value) { o in
+                Button { session.setModel(o.value) } label: { if o.value == chosen { Label(o.label, systemImage: "checkmark") } else { Text(o.label) } }
+            }
+            if list.contains(where: \.older) {
+                Menu("Older models") {
+                    ForEach(list.filter(\.older), id: \.value) { o in
+                        Button { session.setModel(o.value) } label: { if o.value == chosen { Label(o.label, systemImage: "checkmark") } else { Text(o.label) } }
+                    }
+                }
+            }
+            Divider()
+            Button("Other model id…") { typed = chosen; asking = true }
+            Button("Refresh list") { options = ClaudeModels.current() }
+        } label: {
+            HStack(spacing: 4) {
+                Text("Claude · \(title)").lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold))
+            }
+            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.accent)
+            .padding(.horizontal, 7).padding(.vertical, 1.5).background(Theme.accentSoft, in: Capsule())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help(running.map { "Running on \($0). Change the model for this session at any time; the conversation continues." } ?? "Change the model for this session at any time; the conversation continues.")
+        .accessibilityLabel("Model")
+        .popover(isPresented: $asking, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model id").font(.headline)
+                TextField("claude-…", text: $typed).textFieldStyle(CPField()).font(.system(size: 12.5, design: .monospaced)).frame(width: 260)
+                    .onSubmit { session.setModel(typed); asking = false }
+                HStack { Spacer(); Button("Cancel") { asking = false }.buttonStyle(Pill(kind: .plain)); Button("Use it") { session.setModel(typed); asking = false }.buttonStyle(Pill(kind: .primary)).disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty) }
+            }.padding(14)
+        }
+        .onAppear { options = ClaudeModels.current() }
+    }
+}
+
+/// Shown in every session while Claude's usage limit holds work that starts by itself: when it lifts, and a way to carry on now if you know it has.
+struct UsageBanner: View {
+    let hold = UsageHold.shared
+
+    var body: some View {
+        if hold.active != nil {
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                if let s = hold.summary() {
+                    HStack(spacing: 10) {
+                        Image(systemName: "hourglass").foregroundStyle(Theme.warn)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Claude's usage limit is reached").font(.system(size: 12.5, weight: .semibold))
+                            Text("\(s). Automated work waits and carries on by itself\(hold.parkedCount > 0 ? "; \(hold.parkedCount) message\(hold.parkedCount == 1 ? "" : "s") held" : "").").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Carry on now") { hold.release() }.buttonStyle(Pill(kind: .plain)).help("Use this if the limit has lifted early, or you changed plan")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 8).background(Theme.warnSoft)
+                    .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+                }
+            }
+        }
+    }
+}
+
+
+/// Sends this session a message at a time you choose: "carry on at 2am", or as soon as Claude's usage limit resets. It is a one-off scheduled task (Settings, Triggers shows and edits it), and like all
+/// work that starts by itself it waits while the usage limit holds.
+struct ScheduleMessageSheet: View {
+    let session: SessionController
+    @Environment(\.dismiss) private var dismiss
+    @State private var when = Date().addingTimeInterval(3600)
+    @State private var text = "Carry on where you stopped. Do not repeat work that is already complete."
+    @State private var pendingList: [Trigger] = []
+    @State private var confirmed: String?
+
+    private var limitEnds: Date? { UsageHold.shared.active.map { $0 } }
+
+    private func tomorrow(at hour: Int) -> Date {
+        let cal = Calendar.current
+        return cal.nextDate(after: .now, matching: DateComponents(hour: hour, minute: 0, second: 0), matchingPolicy: .nextTime) ?? .now.addingTimeInterval(86400)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Schedule a message").font(.system(size: 17, weight: .semibold))
+            Text("\(session.meta.title) gets this at the time you choose, in the same conversation. If Claude's usage limit holds then, it waits for the reset.").font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                if let end = limitEnds { Button("When the limit resets (\(UsageHold.clock(end)))") { when = end.addingTimeInterval(UsageLimit.margin) }.buttonStyle(Pill(kind: .plain)) }
+                Button("In 1 hour") { when = .now.addingTimeInterval(3600) }.buttonStyle(Pill(kind: .plain))
+                Button("Tonight 2 am") { when = tomorrow(at: 2) }.buttonStyle(Pill(kind: .plain))
+                Button("Tomorrow 9 am") { when = tomorrow(at: 9) }.buttonStyle(Pill(kind: .plain))
+            }
+            FormField("When") { DatePicker("", selection: $when, in: Date()..., displayedComponents: [.date, .hourAndMinute]).labelsHidden() }
+            FormField("Message") {
+                TextEditor(text: $text).font(.system(size: 13)).frame(minHeight: 70, maxHeight: 120).scrollContentBackground(.hidden)
+                    .padding(6).background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))
+            }
+            if !pendingList.isEmpty {
+                Divider()
+                Text("Already scheduled for this session").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                ForEach(pendingList) { t in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(t.schedule.at.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "").font(.system(size: 12.5, weight: .medium))
+                            Text(t.prompt).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Cancel it") { TriggerEngine.shared.remove(t.id); reload() }.buttonStyle(Pill(kind: .plain))
+                    }
+                }
+            }
+            if let confirmed { Text(confirmed).font(.system(size: 12)).foregroundStyle(Theme.ok) }
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.buttonStyle(Pill(kind: .plain)).keyboardShortcut(.cancelAction)
+                Button("Schedule") { schedule() }.buttonStyle(Pill(kind: .primary)).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20).frame(width: 520)
+        .onAppear(perform: reload)
+    }
+
+    private func reload() {
+        pendingList = TriggerEngine.shared.store.triggers.filter { $0.sessionId == session.id && !$0.isFinishedOneOff }.sorted { ($0.schedule.at ?? .distantFuture) < ($1.schedule.at ?? .distantFuture) }
+    }
+
+    private func schedule() {
+        let t = Trigger(name: "Message to " + String(session.meta.title.prefix(40)), repo: session.meta.cwd, kind: .schedule, action: .session,
+                        prompt: text.trimmingCharacters(in: .whitespacesAndNewlines), schedule: Schedule(frequency: .once, at: when), sessionId: session.id)
+        guard t.problem == nil else { return }
+        TriggerEngine.shared.save(t)
+        confirmed = "Scheduled for \(when.formatted(date: .abbreviated, time: .shortened)). It shows in Settings, Triggers."
+        reload()
     }
 }

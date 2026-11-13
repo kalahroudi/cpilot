@@ -105,7 +105,7 @@ final class ChiefWaker {
         // Whatever the user was typing to the chief pilot stays in the box.
         let typing = chief.draft
         chief.draft = text
-        chief.send()
+        chief.send(byUser: false)
         chief.draft = typing
         Workspace.shared.audit.record(AuditEntry(session: chief.id, tool: "chief wake", summary: String(text.dropFirst(8).prefix(80)), outcome: "sent"))
     }

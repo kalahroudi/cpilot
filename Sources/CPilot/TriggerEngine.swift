@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import AppKit
 import CPilotKit
 
 /// Starts work by itself, from the triggers you set in Settings: a schedule, an issue of yours that gets a label, or a pull request of yours that fails its checks.
@@ -26,8 +27,12 @@ final class TriggerEngine {
     @ObservationIgnored private var lastPoll: [String: Date] = [:]
     @ObservationIgnored private var account: (login: String?, at: Date)?
 
+    private enum TriggerError: LocalizedError { case message(String); var errorDescription: String? { if case .message(let m) = self { return m } else { return nil } } }
+
     func start() {
         guard loop == nil else { return }
+        // A Mac that slept through a moment looks as soon as it wakes, not up to a minute later.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in await self?.tick() } }
         loop = Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))                 // let the app finish starting
             while !Task.isCancelled { await self?.tick(); try? await Task.sleep(for: .seconds(60)) }
@@ -120,11 +125,18 @@ final class TriggerEngine {
         if !manual, let why = ws.unattendedHold() { return .deferred(why) }
         var sessionId = ""
         do {
+            // Scheduled for a session you were already working with: it carries on there, in the same conversation.
+            if let sid = t.sessionId {
+                guard let m = ws.sessions.first(where: { $0.id == sid && !$0.archived }), let c = ws.controller(m.id) else { throw TriggerError.message("That session is gone.") }
+                guard manual || !c.isBusy else { return .deferred("The session is working. The message goes when it is free.") }
+                c.loadIfNeeded(); c.draft = prompt; c.send(byUser: manual)
+                sessionId = sid
+            } else {
             switch t.action {
             case .chief:
                 let chief = try await ws.openChief(repo: t.repo, environment: nil, show: false)
                 guard chiefFree(chief, repo: t.repo) else { return .deferred("The chief pilot is busy. It runs when the chief pilot is free.") }
-                chief.loadIfNeeded(); chief.draft = chiefMessage(t, prompt: prompt, pr: pr); chief.send()
+                chief.loadIfNeeded(); chief.draft = chiefMessage(t, prompt: prompt, pr: pr); chief.send(byUser: false)
                 sessionId = chief.id
             case .session:
                 if let pr, t.kind == .failingChecks {
@@ -137,6 +149,7 @@ final class TriggerEngine {
                                                        useWorktree: true, firstMessage: prompt, title: t.name, select: false))
                     sessionId = c.id
                 }
+            }
             }
         } catch {
             // Not tried again by itself: a failure that repeats every few minutes would only fill the log. "Run now" tries once more.

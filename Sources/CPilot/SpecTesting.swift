@@ -129,7 +129,7 @@ extension SpecCenter {
         c.addNotice("CPilot checked the tests for \(task.id): \(problems.first ?? "needs attention") Sent back to the tester (try \(t.runs) of \(Self.testerRunLimit)).")
         rec.answering = true
         c.draft = "CPilot checked your tests and found problems:\n" + problems.map { "- \($0)" }.joined(separator: "\n") + "\n\n" + then
-        c.send()
+        c.send(byUser: false)
     }
 
     /// The first tests: complete, only tests, and red. Then they are frozen and the implementer starts.
@@ -248,7 +248,7 @@ extension SpecCenter {
             }
             c.addNotice("CPilot checked the second tester's tests for \(task.id): \(problems.first ?? "needs attention") Sent back (try \(t.runs) of \(Self.testerRunLimit)).")
             c.draft = "CPilot checked your tests and found problems:\n" + problems.map { "- \($0)" }.joined(separator: "\n") + "\n\n" + finish
-            c.send()
+            c.send(byUser: false)
         }
         guard problems.isEmpty else { back(problems); return }
         var commands = task.verify.map { [$0] } ?? []
@@ -419,7 +419,7 @@ extension SpecCenter {
         await retireTester(c, repo: r.dir, branch: ts.branch)
         rec.tester = nil; rec.answering = false; rec.passedHead = nil
         Workspace.shared.audit.record(AuditEntry(session: c.id, tool: "tester", summary: "\(task.id): " + message.prefix(160), outcome: "allowed by rule"))
-        if let implementer { implementer.addNotice("CPilot: " + message); implementer.draft = message; implementer.send() }
+        if let implementer { implementer.addNotice("CPilot: " + message); implementer.draft = message; implementer.send(byUser: false) }
     }
 
     // MARK: A person decides
@@ -433,7 +433,7 @@ extension SpecCenter {
         if let c = taskSessions["\(id)/\(taskId)"].flatMap({ Workspace.shared.controller($0) }) {
             c.addNotice("CPilot: a person unlocked the tests.")
             c.draft = "A person reviewed your objection and unlocked the tests. You may change them now. Keep every requirement of the spec covered, and commit."
-            c.send()
+            c.send(byUser: false)
         }
     }
 
@@ -445,7 +445,7 @@ extension SpecCenter {
         if let c = taskSessions["\(id)/\(taskId)"].flatMap({ Workspace.shared.controller($0) }) {
             c.addNotice("CPilot: a person reviewed your objection. The tests stay locked.")
             c.draft = "A person reviewed your objection and the tests stay locked. Make them pass by changing the code, and commit."
-            c.send()
+            c.send(byUser: false)
         }
     }
 }

@@ -99,6 +99,7 @@ struct SettingsPane: View {
                 SettingRow("Agents working at once", "Triggers, and the tasks and reviewers the chief pilot starts, wait while this many agents are working. Sessions you start yourself are never held.") {
                     Segmented(options: [(2, "2"), (4, "4"), (8, "8"), (0, "No limit")], selection: $p.maxAgents)
                 }
+                SettingRow("Carry on after Claude's usage limit resets", "When the limit is reached (\"resets 2am\"), work that starts by itself waits for the reset instead of asking again and again, and the chief pilot and CPilot's own workers carry on when it resets. Your own sessions are never held, and you can carry on early from the banner. Off still holds the work, but nothing resumes by itself.") { toggle($p.resumeAfterLimit) }
                 SettingRow("Daily budget", "Once agents have spent this much today (all sessions count), work that starts by itself waits until tomorrow. A turn already under way finishes.") {
                     Segmented(options: [(0, "Off"), (10, "$10"), (25, "$25"), (50, "$50"), (100, "$100")], selection: $p.dailyBudget)
                 }

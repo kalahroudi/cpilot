@@ -52,7 +52,8 @@ struct TriggerSettings: View {
         var lines = ["\(t.summary()) · \(repoName(t.repo))"]
         if let m = told[t.id] ?? engine.notes[t.id], !m.isEmpty { lines.append(m) }
         else if let last = t.lastRun { lines.append("Last ran \(last.formatted(.relative(presentation: .named)))") }
-        if t.kind == .schedule, t.enabled, t.problem == nil { lines.append("Next: " + t.schedule.next(after: t.lastRun ?? t.createdAt).formatted(date: .abbreviated, time: .shortened)) }
+        if t.isFinishedOneOff { lines.append("Done. A one-off runs once; delete it or make a new one.") }
+        else if t.kind == .schedule, t.enabled, t.problem == nil { lines.append("Next: " + t.schedule.next(after: t.lastRun ?? t.createdAt).formatted(date: .abbreviated, time: .shortened)) }
         return lines.joined(separator: "\n")
     }
 }
@@ -62,6 +63,11 @@ struct TriggerEditor: View {
     let isNew: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDelete = false
+
+    /// The moment of a one-off. A new one starts an hour from now, so the date is never blank.
+    private var onceAt: Binding<Date> {
+        Binding(get: { trigger.schedule.at ?? Date().addingTimeInterval(3600) }, set: { trigger.schedule.at = $0 })
+    }
 
     private var time: Binding<Date> {
         Binding(get: { Calendar.current.date(bySettingHour: trigger.schedule.hour, minute: trigger.schedule.minute, second: 0, of: Date()) ?? Date() },
@@ -82,9 +88,11 @@ struct TriggerEditor: View {
             case .schedule:
                 HStack(alignment: .top, spacing: 12) {
                     FormField("Repeats") {
-                        Dropdown(options: Schedule.Frequency.allCases.map { ($0, $0 == .hourly ? "Every few hours" : $0 == .daily ? "Every day" : $0 == .weekdays ? "Weekdays" : "Every week") }, selection: $trigger.schedule.frequency)
+                        Dropdown(options: Schedule.Frequency.allCases.map { ($0, $0 == .once ? "Once, at a set time" : $0 == .hourly ? "Every few hours" : $0 == .daily ? "Every day" : $0 == .weekdays ? "Weekdays" : "Every week") }, selection: $trigger.schedule.frequency)
                     }
-                    if trigger.schedule.frequency == .hourly {
+                    if trigger.schedule.frequency == .once {
+                        FormField("When") { DatePicker("", selection: onceAt, displayedComponents: [.date, .hourAndMinute]).labelsHidden() }
+                    } else if trigger.schedule.frequency == .hourly {
                         FormField("Every") { Stepper("\(trigger.schedule.everyHours) hours", value: $trigger.schedule.everyHours, in: 1...168) }
                     } else {
                         FormField("At") { DatePicker("", selection: time, displayedComponents: .hourAndMinute).labelsHidden() }
@@ -103,11 +111,16 @@ struct TriggerEditor: View {
                 Text("When the checks on one of your own open pull requests fail, it looks at the failure and tries to fix it. It tries at most \(TriggerPolicy.maxAttempts) times for one pull request, and leaves pull requests the chief pilot or a reviewer is already working on.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            FormField("Then") {
-                Segmented(options: [(Trigger.Action.chief, "Chief pilot carries it through"), (.session, "One session")], selection: $trigger.action)
+            if let sid = trigger.sessionId {
+                let title = Workspace.shared.sessions.first { $0.id == sid }?.title
+                Text("Sends this to \(title.map { "the session \"\($0)\"" } ?? "a session that is gone") instead of starting new work.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            } else {
+                FormField("Then") {
+                    Segmented(options: [(Trigger.Action.chief, "Chief pilot carries it through"), (.session, "One session")], selection: $trigger.action)
+                }
+                Text(trigger.action == .chief ? "The repository's chief pilot gets it as an outcome and takes it to merged pull requests. If it is busy, the trigger waits." : "A new session starts on its own branch in its own worktree.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
-            Text(trigger.action == .chief ? "The repository's chief pilot gets it as an outcome and takes it to merged pull requests. If it is busy, the trigger waits." : "A new session starts on its own branch in its own worktree.")
-                .font(.system(size: 11.5)).foregroundStyle(.secondary)
             FormField(trigger.kind == .schedule ? "What to do" : "Extra instructions (optional)") {
                 TextEditor(text: $trigger.prompt).font(.system(size: 13)).frame(minHeight: 80, maxHeight: 130).scrollContentBackground(.hidden)
                     .padding(6).background(Theme.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline))

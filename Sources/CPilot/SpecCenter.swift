@@ -206,7 +206,7 @@ final class SpecCenter {
             if !coded.contains(branch), !c.isBusy {
                 c.loadIfNeeded()
                 c.draft = "CPilot was restarted while you worked on \(t.id) \(t.title). Carry on from where you stopped and finish the task."
-                c.send()
+                c.send(byUser: false)
             }
         }
     }
@@ -553,7 +553,7 @@ final class SpecCenter {
             rec.nudges = (rec.nudges ?? 0) + 1
             session.addNotice("CPilot: \(task.id) ended a turn without writing anything. Told it to carry on (\(rec.nudges ?? 0) of \(TaskNudge.limit)).")
             session.draft = text
-            session.send()
+            session.send(byUser: false)
             return true
         }
     }

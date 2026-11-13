@@ -88,4 +88,26 @@ final class ChiefWakeTests: XCTestCase {
         XCTAssertTrue(ChiefPilot.guidance(repo: "/r").contains("STATUS: DONE"))
         XCTAssertTrue(ChiefWake.message(finished: false).contains("STATUS: WAITING"))
     }
+
+    /// The chase in the screenshot: every failed turn counted as work finishing, so the chief was woken again and again against a limit that was already hit.
+    func testAUsageLimitHoldsTheChiefQuietThroughManyFinishesAndItWakesOnceAfter() {
+        var s = WakeState(now: t0)
+        s.expecting = true
+        let limit = "Claude's usage limit is reached. Work that starts by itself carries on at 2:01 AM."
+        var now = t0 + 600, announced = 0, wakes = 0
+        for _ in 0..<40 {                                   // every tick, a session ends a (failed) turn
+            now += 60; s.sawFinish = true
+            switch ChiefWake.decide(&s, WakeInputs(quietFor: 600, hold: limit), now: now) {
+            case .held: announced += 1
+            case .wake: wakes += 1
+            default: break
+            }
+        }
+        XCTAssertEqual(announced, 1); XCTAssertEqual(wakes, 0)             // said once, never asked again
+        XCTAssertTrue(s.expecting && s.sawFinish)                          // and it still knows work finished while it waited
+        // the limit lifts: it looks at where things stand, once, straight away
+        now += 60
+        XCTAssertEqual(ChiefWake.decide(&s, WakeInputs(quietFor: 600), now: now), .wake(finished: true))
+        XCTAssertEqual(ChiefWake.decide(&s, WakeInputs(quietFor: 600), now: now + 1), .wait)
+    }
 }

@@ -398,7 +398,7 @@ final class PRCenter {
         let c = Workspace.shared.controller(meta.id)!
         c.loaded = true
         if show { Workspace.shared.select(meta.id) }
-        c.draft = prompt; c.send()
+        c.draft = prompt; c.send(byUser: reviewOf == nil)
         if show { AppDelegate.shared.showManager(pane: .sessions) }
         return c
     }

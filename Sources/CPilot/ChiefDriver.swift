@@ -139,7 +139,7 @@ enum ChiefDriver {
                 return fail("target_session must be a reviewer or a task session of this repository. Find them with pr_reviews and list_sessions.")
             }
             let wasBusy = c.isBusy
-            c.loadIfNeeded(); c.draft = String(message.prefix(20_000)); c.send()
+            c.loadIfNeeded(); c.draft = String(message.prefix(20_000)); c.send(byUser: false)
             Workspace.shared.audit.record(AuditEntry(session: target, tool: "session_message", summary: "Chief pilot: " + message.prefix(120), outcome: "allowed (chief pilot)"))
             return (200, ["ok": true, "status": wasBusy ? "It is working; the message goes out when its turn ends." : "Sent.", "note": "You will be woken when it finishes."])
 

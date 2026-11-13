@@ -357,8 +357,13 @@ struct ModelPicker: View {
         HStack(spacing: 8) {
             let list = ClaudeModels.options(including: selection, in: options)
             Menu {
-                ForEach(list, id: \.value) { o in
+                ForEach(list.filter { !$0.older }, id: \.value) { o in
                     Button { selection = o.value; custom = false } label: { Text(o.detail.isEmpty ? o.label : "\(o.label) — \(o.detail)") }
+                }
+                if list.contains(where: \.older) {
+                    Menu("Older models") {
+                        ForEach(list.filter(\.older), id: \.value) { o in Button { selection = o.value; custom = false } label: { Text(o.label) } }
+                    }
                 }
                 Divider()
                 Button("Other model id…") { typed = selection; custom = true }

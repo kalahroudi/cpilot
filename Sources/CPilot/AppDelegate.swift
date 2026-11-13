@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         TriggerEngine.shared.start()
         CleanupCenter.shared.start()
         ChiefWaker.shared.resume()
+        UsageHold.shared.checkNow()
         LiveStackHost.describer = { dir, branch in
             let tip = try? await Shell.check("git", ["rev-parse", branch], cwd: URL(fileURLWithPath: dir), timeout: 15)
             return await MainActor.run { SpecHub.shared.summaryMarkdown(dir: dir, branch: branch, currentHead: tip?.trimmingCharacters(in: .whitespacesAndNewlines)) }

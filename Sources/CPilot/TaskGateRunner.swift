@@ -130,7 +130,7 @@ enum TaskGateRunner {
             let what = checks.first { !$0.ok }.map { "`\($0.command)` failed" } ?? "the change needs attention"
             c.addNotice("CPilot checked \(task.id): \(what). Sent back to the agent (try \(state.runs) of \(TaskGate.runLimit)).")
             c.draft = message
-            c.send()
+            c.send(byUser: false)
             return .sentBack
         case .escalate(let why):
             c.addNotice("CPilot stopped checking \(task.id): \(why) It needs you. The work is kept as it is in this session.", error: true)
