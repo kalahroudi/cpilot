@@ -5,17 +5,17 @@ import CPilotKit
 
 /// Panes of the Manager window. Named `Pane`, not `Section`: SwiftUI already has a `Section`.
 enum Pane: String, CaseIterable, Identifiable {
-    case sessions, pulls, stacks, specs, memory, skills, lens, repo, remote, settings, help
+    case sessions, pulls, stacks, specs, guards, memory, skills, lens, repo, remote, settings, help
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .sessions: "Sessions"; case .pulls: "Pull requests"; case .stacks: "Stacks"; case .specs: "Specs"; case .memory: "Memory"; case .skills: "Skills"; case .lens: "Context Lens"
+        case .sessions: "Sessions"; case .pulls: "Pull requests"; case .stacks: "Stacks"; case .specs: "Specs"; case .guards: "Approvals"; case .memory: "Memory"; case .skills: "Skills"; case .lens: "Context Lens"
         case .repo: "Repo setup"; case .remote: "Environments"; case .settings: "Settings"; case .help: "Help"
         }
     }
     var symbol: String {
         switch self {
-        case .sessions: "bubble.left.and.text.bubble.right"; case .pulls: "arrow.triangle.pull"; case .stacks: "square.stack.3d.up"; case .specs: "doc.text.magnifyingglass"; case .memory: "brain"; case .skills: "sparkles"; case .lens: "gauge.with.dots.needle.67percent"
+        case .sessions: "bubble.left.and.text.bubble.right"; case .pulls: "arrow.triangle.pull"; case .stacks: "square.stack.3d.up"; case .specs: "doc.text.magnifyingglass"; case .guards: "checkmark.shield"; case .memory: "brain"; case .skills: "sparkles"; case .lens: "gauge.with.dots.needle.67percent"
         case .repo: "shippingbox"; case .remote: "server.rack"; case .settings: "gearshape"; case .help: "questionmark.circle"
         }
     }
@@ -102,6 +102,7 @@ struct ManagerView: View {
             case .pulls: PullRequestsView()
             case .stacks: StacksView()
             case .specs: SpecsView()
+            case .guards: GuardPane()
             case .memory: MemoryView()
             case .skills: SkillsView()
             case .lens: LensPane()
@@ -128,7 +129,7 @@ struct Rail: View {
             toggle
             RepoSwitcher(expanded: expanded)
             Spacer().frame(height: 6)
-            ForEach([Pane.sessions, .specs, .stacks, .pulls, .memory, .skills, .lens, .repo, .remote]) { item($0) }
+            ForEach([Pane.sessions, .specs, .stacks, .pulls, .guards, .memory, .skills, .lens, .repo, .remote]) { item($0) }
             Spacer()
             ForEach([Pane.settings, .help]) { item($0) }
             HStack(spacing: 4) {

@@ -31,7 +31,7 @@ Open-source work reviewed, and what to take from each (none is Swift, so CPilot 
 
 Build, in `CPilotKit` (pure, tested) with a small view in the app:
 
-1. **`UsageLedger`**: parses transcript lines into rows: session, message id, model, time, input, cache read, cache write (5m and 1h), output, context size (input + reads + writes), tool names, tool result size. Dedupes streamed duplicates. Stored in the existing SQLite index; incremental by file offset, so a launch reads only what is new.
+1. **`UsageLedger`**: parses transcript lines into rows: session, message id, model, time, input, cache read, cache write (5m and 1h), output, context size (input + reads + writes), tool names, tool result size. Dedupes streamed duplicates. Stored in its own SQLite file (`usage.db`, next to the memory index, which is rebuilt on its own schedule); incremental by file offset, so a launch reads only what is new.
 2. **Per session, live**: context used and a bar toward the window, cache hit %, calls, tokens per turn, a cost estimate from the model's price, and the biggest tool results (what to blame). Shown in the session header and a Lens pane.
 3. **Alerts that act**: context above a threshold (default 200k), cache hit below 80% after a gap, idle gap longer than the cache TTL (the next call pays a full rewrite), one tool result above N tokens. Each offers the fix: compact, fork with a digest, or end the session.
 4. **Fleet view**: day, week and month by repository, session, model, and by who started it (you, chief pilot, trigger, reviewer). This is the roadmap's "cost and time ledger", now with real tokens.
@@ -90,6 +90,8 @@ A "Before and after" card per setting shows these with the dates it was turned o
 | 5 Learning | cost input to lessons, before and after cards, pruning of notes that did not help | A cost lesson is shown with its effect, or removed |
 
 Phase 1 is the first thing to build: nothing else can be judged without it.
+
+**Status.** Phase 1 is built: ledger, importer, header numbers and the Lens pane. Checked on this Mac's real transcripts: for the largest session the ledger and an independent count agree exactly (3,140 calls, 1,385,462k cache read, 966k peak). The import of 1.2 GB took 22 s in a debug build; a first launch now reads only the last 90 days, newest first, and a second read of unchanged files takes 0.03 s. Not yet in the pane: the cost-per-context-size view, a limit forecast, and the fleet split by who started the work (phase 2).
 
 ## Risks and open questions
 

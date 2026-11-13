@@ -679,6 +679,8 @@ final class SpecHub {
     @ObservationIgnored private var centers: [String: SpecCenter] = [:]
     @ObservationIgnored var runs = SpecRunState.load(from: SpecHub.url)
     @ObservationIgnored private var watching: Task<Void, Never>?
+    /// Every spec of every repository opened so far, for finding which task a branch belongs to.
+    func allDocs() -> [SpecDoc] { ([shown] + Array(centers.values)).flatMap(\.docs) }
     private static let url = AppPaths().root.appendingPathComponent("spec-runs.json")
 
     func save() { runs.save(to: Self.url) }
