@@ -178,7 +178,7 @@ struct LensPane: View {
             Text("\(u.model) · \(u.first.formatted(date: .abbreviated, time: .shortened)) to \(u.last.formatted(date: .omitted, time: .shortened))").font(.system(size: 11)).foregroundStyle(.secondary)
             Text("Read \(LensFormat.tokens(u.cacheRead)) from the cache, wrote \(LensFormat.tokens(u.cacheWrite)), sent \(LensFormat.tokens(u.input)) uncached, produced \(LensFormat.tokens(u.output)). Context now \(LensFormat.tokens(u.lastContext)), peak \(LensFormat.tokens(u.peakContext)).").font(.system(size: 12))
             if u.coldStarts > 0 {
-                Text("\(u.coldStarts) pause\(u.coldStarts == 1 ? "" : "s") longer than 5 minutes let the cache expire; the next call wrote \(LensFormat.tokens(u.rewrittenAfterGaps)) tokens again.").font(.system(size: 12)).foregroundStyle(Theme.warn)
+                Text("\(u.coldStarts) pause\(u.coldStarts == 1 ? "" : "s") longer than \(Int(u.cacheLife / 60)) minutes let the cache expire; the next call wrote \(LensFormat.tokens(u.rewrittenAfterGaps)) tokens again.").font(.system(size: 12)).foregroundStyle(Theme.warn)
             }
             if u.peakContext >= UsageMetrics.forkThreshold {
                 Text("The context passed \(LensFormat.tokens(UsageMetrics.forkThreshold)). Every call after that re-read all of it; a fresh session started from a summary would have cost a fraction.").font(.system(size: 12)).foregroundStyle(Theme.warn)

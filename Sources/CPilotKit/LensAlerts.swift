@@ -24,9 +24,9 @@ public enum LensAlerts {
             out.append(LensAlert(kind: .contextHigh, message: "The conversation is \(tokens(u.lastContext)) tokens. Every call re-reads all of it; continuing in a fresh session from a summary costs a fraction."))
         }
         let idle = now.timeIntervalSince(u.last)
-        if idle > UsageMetrics.cacheLife, u.lastContext >= coldMinContext {
+        if idle > u.cacheLife, u.lastContext >= coldMinContext {
             let price = ModelPrice.forModel(u.model).map { " (about \(String(format: "$%.2f", Double(u.lastContext) * $0.write5m / 1_000_000)))" } ?? ""
-            out.append(LensAlert(kind: .cacheCold, message: "Idle for \(Int(idle / 60)) minutes, so the cache has expired: the next message writes \(tokens(u.lastContext)) tokens again\(price). A short summary in a new session avoids that."))
+            out.append(LensAlert(kind: .cacheCold, message: "Idle for \(Int(idle / 60)) minutes, longer than this session's cache lives (\(Int(u.cacheLife / 60)) minutes), so the cache has expired: the next message writes \(tokens(u.lastContext)) tokens again\(price). A short summary in a new session avoids that."))
         }
         if u.calls >= 10, let hit = u.cacheHitRate, hit < 0.8 {
             out.append(LensAlert(kind: .lowCacheHit, message: "Only \(Int(hit * 100))% of what was sent came from the cache. Something near the start of the conversation keeps changing, or pauses keep letting it expire."))

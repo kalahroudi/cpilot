@@ -74,6 +74,15 @@ final class UsageLedgerTests: XCTestCase {
         XCTAssertNotNil(s.cost)
     }
 
+    func testAnHourCacheIsNotColdAfterAQuarterOfAnHourButIsAfterTwoHours() {
+        func row(_ id: String, _ t: Double) -> UsageRow { UsageRow(session: "S", id: id, model: "claude-sonnet-5-5", ts: Date(timeIntervalSince1970: t), input: 2, cacheRead: 5000, write1h: 100, output: 5) }
+        let s = UsageMetrics.summarize([row("1", 0), row("2", 900), row("3", 900 + 7200)])!
+        XCTAssertEqual(s.cacheLife, 3600)
+        XCTAssertEqual(s.coldStarts, 1)
+        XCTAssertEqual(UsageMetrics.cacheLife(of: [UsageRow(session: "S", id: "a", write5m: 10)]), 300)
+        XCTAssertEqual(UsageMetrics.cacheLife(of: []), 300)
+    }
+
     func testBiggestResultsAreAddedUpPerTool() {
         let t = [ToolEvent(useId: "1", session: "S", name: "Bash", ts: .now, resultChars: 100), ToolEvent(useId: "2", session: "S", name: "Bash", ts: .now, resultChars: 300),
                  ToolEvent(useId: "3", session: "S", name: "Read", ts: .now, resultChars: 200), ToolEvent(useId: "4", session: "S", name: "Read", ts: .now, resultChars: nil)]
@@ -135,6 +144,14 @@ final class LensAlertsTests: XCTestCase {
         XCTAssertTrue(LensAlerts.alerts(for: usage(context: 199_000, last: now), now: now).isEmpty)
         XCTAssertEqual(LensAlerts.alerts(for: usage(context: 200_000, last: now), now: now).map(\.kind), [.contextHigh])
         XCTAssertEqual(LensAlerts.alerts(for: usage(context: 800_000, last: now), now: now).first?.kind, .contextHigh)
+    }
+
+    func testAnHourCacheSessionIsNotToldItWentColdAfterFifteenMinutes() {
+        let now = Date()
+        var u = usage(context: 100_000, last: now.addingTimeInterval(-900)); u.cacheLife = 3600
+        XCTAssertTrue(LensAlerts.alerts(for: u, now: now).isEmpty)
+        u.last = now.addingTimeInterval(-4000)
+        XCTAssertEqual(LensAlerts.alerts(for: u, now: now).map(\.kind), [.cacheCold])
     }
 
     func testAnIdleLargeSessionIsToldWhatTheNextMessageWillCost() {

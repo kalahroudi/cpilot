@@ -85,7 +85,7 @@ A "Before and after" card per setting shows these with the dates it was turned o
 | --- | --- | --- |
 | 1 Ledger | `UsageLedger`, importer for existing transcripts, per-session numbers in the header, Lens pane, tests on real transcript fixtures (streamed duplicates, subagents, 1h cache writes) | Numbers match a hand count on 3 transcripts; a 50MB history imports in seconds and incrementally |
 | 2 Alerts and fork | context and idle alerts, auto-fork with digest, fleet view, `usage_report` MCP | An 800k session would have been flagged at 200k |
-| 3 Gates | evaluate RTK on recorded Bash output (replay, no live risk); hook install; result cap with saved raw output; JSON projection | Replay shows at least 50% fewer tool-result tokens with no failing-test information lost |
+| 3 Gates (revised, see Measured) | a small own hook for fetch/pull/push/`gh run` noise; measure repeated reads and wide ranges before touching reading; RTK, result cap and JSON projection dropped unless the Lens shows a heavy source they fit | The Lens shows tool-result tokens per source falling, with no rise in retries |
 | 4 Tool diet | measure tool definition tokens; tool search and code mode for CPilot's MCP; browser bake-off | Each adopted only if it beats the measured baseline |
 | 5 Learning | cost input to lessons, before and after cards, pruning of notes that did not help | A cost lesson is shown with its effect, or removed |
 
@@ -93,6 +93,13 @@ Phase 1 is the first thing to build: nothing else can be judged without it.
 
 **Status.** Phase 1 is built: ledger, importer, header numbers and the Lens pane. Checked on this Mac's real transcripts: for the largest session the ledger and an independent count agree exactly (3,140 calls, 1,385,462k cache read, 966k peak). The import of 1.2 GB took 22 s in a debug build; a first launch now reads only the last 90 days, newest first, and a second read of unchanged files takes 0.03 s. 
 Phase 2 is built except two items: alerts (context over 200k, an idle gap that let the cache expire, low cache hit, a huge tool result) with a **Continue lean** fork from a summary, the split by who started the work, and the `usage_report` MCP tool. Still open from phase 2: the cost-per-context-size chart and the limit forecast against the plan window (the reset time is known, the plan's allowance is not exposed, so this needs a decision on what to compare against).
+
+## Measured on this Mac (30 days of transcripts), and what it changed
+
+- **Tool results are 18.4M tokens, 14M of them from Bash.** But they are not what the plan assumed. The largest Bash group is `sed -n` (3.6M tokens, 2,845 calls: the agent reading file ranges) and `grep -n` (1.5M), then `python3 -` (0.7M), `git diff` (0.6M), `git fetch` (0.3M of pure progress noise), `gh run`, `git status`, `git log` (about 0.15M each). Test runners and builds, the home ground of output filters like [RTK](https://github.com/rtk-ai/rtk), are not among the top. **No single result was above 15k tokens**, so a result cap would never have fired.
+- **Consequence for phase 3.** A command-output filter could trim roughly 1.2M of the 18M tokens (the git, `gh` and fetch family), a few percent, and its published 60 to 90% does not apply to a workload that is mostly code reading. Phase 3 is therefore not worth a tool that rewrites every Bash call. What it keeps: drop `git fetch`/`pull`/`push` progress and `gh run` noise with a small hook of our own (no third-party binary), and nothing else until the Lens shows a new heavy source. The larger lever is unchanged: the multiplier. A result of 1.3k tokens read on each of the 200 calls after it is 260k tokens; the Lens's context alerts and Continue lean act on that.
+- **Every cache write is the one-hour kind** (95M tokens one-hour, none five-minute), and a pause of 5 to 60 minutes was cold only 20 times out of 1,239. The first version of the Lens assumed a five-minute cache and over-counted cold starts (178 in the largest session, 36 once the real lifetime is used). It now reads each session's cache lifetime from what it wrote. Pauses beyond an hour are still cold (11 of 184), and those are what the idle alert is for.
+- **Next measurable lever: reading.** 2,845 `sed -n` calls and 2,000 `grep -n` calls average 1.3k and 0.7k tokens. Whether those are wasteful (re-reading the same file, wide ranges) is the next thing to measure before changing anything: the ledger will record the command and range for reads, so repeats can be counted.
 
 ## Risks and open questions
 

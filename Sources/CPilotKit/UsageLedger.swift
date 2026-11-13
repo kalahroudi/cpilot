@@ -161,16 +161,25 @@ public struct SessionUsage: Equatable, Sendable {
     public var cost: Double?
     public var first: Date
     public var last: Date
-    /// Pauses longer than the cache lives (5 minutes) before a call, and what that call then had to write again.
+    /// Pauses longer than the cache lives (see `cacheLife`) before a call, and what that call then had to write again.
     public var coldStarts: Int
     public var rewrittenAfterGaps: Int
+    /// How long this session's cache lives: an hour when most of what it wrote used the one-hour cache (Claude Code's usual), otherwise five minutes.
+    public var cacheLife: TimeInterval = UsageMetrics.shortCacheLife
 
     /// Share of what was sent that came from the cache. Writes count as billed input, as in `claude-stat`.
     public var cacheHitRate: Double? { UsageMetrics.hitRate(read: cacheRead, write: cacheWrite, input: input) }
 }
 
 public enum UsageMetrics {
-    public static let cacheLife: TimeInterval = 300
+    public static let shortCacheLife: TimeInterval = 300
+    public static let longCacheLife: TimeInterval = 3600
+
+    /// Read from what the session wrote: the one-hour cache when at least half of the written tokens were of that kind.
+    public static func cacheLife(of rows: [UsageRow]) -> TimeInterval {
+        let long = rows.reduce(0) { $0 + $1.write1h }, short = rows.reduce(0) { $0 + $1.write5m }
+        return long > 0 && long >= short ? longCacheLife : shortCacheLife
+    }
 
     public static func hitRate(read: Int, write: Int, input: Int) -> Double? {
         let total = read + write + input
@@ -186,13 +195,14 @@ public enum UsageMetrics {
         }
         let main = ordered.filter { !$0.sidechain }
         var cold = 0, rewritten = 0
-        for (a, b) in zip(main, main.dropFirst()) where b.ts.timeIntervalSince(a.ts) > cacheLife { cold += 1; rewritten += b.cacheWrite }
+        let life = cacheLife(of: rows)
+        for (a, b) in zip(main, main.dropFirst()) where b.ts.timeIntervalSince(a.ts) > life { cold += 1; rewritten += b.cacheWrite }
         // The model shown is the one that made the latest call.
         let latest = ordered.last { !$0.model.isEmpty && !$0.model.hasPrefix("<") }
         return SessionUsage(session: firstRow.session, cwd: ordered.first { !$0.cwd.isEmpty }?.cwd ?? "", model: latest?.model ?? "", calls: rows.count,
                             input: rows.reduce(0) { $0 + $1.input }, cacheRead: rows.reduce(0) { $0 + $1.cacheRead }, cacheWrite: rows.reduce(0) { $0 + $1.cacheWrite },
                             output: rows.reduce(0) { $0 + $1.output }, peakContext: main.map(\.context).max() ?? 0, lastContext: main.last?.context ?? 0,
-                            cost: cost, first: firstRow.ts, last: ordered.last?.ts ?? firstRow.ts, coldStarts: cold, rewrittenAfterGaps: rewritten)
+                            cost: cost, first: firstRow.ts, last: ordered.last?.ts ?? firstRow.ts, coldStarts: cold, rewrittenAfterGaps: rewritten, cacheLife: life)
     }
 
     /// The tools whose results were largest, summed per tool name. Roughly four characters make a token.
