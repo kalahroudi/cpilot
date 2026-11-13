@@ -45,6 +45,24 @@ final class UsageHold {
         NotificationCenter.default.post(name: Self.changed, object: nil)
     }
 
+    /// Sessions the limit stopped while CPilot was closed, or before it knew about limits, still wait for a message. Found by their transcripts, at launch and after a sleep.
+    func recover() {
+        guard Prefs.shared.resumeAfterLimit else { return }
+        let ws = Workspace.shared
+        for m in ws.sessions where m.backend.kind == .claude && m.environment == nil && !m.archived && (m.chief == true || m.isWorker) {
+            guard ws.controller(m.id)?.isBusy != true, let hit = UsageLimit.stoppedBy(ws.store.items(m.id, limit: 12)) else { continue }
+            guard !affected.contains(m.id) else { continue }
+            // Already past the reset: carry on now, not in two minutes.
+            let at = hit.resets.map { $0.addingTimeInterval(UsageLimit.margin) <= .now ? Date.now : hit.resumeAt() } ?? hit.resumeAt()
+            if until == nil || until! <= .now || at > until! { until = at; message = hit.message }
+            affected.insert(m.id); resume.insert(m.id)
+        }
+        guard !affected.isEmpty else { return }
+        persist()
+        if until.map({ $0 <= .now }) == true { release() } else { startWaiting() }
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+    }
+
     static let changed = Notification.Name("CPilotUsageHoldChanged")
 
     /// A message CPilot would have sent: kept for the reset. The session carries on by itself then.
@@ -79,7 +97,7 @@ final class UsageHold {
     }
 
     /// Looks at the clock now, as at launch and when asked to carry on early.
-    func checkNow() { if let u = until, u <= .now { release() } else if until != nil { startWaiting() } }
+    func checkNow() { if let u = until, u <= .now { release() } else if until != nil { startWaiting() }; recover() }
 
     /// The limit is over (or you say it is): parked messages go out, and the sessions it stopped carry on.
     func release() {

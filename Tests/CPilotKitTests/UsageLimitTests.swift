@@ -88,3 +88,26 @@ final class UsageLimitTests: XCTestCase {
         XCTAssertNil(UsageLimit.detect(try XCTUnwrap(other)))
     }
 }
+
+final class UsageLimitRecoveryTests: XCTestCase {
+    private func row(_ kind: ChatItem.Kind, _ text: String, at: Date) -> ChatItem { ChatItem(kind: kind, text: text, status: .done, ts: at) }
+    private let msg = "You've hit your session limit · resets 2am (Europe/London)"
+
+    func testSessionThatEndsOnTheLimitIsFound() {
+        let now = Date()
+        let hit = UsageLimit.stoppedBy([row(.user, "go", at: now.addingTimeInterval(-600)), row(.assistant, msg, at: now.addingTimeInterval(-300)), row(.error, msg, at: now.addingTimeInterval(-300)), row(.notice, "held", at: now.addingTimeInterval(-299))], now: now)
+        XCTAssertNotNil(hit)
+    }
+    func testSessionThatCarriedOnIsNotFound() {
+        let now = Date()
+        XCTAssertNil(UsageLimit.stoppedBy([row(.error, msg, at: now.addingTimeInterval(-600)), row(.user, "continue", at: now.addingTimeInterval(-300)), row(.assistant, "Done.", at: now.addingTimeInterval(-200))], now: now))
+    }
+    func testOldAndLongOverIsLeftAlone() {
+        let now = Date()
+        XCTAssertNil(UsageLimit.stoppedBy([row(.error, msg, at: now.addingTimeInterval(-3 * 86_400))], now: now))
+    }
+    func testOrdinaryErrorIsNotALimit() {
+        let now = Date()
+        XCTAssertNil(UsageLimit.stoppedBy([row(.error, "Claude stopped unexpectedly (status 1).", at: now)], now: now))
+    }
+}

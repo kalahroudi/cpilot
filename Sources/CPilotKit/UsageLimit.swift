@@ -19,6 +19,17 @@ public enum UsageLimit {
         }
     }
 
+    /// The limit a session's transcript ends with: its last row (notices aside) is Claude's limit message. A session that stopped this way before CPilot was watching,
+    /// or while it was closed, is found by this. Anything after the message (you wrote again, the agent worked) means it already carried on.
+    public static func stoppedBy(_ items: [ChatItem], now: Date = .now) -> Hit? {
+        guard let last = items.last(where: { $0.kind != .notice }), last.kind == .error || last.kind == .assistant else { return nil }
+        // Read the time as it was when the message was written: "resets 2am" then means the 2am after it.
+        guard let hit = detect(last.text, now: last.ts) else { return nil }
+        // Long over and long ago: that work was finished or dropped since, and a message now would only confuse it.
+        if (hit.resets ?? last.ts) < now, last.ts < now.addingTimeInterval(-12 * 3600) { return nil }
+        return hit
+    }
+
     public static let margin: TimeInterval = 60
     public static let unknownWait: TimeInterval = 30 * 60
     public static let minimumWait: TimeInterval = 120
