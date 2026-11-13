@@ -6,6 +6,8 @@ import CPilotKit
 // Model Context Protocol server over stdio (newline-delimited JSON-RPC 2.0).
 // Logs go to stderr; stdout carries protocol messages only.
 
+if CommandLine.arguments.contains("--read-once-hook") { runReadOnceHook() }
+
 let serverName = "cpilot"
 let serverVersion = BuildInfo.current.version
 let toolsByName = Dictionary(uniqueKeysWithValues: allTools.map { ($0.name, $0) })

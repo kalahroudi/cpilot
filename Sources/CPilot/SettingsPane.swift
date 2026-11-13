@@ -95,6 +95,9 @@ struct SettingsPane: View {
             SettingsGroup("Sessions") {
                 SettingRow("Suggest your next message", "After each turn Claude drafts a reply to what the agent just said, shown faintly in the message box. Press Tab to use it. A small, cheap call.") { toggle($p.suggestPrompts) }
             }
+            SettingsGroup("Saving usage") {
+                SettingRow("Read a file once", "When an agent asks to read a file that is already in its conversation and has not changed since, CPilot tells it so instead of sending the same code again. Every copy stays in the conversation and is sent again with every later call; on measured use 42% of what the Read tool returned was a repeat. It lets the call through if the file changed, the conversation was compacted, or the agent asks a second time. Applies to sessions on this Mac when they next start.") { toggle($p.readOnce) }
+            }
             SettingsGroup("Limits for unattended work") {
                 SettingRow("Agents working at once", "Triggers, and the tasks and reviewers the chief pilot starts, wait while this many agents are working. Sessions you start yourself are never held.") {
                     Segmented(options: [(2, "2"), (4, "4"), (8, "8"), (0, "No limit")], selection: $p.maxAgents)

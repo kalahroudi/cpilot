@@ -238,6 +238,8 @@ public final class ClaudeRunner: @unchecked Sendable {
         public var disallowedTools: [String] = []
         /// Compact the conversation when it reaches this many tokens (Claude Code accepts 100k to 1M). Nil leaves it to Claude Code. Every call re-reads the whole conversation, so a smaller window is a smaller bill.
         public var autocompactTokens: Int?
+        /// A command Claude Code runs before each Read and Bash call (see `ReadOnce`), already quoted for a shell.
+        public var readOnceHook: String?
         public init(cwd: String) { self.cwd = cwd }
     }
 
@@ -267,6 +269,10 @@ public final class ClaudeRunner: @unchecked Sendable {
         for d in c.addDirs { a += ["--add-dir", d] }
         if let m = c.mcpConfigPath { a += ["--mcp-config", m] }
         if !c.disallowedTools.isEmpty { a += ["--disallowedTools"] + c.disallowedTools }
+        if let h = c.readOnceHook, !h.isEmpty {
+            let settings: [String: Any] = ["hooks": ["PreToolUse": [["matcher": "Read|Bash", "hooks": [["type": "command", "command": h]]]]]]
+            if let d = try? JSONSerialization.data(withJSONObject: settings), let j = String(data: d, encoding: .utf8) { a += ["--settings", j] }
+        }
         if let t = c.autocompactTokens, (100_000...1_000_000).contains(t) { a += ["--autocompact", "\(t / 1000)k"] }
         return a
     }

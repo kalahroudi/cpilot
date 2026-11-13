@@ -50,6 +50,17 @@ final class UsageLens {
     /// What to act on for this session now.
     func alerts(for meta: SessionMeta) -> [LensAlert] { usage(for: meta).map { LensAlerts.alerts(for: $0) } ?? [] }
 
+    /// Repeat reads the read-once guard refused since `since`, and the most it kept out of the conversations (an agent that insists is let through, so it is an upper bound).
+    func readOnceSaved(since: Date) -> (refused: Int, chars: Int) {
+        guard let text = try? String(contentsOf: AppPaths().root.appendingPathComponent("read-once.jsonl"), encoding: .utf8) else { return (0, 0) }
+        var n = 0, chars = 0
+        for line in text.split(separator: "\n") {
+            guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let ts = o["ts"] as? Double, Date(timeIntervalSince1970: ts) >= since else { continue }
+            n += 1; chars += o["saved"] as? Int ?? 0
+        }
+        return (n, chars)
+    }
+
     func totals(since: Date) -> (calls: Int, cost: Double, read: Int, write: Int, input: Int, output: Int) {
         summaries.values.filter { $0.last >= since }.reduce((0, 0.0, 0, 0, 0, 0)) { ($0.0 + $1.calls, $0.1 + ($1.cost ?? 0), $0.2 + $1.cacheRead, $0.3 + $1.cacheWrite, $0.4 + $1.input, $0.5 + $1.output) }
     }
@@ -71,10 +82,10 @@ struct LensChip: View {
         if let u = lens.usage(for: session.meta), u.calls > 0 {
             let heavy = u.lastContext >= UsageMetrics.forkThreshold
             Button { Nav.shared.pane = .lens } label: {
-                Text("\(LensFormat.tokens(u.lastContext)) context · \(LensFormat.percent(u.cacheHitRate)) cached")
+                Text("\(LensFormat.tokens(u.lastContext)) context · \(LensFormat.percent(u.cacheHitRate)) from cache")
                     .font(.system(size: 11)).foregroundStyle(heavy ? Theme.warn : .secondary)
             }.buttonStyle(.plain)
-             .help(heavy ? "This conversation is large: every call re-reads all of it. A fresh session with a summary costs far less." : "Context sent with each call, and how much of it came from the cache. Open Context Lens for the detail.")
+             .help(heavy ? "This conversation is large: every call re-reads all of it. A fresh session with a summary costs far less." : "Context sent with each call, and the share of what was sent that came from the cache (a hit, at a tenth of the price). A high share does not make a large context cheap. Open Context Lens for the detail.")
         }
     }
 }
@@ -120,11 +131,12 @@ struct LensPane: View {
                 VStack(alignment: .leading, spacing: 14) {
                     totalsCard
                     originCard
+                    sentCard
                     effectCard("Did it help? Unattended sessions", key: "autocompactUnattended", origins: ["Chief pilot", "Reviewers", "Testers", "Spec tasks"])
                     effectCard("Did it help? Your sessions", key: "autocompactYours", origins: ["You, in CPilot"])
                     if rows.isEmpty { Text(lens.loading ? "Reading transcripts…" : "No Claude Code use found in this period.").foregroundStyle(.secondary).font(.system(size: 12.5)) }
                     ForEach(rows.prefix(40), id: \.session) { u in row(u) }
-                    Text("Cost is what the same tokens would cost on the API; a Max plan is not billed per token. Cache hit counts cache writes as billed input.")
+                    Text("Cost is what the same tokens would cost on the API; a Max plan is not billed per token. From cache is the cache hit rate: reads divided by reads, writes and uncached input. A hit still costs a tenth of an uncached token, so a large context is expensive even at 98%.")
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -163,6 +175,25 @@ struct LensPane: View {
         }
     }
 
+    /// What was read into conversations in this period: how much file content went to the model provider, how much of it was a repeat, and any secrets.
+    private var sentCard: some View {
+        let reads = lens.store.reads(since: since)
+        let report = ReadReport(reads)
+        let sessions = Set(reads.compactMap { r in r.target.flatMap { SensitivePaths.isSensitive($0) ? r.session : nil } })
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("File content sent to the model").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text("\(report.files.count) distinct files read in \(report.totalReads) reads, about \(LensFormat.tokens(report.totalChars / 4)) tokens. Only files the agent reads leave this Mac (the whole repository never does), but what it read stays in the conversation and is sent again with every later call. \(LensFormat.tokens(report.repeatChars / 4)) tokens were a file and range already read in the same session.")
+                .font(.system(size: 12))
+            let once = lens.readOnceSaved(since: since)
+            if once.refused > 0 { Text("Read once refused \(once.refused) repeat read\(once.refused == 1 ? "" : "s"), up to \(LensFormat.tokens(once.chars / 4)) tokens kept out of conversations (each would also have been sent again with every later call).").font(.system(size: 12)).foregroundStyle(Theme.ok) }
+            if report.sensitive.isEmpty { Text("No keys, tokens or environment files were read.").font(.system(size: 12)).foregroundStyle(.secondary) }
+            else {
+                Text("Sensitive files read, now in \(sessions.count) conversation\(sessions.count == 1 ? "" : "s") sent to the provider: " + report.sensitive.prefix(6).map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ") + (report.sensitive.count > 6 ? " and \(report.sensitive.count - 6) more" : "") + ".")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.warn)
+            }
+        }.card(padding: 14)
+    }
+
     private var originCard: some View {
         let list = lens.summaries.values.filter { $0.last >= since }
         let split = UsageOrigin.split(Array(list)) { id in Workspace.shared.sessions.first { $0.remoteId == id } }
@@ -192,7 +223,7 @@ struct LensPane: View {
                     Text(title(u)).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
                     Spacer()
                     if u.peakContext >= UsageMetrics.forkThreshold { Badge(text: "peak \(LensFormat.tokens(u.peakContext))", kind: .warn) } else { Badge(text: "peak \(LensFormat.tokens(u.peakContext))") }
-                    Badge(text: "\(LensFormat.percent(u.cacheHitRate)) cached", kind: (u.cacheHitRate ?? 1) < 0.8 ? .warn : .neutral)
+                    Badge(text: "\(LensFormat.percent(u.cacheHitRate)) from cache", kind: (u.cacheHitRate ?? 1) < 0.8 ? .warn : .neutral)
                     Text("\(u.calls) calls").font(.system(size: 11)).foregroundStyle(.secondary)
                     Text(LensFormat.money(u.cost)).font(.system(size: 11.5, weight: .semibold)).frame(width: 56, alignment: .trailing)
                 }.contentShape(Rectangle())
@@ -211,6 +242,15 @@ struct LensPane: View {
             }
             if u.peakContext >= UsageMetrics.forkThreshold {
                 Text("The context passed \(LensFormat.tokens(UsageMetrics.forkThreshold)). Every call after that re-read all of it; a fresh session started from a summary would have cost a fraction.").font(.system(size: 12)).foregroundStyle(Theme.warn)
+            }
+            let report = ReadReport(lens.store.tools(session: u.session))
+            if report.totalReads > 0 {
+                Text("Files read into this conversation: \(report.files.count) files, \(report.totalReads) reads, about \(LensFormat.tokens(report.totalChars / 4)) tokens" + (report.repeatReads > 0 ? "; \(report.repeatReads) repeated a read already made (about \(LensFormat.tokens(report.repeatChars / 4)) tokens)." : "."))
+                    .font(.system(size: 12))
+                ForEach(report.files.prefix(4), id: \.path) { f in
+                    HStack { Text((f.path as NSString).abbreviatingWithTildeInPath).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).truncationMode(.head); Spacer(); Text("\(f.reads)× · ~\(LensFormat.tokens(f.chars / 4)) tokens").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                }
+                if !report.sensitive.isEmpty { Text("Read a sensitive file: " + report.sensitive.joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Theme.warn) }
             }
             if !big.isEmpty {
                 Text("Largest tool results (roughly 4 characters per token)").font(.system(size: 11, weight: .semibold)).padding(.top, 2)

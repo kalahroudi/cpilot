@@ -59,6 +59,12 @@ final class UsageLedgerTests: XCTestCase {
         XCTAssertEqual(p.tools.first?.resultChars, 6)
     }
 
+    func testAnImageCountsAsWhatItCostsNotAsItsEncodedSize() {
+        let big = String(repeating: "A", count: 2_000_000)
+        let p = TranscriptUsage.parse(result("t1", "[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"\(big)\"}},{\"type\":\"text\",\"text\":\"ab\"}]"), session: "S1")
+        XCTAssertEqual(p.tools.first?.resultChars, 6_402)
+    }
+
     func testSummaryHitRateContextAndColdStarts() {
         let rows = [UsageRow(session: "S", id: "1", model: "claude-sonnet-5-5", ts: Date(timeIntervalSince1970: 0), input: 2, cacheRead: 0, write5m: 1000, output: 5),
                     UsageRow(session: "S", id: "2", model: "claude-sonnet-5-5", ts: Date(timeIntervalSince1970: 30), input: 2, cacheRead: 1000, write5m: 100, output: 5),
@@ -129,6 +135,8 @@ final class LiveLensTests: XCTestCase {
         for s in all.sorted(by: { $0.cacheRead > $1.cacheRead }).prefix(4) {
             print("LENS \(s.session.prefix(8)) calls=\(s.calls) read=\(s.cacheRead / 1000)k write=\(s.cacheWrite / 1000)k out=\(s.output / 1000)k peak=\(s.peakContext / 1000)k hit=\(Int((s.cacheHitRate ?? 0) * 100))% cost=\(s.cost.map { String(format: "%.0f", $0) } ?? "?") cold=\(s.coldStarts)")
         }
+        let rr = ReadReport(store.reads(since: Date().addingTimeInterval(-30 * 86_400)))
+        print("LENS reads=\(rr.totalReads) files=\(rr.files.count) tokens=\(rr.totalChars / 4000)k repeats=\(rr.repeatReads) repeatTokens=\(rr.repeatChars / 4000)k sensitive=\(rr.sensitive.count)")
         let t1 = Date(); XCTAssertLessThan(store.sync(), 10); print("LENS second sync seconds=\(Date().timeIntervalSince(t1))")
     }
 }

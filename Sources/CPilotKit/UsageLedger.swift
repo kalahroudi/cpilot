@@ -35,6 +35,9 @@ public struct ToolEvent: Equatable, Sendable {
     public var name: String
     public var ts: Date
     public var resultChars: Int?
+    /// For a tool that reads a file: which one and which lines. Names only; what the file said is never kept.
+    public var target: String? = nil
+    public var range: String? = nil
 }
 
 /// Dollars per million tokens. Max plans are not billed per token, so this is what the same use would cost on the API, to compare sessions and changes.
@@ -117,7 +120,8 @@ public enum TranscriptUsage {
                 }
                 for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "tool_use" {
                     guard let id = block["id"] as? String, let name = block["name"] as? String else { continue }
-                    if tools[id] == nil { toolOrder.append(id); tools[id] = ToolEvent(useId: id, session: session, name: name, ts: ts, resultChars: nil) }
+                    let read = ReadTarget.extract(tool: name, input: block["input"] as? [String: Any] ?? [:])
+                    if tools[id] == nil { toolOrder.append(id); tools[id] = ToolEvent(useId: id, session: session, name: name, ts: ts, resultChars: nil, target: read?.path, range: read?.range) }
                 }
             } else if type == "user" {
                 for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "tool_result" {
@@ -131,13 +135,16 @@ public enum TranscriptUsage {
         return Parsed(rows: order.compactMap { rows[$0] }, tools: toolOrder.compactMap { tools[$0] })
     }
 
-    /// The size of a tool result: a string, or a list of text blocks. Images count as their encoded length, which is what the model is charged for roughly.
+    /// What an image costs the model, in characters at four per token, whatever its encoded size: about 1,600 tokens.
+    static let imageChars = 6_400
+
+    /// The size of a tool result: a string, or a list of blocks. An image counts as `imageChars`, not as its base64 length.
     static func chars(_ content: Any?) -> Int {
         if let s = content as? String { return s.count }
         if let list = content as? [[String: Any]] {
             return list.reduce(0) { sum, b in
                 if let t = b["text"] as? String { return sum + t.count }
-                if let src = b["source"] as? [String: Any], let d = src["data"] as? String { return sum + d.count }
+                if b["type"] as? String == "image" { return sum + imageChars }
                 return sum
             }
         }
@@ -230,7 +237,11 @@ public final class UsageStore: @unchecked Sendable {
         exec("PRAGMA synchronous=NORMAL")
         exec("CREATE TABLE IF NOT EXISTS usage(session TEXT NOT NULL, id TEXT NOT NULL, model TEXT, ts REAL, cwd TEXT, input INT, read INT, w5 INT, w1 INT, out INT, side INT, PRIMARY KEY(session, id))")
         exec("CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts)")
-        exec("CREATE TABLE IF NOT EXISTS tools(use_id TEXT PRIMARY KEY, session TEXT, name TEXT, ts REAL, chars INT)")
+        exec("CREATE TABLE IF NOT EXISTS tools(use_id TEXT PRIMARY KEY, session TEXT, name TEXT, ts REAL, chars INT, target TEXT, range TEXT)")
+        // A ledger made before reads were recorded gains the columns and is read again from the start, which fills them in without double counting.
+        // Version 2: tool result sizes count an image as what it costs, not as its encoded length. Older tool rows are dropped and read again.
+        if userVersion() < 2 { exec("DELETE FROM tools"); exec("DELETE FROM files"); exec("PRAGMA user_version=2") }
+        if !hasColumn("tools", "target") { exec("ALTER TABLE tools ADD COLUMN target TEXT"); exec("ALTER TABLE tools ADD COLUMN range TEXT"); exec("DELETE FROM files") }
         exec("CREATE INDEX IF NOT EXISTS tools_session ON tools(session)")
         exec("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, off INT, size INT)")
     }
@@ -238,6 +249,21 @@ public final class UsageStore: @unchecked Sendable {
     deinit { if let db { sqlite3_close(db) } }
 
     public var isOpen: Bool { db != nil }
+
+    private func userVersion() -> Int {
+        var st: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &st, nil) == SQLITE_OK, let st else { return 0 }
+        defer { sqlite3_finalize(st) }
+        return sqlite3_step(st) == SQLITE_ROW ? Int(sqlite3_column_int(st, 0)) : 0
+    }
+
+    private func hasColumn(_ table: String, _ column: String) -> Bool {
+        var st: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &st, nil) == SQLITE_OK, let st else { return false }
+        defer { sqlite3_finalize(st) }
+        while sqlite3_step(st) == SQLITE_ROW { if sqlite3_column_text(st, 1).map({ String(cString: $0) }) == column { return true } }
+        return false
+    }
 
     @discardableResult private func exec(_ sql: String) -> Bool { sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK }
 
@@ -268,13 +294,15 @@ public final class UsageStore: @unchecked Sendable {
         }
         for t in p.tools {
             run("""
-                INSERT INTO tools(use_id,session,name,ts,chars) VALUES(?,?,?,?,?)
+                INSERT INTO tools(use_id,session,name,ts,chars,target,range) VALUES(?,?,?,?,?,?,?)
                 ON CONFLICT(use_id) DO UPDATE SET name=CASE WHEN excluded.name='' THEN name ELSE excluded.name END, chars=COALESCE(excluded.chars, chars),
-                ts=CASE WHEN excluded.name='' THEN ts ELSE excluded.ts END
+                ts=CASE WHEN excluded.name='' THEN ts ELSE excluded.ts END, target=COALESCE(excluded.target, target), range=COALESCE(excluded.range, range)
                 """) { st in
                 sqlite3_bind_text(st, 1, t.useId, -1, Self.transient); sqlite3_bind_text(st, 2, t.session, -1, Self.transient); sqlite3_bind_text(st, 3, t.name, -1, Self.transient)
                 sqlite3_bind_double(st, 4, t.ts.timeIntervalSince1970)
                 if let c = t.resultChars { sqlite3_bind_int64(st, 5, Int64(c)) } else { sqlite3_bind_null(st, 5) }
+                if let x = t.target { sqlite3_bind_text(st, 6, x, -1, Self.transient) } else { sqlite3_bind_null(st, 6) }
+                if let x = t.range { sqlite3_bind_text(st, 7, x, -1, Self.transient) } else { sqlite3_bind_null(st, 7) }
             }
         }
         exec("COMMIT")
@@ -302,13 +330,30 @@ public final class UsageStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard db != nil else { return [] }
         var st: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT use_id,session,name,ts,chars FROM tools WHERE session = ? ORDER BY ts", -1, &st, nil) == SQLITE_OK, let st else { return [] }
+        guard sqlite3_prepare_v2(db, "SELECT use_id,session,name,ts,chars,target,range FROM tools WHERE session = ? ORDER BY ts", -1, &st, nil) == SQLITE_OK, let st else { return [] }
         defer { sqlite3_finalize(st) }
         sqlite3_bind_text(st, 1, session, -1, Self.transient)
         var out: [ToolEvent] = []
         while sqlite3_step(st) == SQLITE_ROW {
             out.append(ToolEvent(useId: text(st, 0), session: text(st, 1), name: text(st, 2), ts: Date(timeIntervalSince1970: sqlite3_column_double(st, 3)),
-                                 resultChars: sqlite3_column_type(st, 4) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(st, 4))))
+                                 resultChars: sqlite3_column_type(st, 4) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(st, 4)),
+                                 target: sqlite3_column_type(st, 5) == SQLITE_NULL ? nil : text(st, 5), range: sqlite3_column_type(st, 6) == SQLITE_NULL ? nil : text(st, 6)))
+        }
+        return out
+    }
+
+    /// Every file read recorded since `since`, across sessions.
+    public func reads(since: Date = .distantPast) -> [ToolEvent] {
+        lock.lock(); defer { lock.unlock() }
+        guard db != nil else { return [] }
+        var st: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT use_id,session,name,ts,chars,target,range FROM tools WHERE target IS NOT NULL AND ts >= ? ORDER BY ts", -1, &st, nil) == SQLITE_OK, let st else { return [] }
+        defer { sqlite3_finalize(st) }
+        sqlite3_bind_double(st, 1, since == .distantPast ? 0 : since.timeIntervalSince1970)
+        var out: [ToolEvent] = []
+        while sqlite3_step(st) == SQLITE_ROW {
+            out.append(ToolEvent(useId: text(st, 0), session: text(st, 1), name: text(st, 2), ts: Date(timeIntervalSince1970: sqlite3_column_double(st, 3)),
+                                 resultChars: sqlite3_column_type(st, 4) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(st, 4)), target: text(st, 5), range: sqlite3_column_type(st, 6) == SQLITE_NULL ? nil : text(st, 6)))
         }
         return out
     }
