@@ -70,7 +70,8 @@ struct Badge: View {
     let text: String
     var kind: Kind = .neutral
     var body: some View {
-        Text(text).font(.system(size: 10.5, weight: .semibold))
+        // One line, always: a badge never wraps a letter to a line when the row is tight.
+        Text(text).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 7).padding(.vertical, 1.5)
             .foregroundStyle(fg)
             .background(bg, in: Capsule())
