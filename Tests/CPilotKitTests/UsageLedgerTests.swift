@@ -187,3 +187,45 @@ final class LensAlertsTests: XCTestCase {
             [UsageOrigin.outside: 9, "Chief pilot": 5, "You, in CPilot": 2, "Reviewers": 1][a]! > [UsageOrigin.outside: 9, "Chief pilot": 5, "You, in CPilot": 2, "Reviewers": 1][b]! })
     }
 }
+
+final class BeforeAfterTests: XCTestCase {
+    private func usage(_ i: Int, started: Date, peak: Int, cost: Double = 1, calls: Int = 50) -> SessionUsage {
+        SessionUsage(session: "S\(i)", cwd: "/r", model: "claude-sonnet-5-5", calls: calls, input: 10, cacheRead: 900, cacheWrite: 90, output: 5, peakContext: peak, lastContext: peak,
+                     cost: cost, first: started, last: started.addingTimeInterval(60), coldStarts: 0, rewrittenAfterGaps: 0)
+    }
+
+    func testTheEffectIsMeasuredBetweenSessionsStartedBeforeAndAfter() {
+        let change = Date(timeIntervalSince1970: 1_000_000)
+        var all: [SessionUsage] = []
+        for i in 0..<12 { all.append(usage(i, started: change.addingTimeInterval(-Double(i + 1) * 3600), peak: 600_000, cost: 10)) }
+        for i in 0..<12 { all.append(usage(100 + i, started: change.addingTimeInterval(Double(i) * 3600), peak: 200_000, cost: 6)) }
+        let r = BeforeAfter.compare(all, since: change)
+        XCTAssertTrue(r.enough)
+        XCTAssertEqual(r.before.medianPeakContext, 600_000)
+        XCTAssertEqual(r.after.shareAbove, 1)
+        XCTAssertEqual(r.peakChange!, -2.0 / 3.0, accuracy: 1e-9)
+        XCTAssertEqual(r.costChange!, -0.4, accuracy: 1e-9)
+    }
+
+    func testTooFewSessionsSaysNotEnoughAndShortSessionsDoNotCount() {
+        let change = Date(timeIntervalSince1970: 1_000_000)
+        var all = (0..<9).map { usage($0, started: change.addingTimeInterval(-3600), peak: 500_000) } + (0..<30).map { usage(50 + $0, started: change.addingTimeInterval(60), peak: 100_000) }
+        var r = BeforeAfter.compare(all, since: change)
+        XCTAssertFalse(r.enough)
+        XCTAssertNil(r.peakChange)
+        all += (0..<5).map { usage(200 + $0, started: change.addingTimeInterval(-7200), peak: 500_000, calls: 3) }
+        r = BeforeAfter.compare(all, since: change)
+        XCTAssertEqual(r.before.sessions, 9)
+    }
+
+    func testTheChangeLogKeepsTheLatestValueAndIgnoresRepeats() {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("changes-\(UUID().uuidString).json")
+        let log = ChangeLog(url: url)
+        XCTAssertTrue(log.record("autocompact", 200_000, at: Date(timeIntervalSince1970: 10)))
+        XCTAssertFalse(log.record("autocompact", 200_000, at: Date(timeIntervalSince1970: 20)))
+        XCTAssertTrue(log.record("autocompact", 300_000, at: Date(timeIntervalSince1970: 30)))
+        XCTAssertEqual(ChangeLog(url: url).latest("autocompact")?.value, 300_000)
+        XCTAssertEqual(ChangeLog(url: url).latest("autocompact")?.date, Date(timeIntervalSince1970: 30))
+        XCTAssertNil(log.latest("other"))
+    }
+}

@@ -13,9 +13,17 @@ final class UsageLens {
     private(set) var loading = false
     private(set) var updatedAt: Date?
     private var timer: Timer?
+    let changes = ChangeLog()
+
+    /// Notes the usage settings now in effect, so a card can compare sessions from before and after.
+    func noteSettings() {
+        changes.record("autocompactUnattended", Prefs.shared.autocompactUnattended)
+        changes.record("autocompactYours", Prefs.shared.autocompactYours)
+    }
 
     func start() {
         guard timer == nil else { return }
+        noteSettings()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in Task { @MainActor in UsageLens.shared.refresh() } }
     }
@@ -112,13 +120,15 @@ struct LensPane: View {
                 VStack(alignment: .leading, spacing: 14) {
                     totalsCard
                     originCard
+                    effectCard("Did it help? Unattended sessions", key: "autocompactUnattended", origins: ["Chief pilot", "Reviewers", "Testers", "Spec tasks"])
+                    effectCard("Did it help? Your sessions", key: "autocompactYours", origins: ["You, in CPilot"])
                     if rows.isEmpty { Text(lens.loading ? "Reading transcripts…" : "No Claude Code use found in this period.").foregroundStyle(.secondary).font(.system(size: 12.5)) }
                     ForEach(rows.prefix(40), id: \.session) { u in row(u) }
                     Text("Cost is what the same tokens would cost on the API; a Max plan is not billed per token. Cache hit counts cache writes as billed input.")
                         .font(.system(size: 11)).foregroundStyle(.tertiary)
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
             }
-        }.task { lens.refresh() }
+        }.task { lens.noteSettings(); lens.refresh() }
     }
 
     private var totalsCard: some View {
@@ -132,6 +142,25 @@ struct LensPane: View {
             stat("API-equivalent", LensFormat.money(t.cost))
             Spacer()
         }.card(padding: 14)
+    }
+
+    /// Whether a setting helped: sessions that started before it took effect against those that started after, for the kind of session it applies to.
+    @ViewBuilder private func effectCard(_ title: String, key: String, origins: Set<String>) -> some View {
+        if let change = lens.changes.latest(key), change.value > 0 {
+            let list = lens.summaries.values.filter { u in origins.contains(UsageOrigin.label(Workspace.shared.sessions.first { $0.remoteId == u.session })) }
+            let r = BeforeAfter.compare(Array(list), since: change.date)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Compaction at \(LensFormat.tokens(change.value)) since \(change.date.formatted(date: .abbreviated, time: .omitted)). Sessions of 20 calls or more.").font(.system(size: 12))
+                if r.enough, let peak = r.peakChange {
+                    Text("Median peak context \(LensFormat.tokens(r.before.medianPeakContext)) → \(LensFormat.tokens(r.after.medianPeakContext)) (\(Int((peak * 100).rounded()))%). Above 200k: \(Int(r.before.shareAbove * 100))% → \(Int(r.after.shareAbove * 100))% of sessions. Mean API-equivalent cost per session \(LensFormat.money(r.before.meanCost)) → \(LensFormat.money(r.after.meanCost)).")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Text("Retries and gate failures are not compared yet, so check a drop in cost has not come with more rework.").font(.system(size: 11)).foregroundStyle(.tertiary)
+                } else {
+                    Text("Not enough data yet: it needs \(BeforeAfter.minimumSessions) such sessions on each side and has \(r.before.sessions) before and \(r.after.sessions) after.").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }.card(padding: 14)
+        }
     }
 
     private var originCard: some View {

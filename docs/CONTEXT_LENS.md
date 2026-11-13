@@ -77,7 +77,7 @@ Every change is compared on the same measures, per repository, before and after,
 - Tool results: tokens per call, bytes withheld by gates, count of over-limit results.
 - Quality guard so savings are not bought with failures: task gate pass rate, retries per task, reviewer open findings. A saving that raises retries is shown as a loss.
 
-A "Before and after" card per setting shows these with the dates it was turned on, and says "not enough data" under 10 tasks rather than a percentage.
+A "Did it help?" card per setting compares sessions of 20 or more calls that started before it took effect with those after (median peak context, share above 200k, cost per session, cache hit), and says "not enough data" under 10 sessions a side rather than a percentage. Built for the compaction setting; not yet compared: retries and gate failures (the quality guard), tokens per merged pull request.
 
 ## Phases
 

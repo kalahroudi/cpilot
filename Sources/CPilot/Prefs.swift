@@ -63,8 +63,8 @@ final class Prefs {
     var keepArchivedDays: Int { didSet { d.set(keepArchivedDays, forKey: "keepArchivedDays") } }
     var maxAgents: Int { didSet { d.set(maxAgents, forKey: "maxAgents") } }
     /// Tokens at which Claude compacts a conversation; 0 leaves it to Claude Code. See `ClaudeRunner.Config.autocompactTokens`.
-    var autocompactUnattended: Int { didSet { d.set(autocompactUnattended, forKey: "autocompactUnattended") } }
-    var autocompactYours: Int { didSet { d.set(autocompactYours, forKey: "autocompactYours") } }
+    var autocompactUnattended: Int { didSet { d.set(autocompactUnattended, forKey: "autocompactUnattended"); UsageLens.shared.noteSettings() } }
+    var autocompactYours: Int { didSet { d.set(autocompactYours, forKey: "autocompactYours"); UsageLens.shared.noteSettings() } }
     /// Dollars a day that work starting by itself may spend before it waits for tomorrow. 0 is no budget.
     var dailyBudget: Int { didSet { d.set(dailyBudget, forKey: "dailyBudget") } }
     /// What one spec task may use before it stops and asks you. 0 is off for each.
