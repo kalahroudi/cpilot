@@ -2,6 +2,10 @@
 
 Ideas we want to build, not promises. Newest first.
 
+## Context Lens
+
+See [docs/CONTEXT_LENS.md](docs/CONTEXT_LENS.md): usage tracing per session (context, cache hit rate, tool calls, cost), output gates, tool diet, cost-aware lessons, and before-and-after metrics.
+
 ## Orchestration
 
 Today you start sessions one at a time and watch them. These ideas make a whole fleet of agents something you steer, not babysit. They build on what is already here: worktrees, specs with tasks, stacks, approvals and the MCP server.
