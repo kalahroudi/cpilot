@@ -123,3 +123,50 @@ final class LiveLensTests: XCTestCase {
         let t1 = Date(); XCTAssertLessThan(store.sync(), 10); print("LENS second sync seconds=\(Date().timeIntervalSince(t1))")
     }
 }
+
+final class LensAlertsTests: XCTestCase {
+    private func usage(context: Int, last: Date, calls: Int = 20, read: Int = 900, write: Int = 100) -> SessionUsage {
+        SessionUsage(session: "S", cwd: "/r", model: "claude-sonnet-5-5", calls: calls, input: 0, cacheRead: read, cacheWrite: write, output: 10, peakContext: context, lastContext: context,
+                     cost: 1, first: last.addingTimeInterval(-3600), last: last, coldStarts: 0, rewrittenAfterGaps: 0)
+    }
+
+    func testAnEightHundredThousandTokenSessionIsFlaggedAtTwoHundredThousand() {
+        let now = Date()
+        XCTAssertTrue(LensAlerts.alerts(for: usage(context: 199_000, last: now), now: now).isEmpty)
+        XCTAssertEqual(LensAlerts.alerts(for: usage(context: 200_000, last: now), now: now).map(\.kind), [.contextHigh])
+        XCTAssertEqual(LensAlerts.alerts(for: usage(context: 800_000, last: now), now: now).first?.kind, .contextHigh)
+    }
+
+    func testAnIdleLargeSessionIsToldWhatTheNextMessageWillCost() {
+        let now = Date()
+        let a = LensAlerts.alerts(for: usage(context: 100_000, last: now.addingTimeInterval(-900)), now: now)
+        XCTAssertEqual(a.map(\.kind), [.cacheCold])
+        XCTAssertTrue(a[0].message.contains("15 minutes") && a[0].message.contains("$0.25"))   // 100k at 1.25 x $2 per million
+        XCTAssertTrue(LensAlerts.alerts(for: usage(context: 10_000, last: now.addingTimeInterval(-900)), now: now).isEmpty)
+        XCTAssertTrue(LensAlerts.alerts(for: usage(context: 100_000, last: now.addingTimeInterval(-60)), now: now).isEmpty)
+    }
+
+    func testLowCacheHitNeedsEnoughCallsAndAHugeResultIsFlagged() {
+        let now = Date()
+        XCTAssertEqual(LensAlerts.alerts(for: usage(context: 1000, last: now, calls: 30, read: 100, write: 900), now: now).map(\.kind), [.lowCacheHit])
+        XCTAssertTrue(LensAlerts.alerts(for: usage(context: 1000, last: now, calls: 3, read: 100, write: 900), now: now).isEmpty)
+        XCTAssertEqual(LensAlerts.alerts(for: usage(context: 1000, last: now), largestResultChars: 200_000, now: now).map(\.kind), [.bigResult])
+    }
+
+    func testUsageIsSplitByWhoStartedTheWork() {
+        var chief = SessionMeta(title: "c", cwd: "/r", backend: .claude, model: nil, access: .askFirst); chief.chief = true
+        var rev = SessionMeta(title: "r", cwd: "/r", backend: .claude, model: nil, access: .askFirst); rev.reviewOf = 3
+        var tester = SessionMeta(title: "t", cwd: "/r", backend: .claude, model: nil, access: .askFirst); tester.role = "tester"
+        let mine = SessionMeta(title: "m", cwd: "/r", backend: .claude, model: nil, access: .askFirst)
+        let owners = ["c": chief, "r": rev, "t": tester, "m": mine]
+        XCTAssertEqual(UsageOrigin.label(chief), "Chief pilot")
+        XCTAssertEqual(UsageOrigin.label(rev), "Reviewers")
+        XCTAssertEqual(UsageOrigin.label(tester), "Testers")
+        XCTAssertEqual(UsageOrigin.label(mine), "You, in CPilot")
+        XCTAssertEqual(UsageOrigin.label(nil), UsageOrigin.outside)
+        func u(_ id: String, _ cost: Double) -> SessionUsage { var x = usage(context: 1, last: .now); x.session = id; x.cost = cost; return x }
+        let split = UsageOrigin.split([u("c", 5), u("r", 1), u("zz", 9), u("m", 2), u("m2", 1)], owner: { owners[$0] })
+        XCTAssertEqual(split.map(\.origin), [UsageOrigin.outside, "Chief pilot", "You, in CPilot", "Reviewers"].sorted { a, b in
+            [UsageOrigin.outside: 9, "Chief pilot": 5, "You, in CPilot": 2, "Reviewers": 1][a]! > [UsageOrigin.outside: 9, "Chief pilot": 5, "You, in CPilot": 2, "Reviewers": 1][b]! })
+    }
+}

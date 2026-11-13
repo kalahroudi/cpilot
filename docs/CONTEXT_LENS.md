@@ -91,7 +91,8 @@ A "Before and after" card per setting shows these with the dates it was turned o
 
 Phase 1 is the first thing to build: nothing else can be judged without it.
 
-**Status.** Phase 1 is built: ledger, importer, header numbers and the Lens pane. Checked on this Mac's real transcripts: for the largest session the ledger and an independent count agree exactly (3,140 calls, 1,385,462k cache read, 966k peak). The import of 1.2 GB took 22 s in a debug build; a first launch now reads only the last 90 days, newest first, and a second read of unchanged files takes 0.03 s. Not yet in the pane: the cost-per-context-size view, a limit forecast, and the fleet split by who started the work (phase 2).
+**Status.** Phase 1 is built: ledger, importer, header numbers and the Lens pane. Checked on this Mac's real transcripts: for the largest session the ledger and an independent count agree exactly (3,140 calls, 1,385,462k cache read, 966k peak). The import of 1.2 GB took 22 s in a debug build; a first launch now reads only the last 90 days, newest first, and a second read of unchanged files takes 0.03 s. 
+Phase 2 is built except two items: alerts (context over 200k, an idle gap that let the cache expire, low cache hit, a huge tool result) with a **Continue lean** fork from a summary, the split by who started the work, and the `usage_report` MCP tool. Still open from phase 2: the cost-per-context-size chart and the limit forecast against the plan window (the reset time is known, the plan's allowance is not exposed, so this needs a decision on what to compare against).
 
 ## Risks and open questions
 

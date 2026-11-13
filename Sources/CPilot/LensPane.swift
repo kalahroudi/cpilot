@@ -39,6 +39,9 @@ final class UsageLens {
     /// The numbers for a CPilot session: Claude's own id for it is what its transcript is named after.
     func usage(for meta: SessionMeta) -> SessionUsage? { meta.remoteId.flatMap { summaries[$0] } }
 
+    /// What to act on for this session now.
+    func alerts(for meta: SessionMeta) -> [LensAlert] { usage(for: meta).map { LensAlerts.alerts(for: $0) } ?? [] }
+
     func totals(since: Date) -> (calls: Int, cost: Double, read: Int, write: Int, input: Int, output: Int) {
         summaries.values.filter { $0.last >= since }.reduce((0, 0.0, 0, 0, 0, 0)) { ($0.0 + $1.calls, $0.1 + ($1.cost ?? 0), $0.2 + $1.cacheRead, $0.3 + $1.cacheWrite, $0.4 + $1.input, $0.5 + $1.output) }
     }
@@ -68,6 +71,30 @@ struct LensChip: View {
     }
 }
 
+/// Shown above the chat when the conversation has grown large or has gone cold, with the way out: carry on from a summary.
+struct LensBanner: View {
+    let session: SessionController
+    let lens = UsageLens.shared
+    @State private var dismissed: Set<LensAlert.Kind> = []
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            if let a = lens.alerts(for: session.meta).first(where: { ($0.kind == .contextHigh || $0.kind == .cacheCold) && !dismissed.contains($0.kind) }), session.meta.backend.kind == .claude {
+                HStack(spacing: 10) {
+                    Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(Theme.warn)
+                    Text(a.message).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Continue lean") { _ = Workspace.shared.fork(session, lean: true) }.buttonStyle(Pill(kind: .primary)).disabled(session.isBusy)
+                        .help(session.isBusy ? "Wait for this turn to finish" : "Start a new session from a summary of this one")
+                    Button("Not now") { dismissed.insert(a.kind) }.buttonStyle(Pill(kind: .plain))
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8).background(Theme.warnSoft)
+                .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+            }
+        }
+    }
+}
+
 struct LensPane: View {
     let lens = UsageLens.shared
     @State private var window = 7
@@ -84,6 +111,7 @@ struct LensPane: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     totalsCard
+                    originCard
                     if rows.isEmpty { Text(lens.loading ? "Reading transcripts…" : "No Claude Code use found in this period.").foregroundStyle(.secondary).font(.system(size: 12.5)) }
                     ForEach(rows.prefix(40), id: \.session) { u in row(u) }
                     Text("Cost is what the same tokens would cost on the API; a Max plan is not billed per token. Cache hit counts cache writes as billed input.")
@@ -103,6 +131,17 @@ struct LensPane: View {
             stat("Output", LensFormat.tokens(t.output))
             stat("API-equivalent", LensFormat.money(t.cost))
             Spacer()
+        }.card(padding: 14)
+    }
+
+    private var originCard: some View {
+        let list = lens.summaries.values.filter { $0.last >= since }
+        let split = UsageOrigin.split(Array(list)) { id in Workspace.shared.sessions.first { $0.remoteId == id } }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Who started it").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            ForEach(split, id: \.origin) { o in
+                HStack { Text(o.origin).font(.system(size: 12.5)); Spacer(); Text("\(o.sessions) session\(o.sessions == 1 ? "" : "s") · \(o.calls) calls").font(.system(size: 11.5)).foregroundStyle(.secondary); Text(LensFormat.money(o.cost)).font(.system(size: 12, weight: .semibold)).frame(width: 60, alignment: .trailing) }
+            }
         }.card(padding: 14)
     }
 

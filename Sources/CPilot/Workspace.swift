@@ -830,20 +830,21 @@ final class Workspace {
     /// Continues a session as a new one. With the same Claude agent it forks the agent's own conversation, so the context is
     /// complete; with another agent it hands over a short summary instead, which is all that can be carried across.
     @discardableResult
-    func fork(_ source: SessionController, to backend: Backend? = nil) -> SessionController? {
+    func fork(_ source: SessionController, to backend: Backend? = nil, lean: Bool = false) -> SessionController? {
         source.loadIfNeeded()
         let target = backend ?? source.meta.backend
-        var m = SessionMeta(title: (backend == nil ? "Fork of " : "") + source.meta.title, cwd: source.meta.cwd, backend: target,
+        var m = SessionMeta(title: (lean ? "Lean: " : backend == nil ? "Fork of " : "") + source.meta.title, cwd: source.meta.cwd, backend: target,
                             model: target == source.meta.backend ? source.meta.model : nil, access: source.meta.access,
                             branch: source.meta.branch, worktree: source.meta.worktree)
-        let native = target.kind == .claude && source.meta.backend.kind == .claude && source.meta.remoteId != nil
+        // A lean fork carries a summary, not the conversation: that is the point, since every call re-reads whatever the agent is carrying.
+        let native = !lean && target.kind == .claude && source.meta.backend.kind == .claude && source.meta.remoteId != nil
         if native { m.remoteId = source.meta.remoteId; m.forkPending = true }
         else { m.handoff = ContextDigest.handoff(ContextDigest.build(items: source.items), from: source.meta.title) }
         save(m)
         for row in source.items where row.kind != .permission { store.append(row, to: m.id) }
         guard let c = controller(m.id) else { return nil }
         c.loaded = false; c.loadIfNeeded()
-        c.addNotice(native ? "Forked from \"\(source.meta.title)\". The agent keeps the full conversation." : "Continuing from \"\(source.meta.title)\" with a summary of it. The new agent has not seen the full conversation.")
+        c.addNotice(lean ? "Continuing lean from \"\(source.meta.title)\": the new session starts from a summary of it, so each call carries a fraction of the context. The earlier conversation is still there if you need it." : native ? "Forked from \"\(source.meta.title)\". The agent keeps the full conversation." : "Continuing from \"\(source.meta.title)\" with a summary of it. The new agent has not seen the full conversation.")
         select(m.id)
         return c
     }

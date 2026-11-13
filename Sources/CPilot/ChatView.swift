@@ -22,6 +22,7 @@ struct ChatView: View {
             ChatHeader(session: session)
             Divider().opacity(0.5)
             UsageBanner()
+            LensBanner(session: session)
             if session.recapVisible { RecapCard(session: session).padding(.horizontal, 16).padding(.top, 10) }
             transcript
             TasksStrip(parent: session)

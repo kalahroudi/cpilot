@@ -97,6 +97,23 @@ let allTools: [Tool] = {
         return try json(store.items(id, limit: int(a, "tail", 20)).map { Row(kind: $0.kind.rawValue, text: String($0.text.prefix(2000)), title: $0.title, status: $0.status?.rawValue) })
     })
 
+    t.append(Tool(name: "usage_report", description: "Read-only: what Claude Code usage has cost recently, from CPilot's Context Lens ledger. Returns totals and the heaviest sessions with calls, peak and current context (tokens), cache hit rate and the API-equivalent cost. Pass `session_id` (a CPilot session id) to see one session. Use it to notice a task that keeps spending without finishing.",
+                  properties: ["session_id": prop("string", "Optional CPilot session id."), "days": prop("integer", "How many days back (default 1, at most 30).")], required: []) { a in
+        let usage = UsageStore()
+        let days = min(30, max(1, (a["days"] as? Int) ?? 1))
+        var list = usage.sessions(since: Date().addingTimeInterval(-Double(days) * 86_400))
+        if let id = a["session_id"] as? String {
+            guard let claudeId = store.load(id)?.remoteId else { throw ToolError(message: "No such session, or it has not run yet.") }
+            list = list.filter { $0.session == claudeId }
+        }
+        struct Row: Encodable { let session: String; let calls: Int; let peak_context: Int; let current_context: Int; let cache_hit: Double?; let api_equivalent_usd: Double?; let cold_starts: Int }
+        struct Out: Encodable { let days: Int; let calls: Int; let api_equivalent_usd: Double; let heaviest: [Row] }
+        func r2(_ d: Double) -> Double { (d * 100).rounded() / 100 }
+        return try json(Out(days: days, calls: list.reduce(0) { $0 + $1.calls }, api_equivalent_usd: r2(list.reduce(0) { $0 + ($1.cost ?? 0) }),
+                            heaviest: list.sorted { ($0.cost ?? 0) > ($1.cost ?? 0) }.prefix(8).map {
+            Row(session: $0.session, calls: $0.calls, peak_context: $0.peakContext, current_context: $0.lastContext, cache_hit: $0.cacheHitRate.map { (($0 * 100).rounded()) / 100 }, api_equivalent_usd: $0.cost.map(r2), cold_starts: $0.coldStarts) }))
+    })
+
     t.append(Tool(name: "search_memory", description: "Search what CPilot remembers: the user's saved notes and finished messages from earlier sessions, by words and by meaning.",
                   properties: ["query": prop("string", "What to look for."), "project_folder": prop("string", "Optional: only this project's memory plus global notes.")], required: ["query"]) { a in
         let q = try requireString(a, "query")
