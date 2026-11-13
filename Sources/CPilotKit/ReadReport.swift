@@ -75,3 +75,12 @@ public struct ReadReport: Equatable, Sendable {
         sensitive = by.keys.filter(SensitivePaths.isSensitive).sorted()
     }
 }
+
+/// Refuses a read of a file that holds secrets, before its content is sent to a model provider.
+public enum SensitiveGuard {
+    public static func decide(tool: String, input: [String: Any]) -> String? {
+        guard let t = ReadTarget.extract(tool: tool, input: input), SensitivePaths.isSensitive(t.path) else { return nil }
+        let name = (t.path as NSString).lastPathComponent
+        return "CPilot did not read \(name): files like it hold keys or secrets, and what is read is sent to the model provider and kept in the conversation. Work without its contents (ask the user for the specific non-secret value you need, or use the `.example` file for the variable names). The user can allow this in CPilot Settings, Saving usage."
+    }
+}

@@ -66,6 +66,8 @@ final class Prefs {
     var autocompactUnattended: Int { didSet { d.set(autocompactUnattended, forKey: "autocompactUnattended"); UsageLens.shared.noteSettings() } }
     /// Refuse a read of a file the conversation already holds, unchanged. See `ReadOnce`.
     var readOnce: Bool { didSet { d.set(readOnce, forKey: "readOnce") } }
+    /// Refuse reads of keys, tokens and environment files. See `SensitiveGuard`.
+    var blockSensitiveReads: Bool { didSet { d.set(blockSensitiveReads, forKey: "blockSensitiveReads") } }
     var autocompactYours: Int { didSet { d.set(autocompactYours, forKey: "autocompactYours"); UsageLens.shared.noteSettings() } }
     /// Dollars a day that work starting by itself may spend before it waits for tomorrow. 0 is no budget.
     var dailyBudget: Int { didSet { d.set(dailyBudget, forKey: "dailyBudget") } }
@@ -120,7 +122,7 @@ final class Prefs {
     private init() {
         d.register(defaults: ["notify": true, "refreshSeconds": 5, "showDockIcon": true, "autoCheckUpdates": true, "sleepMinutes": 10,
                               "cloneFolder": NSHomeDirectory() + "/code", "useWorktrees": false, "captureSendTo": "active", "captureHotkey": true,
-                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "resumeAfterLimit": true, "testFirst": "off", "hiddenTests": true, "specReview": true, "specAutoApprove": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "autocompactUnattended": 200_000, "autocompactYours": 0, "readOnce": true, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
+                              "autoMergeDefault": false, "recall": true, "learnLessons": true, "dream": true, "dreamAuto": true, "resumeAfterLimit": true, "testFirst": "off", "hiddenTests": true, "specReview": true, "specAutoApprove": true, "cleanUp": true, "keepArchivedDays": 30, "maxAgents": 4, "autocompactUnattended": 200_000, "autocompactYours": 0, "readOnce": true, "blockSensitiveReads": true, "taskDollars": 10, "taskTurns": 40, "taskMinutes": 60, "dailyBudget": 0, "specAutonomy": "step", "chiefAutonomy": "leads", "adminMergeAll": true, "autoResolveConflicts": true, "autoCollapse": true, "conflictWaitMinutes": 40, "recapAuto": true, "recapWithClaude": true, "suggestPrompts": true, "securityScanOnPR": true, "notifyChecks": true, "followSession": true, "autoArchiveSpecs": true])
         theme = ThemeChoice(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         showDockIcon = d.bool(forKey: "showDockIcon")
         notify = d.bool(forKey: "notify")
@@ -156,6 +158,7 @@ final class Prefs {
         autocompactUnattended = d.integer(forKey: "autocompactUnattended")
         autocompactYours = d.integer(forKey: "autocompactYours")
         readOnce = d.bool(forKey: "readOnce")
+        blockSensitiveReads = d.bool(forKey: "blockSensitiveReads")
         dailyBudget = d.integer(forKey: "dailyBudget")
         taskDollars = d.integer(forKey: "taskDollars")
         taskTurns = d.integer(forKey: "taskTurns")

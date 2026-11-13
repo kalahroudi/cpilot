@@ -118,7 +118,7 @@ A coding session reads a handful of files (median 5). An audit reads everything,
 8. **What is allowed to leave the machine (to build, matters most for key code).** A per-repository list of allowed providers; secrets and environment files never sent (a secret scan before any send, which the Lens's sensitive-file warning only reports after the fact); a manifest of exactly which files, at which hashes, went to which provider and when; and a note of each provider's retention terms on the repository, since some models are not available under zero data retention.
 9. **Stop rules.** A token and dollar budget per run, a cap on calls per file, and a stop when a pass finds nothing new in N files, using the same task budget the gate already has.
 
-What exists today toward this: the read-once guard, the sensitive-file report and the scan ledger above.
+What exists today toward this: the read-once guard, the scan ledger above, and a guard that refuses reads of secret-holding files (`.env`, private keys, `.npmrc`, credentials, certificates) before they are sent, tested against a real Claude Code run. It covers plain reads only (Read, cat, sed, head, tail): a program that prints a secret, or a search that matches one, is not stopped, and the other providers (Codex, Gemini and so on) are not covered at all yet, since the hook is Claude Code\'s. A pre-send secret scan of file contents, the per-repository provider list and the manifest are still to build.
 
 ## Risks and open questions
 

@@ -56,4 +56,13 @@ final class ReadReportTests: XCTestCase {
         XCTAssertEqual(t.first?.target, "/r/a.swift")
         XCTAssertEqual(t.first?.resultChars, 5)
     }
+
+    func testASecretFileIsRefusedBeforeItIsSentAndAnOrdinaryOneIsNot() {
+        XCTAssertNotNil(SensitiveGuard.decide(tool: "Read", input: ["file_path": "/r/.env"]))
+        XCTAssertNotNil(SensitiveGuard.decide(tool: "Bash", input: ["command": "cat ~/.npmrc"]))
+        XCTAssertTrue(SensitiveGuard.decide(tool: "Read", input: ["file_path": "/r/.env"])!.contains(".env"))
+        XCTAssertNil(SensitiveGuard.decide(tool: "Read", input: ["file_path": "/r/.env.example"]))
+        XCTAssertNil(SensitiveGuard.decide(tool: "Read", input: ["file_path": "/r/src/auth.ts"]))
+        XCTAssertNil(SensitiveGuard.decide(tool: "Bash", input: ["command": "swift test"]))
+    }
 }

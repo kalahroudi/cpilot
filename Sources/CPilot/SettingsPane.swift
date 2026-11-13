@@ -98,6 +98,9 @@ struct SettingsPane: View {
             SettingsGroup("Saving usage") {
                 SettingRow("Read a file once", "When an agent asks to read a file that is already in its conversation and has not changed since, CPilot tells it so instead of sending the same code again. Every copy stays in the conversation and is sent again with every later call; on measured use 42% of what the Read tool returned was a repeat. It lets the call through if the file changed, the conversation was compacted, or the agent asks a second time. Applies to sessions on this Mac when they next start.") { toggle($p.readOnce) }
             }
+            SettingsGroup("Keeping secrets out") {
+                SettingRow("Do not read keys and secrets", "Agents are refused a read of files that hold secrets (.env, private keys, .npmrc, credentials, certificates) before anything is sent to the model provider, and told to work without them. What an agent reads is sent to the provider and stays in the conversation, so for key codebases this keeps secrets out. Only plain reads are covered (the Read tool, cat, sed, head, tail); an agent that runs a program that prints a secret is not stopped. Applies to sessions on this Mac when they next start.") { toggle($p.blockSensitiveReads) }
+            }
             SettingsGroup("Limits for unattended work") {
                 SettingRow("Agents working at once", "Triggers, and the tasks and reviewers the chief pilot starts, wait while this many agents are working. Sessions you start yourself are never held.") {
                     Segmented(options: [(2, "2"), (4, "4"), (8, "8"), (0, "No limit")], selection: $p.maxAgents)

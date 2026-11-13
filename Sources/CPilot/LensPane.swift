@@ -55,10 +55,19 @@ final class UsageLens {
         guard let text = try? String(contentsOf: AppPaths().root.appendingPathComponent("read-once.jsonl"), encoding: .utf8) else { return (0, 0) }
         var n = 0, chars = 0
         for line in text.split(separator: "\n") {
-            guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let ts = o["ts"] as? Double, Date(timeIntervalSince1970: ts) >= since else { continue }
+            guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let ts = o["ts"] as? Double, Date(timeIntervalSince1970: ts) >= since, o["blocked"] == nil else { continue }
             n += 1; chars += o["saved"] as? Int ?? 0
         }
         return (n, chars)
+    }
+
+    /// Reads of secret-holding files the guard refused since `since`.
+    func sensitiveBlocked(since: Date) -> Int {
+        guard let text = try? String(contentsOf: AppPaths().root.appendingPathComponent("read-once.jsonl"), encoding: .utf8) else { return 0 }
+        return text.split(separator: "\n").filter { line in
+            guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], let ts = o["ts"] as? Double else { return false }
+            return o["blocked"] as? String == "sensitive" && Date(timeIntervalSince1970: ts) >= since
+        }.count
     }
 
     func totals(since: Date) -> (calls: Int, cost: Double, read: Int, write: Int, input: Int, output: Int) {
@@ -186,6 +195,8 @@ struct LensPane: View {
                 .font(.system(size: 12))
             let once = lens.readOnceSaved(since: since)
             if once.refused > 0 { Text("Read once refused \(once.refused) repeat read\(once.refused == 1 ? "" : "s"), up to \(LensFormat.tokens(once.chars / 4)) tokens kept out of conversations (each would also have been sent again with every later call).").font(.system(size: 12)).foregroundStyle(Theme.ok) }
+            let blocked = lens.sensitiveBlocked(since: since)
+            if blocked > 0 { Text("\(blocked) read\(blocked == 1 ? "" : "s") of keys or secrets refused before anything was sent.").font(.system(size: 12)).foregroundStyle(Theme.ok) }
             if report.sensitive.isEmpty { Text("No keys, tokens or environment files were read.").font(.system(size: 12)).foregroundStyle(.secondary) }
             else {
                 Text("Sensitive files read, now in \(sessions.count) conversation\(sessions.count == 1 ? "" : "s") sent to the provider: " + report.sensitive.prefix(6).map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ") + (report.sensitive.count > 6 ? " and \(report.sensitive.count - 6) more" : "") + ".")
