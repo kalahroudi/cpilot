@@ -167,3 +167,22 @@ final class AuditHeadlineTests: XCTestCase {
         XCTAssertEqual(h("Edit", "/a/b/Package.swift"), "Edited Package.swift")
     }
 }
+
+final class CodedBranchTests: XCTestCase {
+    func testABranchStillAtTheLockedTestsIsNotCodedSoItsDependentsWait() {
+        let coded: Set<String> = ["spec-001-t008", "spec-001-t007"]
+        let result = Specs.codedBranches(coded, tips: ["spec-001-t008": "aaa", "spec-001-t007": "ccc"], lockCommits: ["spec-001-t008": "aaa", "spec-001-t007": "bbb"])
+        XCTAssertEqual(result, ["spec-001-t007"])
+    }
+
+    func testABranchWithNoLockIsAsCodedAsItWas() {
+        XCTAssertEqual(Specs.codedBranches(["x"], tips: [:], lockCommits: [:]), ["x"])
+    }
+
+    func testReadyKeepsTheDependentBackUntilTheCodeIsThere() {
+        let t8 = SpecTask(id: "T008", title: "a", done: false, needs: [], branch: "spec-001-t008")
+        let t9 = SpecTask(id: "T009", title: "b", done: false, needs: ["T008"], branch: nil)
+        XCTAssertTrue(Specs.ready([t8, t9], coded: Specs.codedBranches(["spec-001-t008"], tips: ["spec-001-t008": "a"], lockCommits: ["spec-001-t008": "a"])).isEmpty)
+        XCTAssertEqual(Specs.ready([t8, t9], coded: Specs.codedBranches(["spec-001-t008"], tips: ["spec-001-t008": "b"], lockCommits: ["spec-001-t008": "a"])).map(\.id), ["T009"])
+    }
+}

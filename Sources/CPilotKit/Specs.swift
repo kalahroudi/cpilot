@@ -212,6 +212,12 @@ public enum Specs {
         return tasks.filter { t in !t.done && t.branch == nil && t.needs.allSatisfy(finished.contains) }
     }
 
+    /// Branches that really hold code. With tests first a task's branch starts at the tester's locked tests, which already count as a commit, so a branch whose tip
+    /// is still exactly that commit has tests and no implementation: a task that needs it must not start on top of it.
+    public static func codedBranches(_ coded: Set<String>, tips: [String: String], lockCommits: [String: String]) -> Set<String> {
+        coded.filter { b in lockCommits[b].map { $0 != tips[b] } ?? true }
+    }
+
     /// The branch a task builds on: the latest unfinished dependency's branch, or the trunk when all its dependencies are merged.
     public static func parentBranch(for task: SpecTask, in tasks: [SpecTask], trunk: String, merged: Set<String> = []) -> String {
         for dep in task.needs.reversed() {

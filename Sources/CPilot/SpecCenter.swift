@@ -244,6 +244,14 @@ final class SpecCenter {
         merged.formUnion(await Exec.with(e) { await Stacks.landedBranches(in: r.dir) })
         started = Set(stacks.flatMap(\.branches).map(\.name))
         coded = Set(stacks.flatMap(\.branches).filter { $0.commits > 0 }.map(\.name))
+        // A branch still at the tester's locked tests has no code yet; the tasks that need it wait (see `Specs.codedBranches`).
+        var locks: [String: String] = [:]
+        for d in docs { for t in d.tasks { if let b = t.branch, coded.contains(b), let l = gateRecord(d.id, t.id)?.locked { locks[b] = l.commit } } }
+        if !locks.isEmpty {
+            var tips: [String: String] = [:]
+            for b in locks.keys { tips[b] = await Exec.with(e) { (try? await Shell.check("git", ["rev-parse", "--verify", "--quiet", b], cwd: URL(fileURLWithPath: r.dir)))?.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "" }
+            coded = Specs.codedBranches(coded, tips: tips, lockCommits: locks)
+        }
         unsubmitted = Set(stacks.flatMap(\.unsubmitted).map(\.name))
         // A task whose pull request merged is ticked off.
         let landed = await Exec.with(e) { (try? await GitHub.list(in: r.dir, state: "merged")) ?? [] }
